@@ -1,103 +1,74 @@
 #include "config.h"
-#include <stdio.h>
-#include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <fcntl.h>
-
-#if defined (HAVE_SYS_TERMIOS_H)
-#include <sys/termios.h>
-#else
-#if defined (HAVE_TERMIOS_H)
-#include <termios.h>
-#endif
-#endif
-
+#if defined(HAVE_SYS_MODEM_H)
+#include <sys/modem.h>
+#endif /* HAVE_SYS_MODEM_H */
 #include "gpsd.h"
+/* Workaround for HP-UX 11.23, which is missing CRTSCTS */
+#ifndef CRTSCTS
+#  ifdef CNEW_RTSCTS
+#    define CRTSCTS CNEW_RTSCTS
+#  else
+#    define CRTSCTS 0
+#  endif /* CNEW_RTSCTS */
+#endif /* !CRTSCTS */
 
-#define DEFAULTPORT "2947"
-
-extern int debug;
-extern char *device_name;
-extern int device_speed;
-
-
-/* define global variables */
-static int ttyfd = -1;
-static struct termios ttyset, ttyset_old;
-
-int serial_open()
+int gpsd_open(int device_speed, int stopbits, struct gps_session_t *session)
 {
-    char *temp;
-    char *p;
+    int ttyfd;
 
-    temp = malloc(strlen(device_name) + 1);
-    strcpy(temp, device_name);
+    gpsd_report(1, "opening GPS data source at %s\n", session->gpsd_device);
+    if ((ttyfd = open(session->gpsd_device, O_RDWR | O_NONBLOCK)) < 0)
+	return -1;
 
-    if ( (p = strchr(temp, ':')) ) {
-	char *port = DEFAULTPORT;
+    if (isatty(ttyfd)) {
+	gpsd_report(1, "setting speed %d, 8 bits, no parity\n", device_speed);
+	/* Save original terminal parameters */
+	if (tcgetattr(ttyfd,&session->ttyset_old) != 0)
+	  return -1;
 
-	if (*(p + 1))
-	    port = p + 1;
-	*p = '\0';
+	if (device_speed < 200)
+	  device_speed *= 1000;
+	if (device_speed < 2400)
+	  device_speed =  B1200;
+	else if (device_speed < 4800)
+	  device_speed =  B2400;
+	else if (device_speed < 9600)
+	  device_speed =  B4800;
+	else if (device_speed < 19200)
+	  device_speed =  B9600;
+	else if (device_speed < 38400)
+	  device_speed =  B19200;
+	else
+	  device_speed =  B38400;
 
-	/* temp now holds the HOSTNAME portion and port the port number. */
-	if (debug > 5)
-	    fprintf(stderr, "Host: %s  Port: %s\n", temp, port);
-	ttyfd = connectTCP(temp, port);
-	free(temp);
-	port = 0;
-
-	if (write(ttyfd, "r\n", 2) != 2)
-	    errexit("Can't write to socket");
-    } else {
-	ttyfd = open(temp, O_RDWR | O_NONBLOCK);
-	free(temp);
-
-	if (ttyfd < 0)
-	    return (-1);
-
-	if (isatty(ttyfd)) {
-            /* Save original terminal parameters */
-            if (tcgetattr(ttyfd,&ttyset_old) != 0)
-              return (-1);
-
-	    memcpy(&ttyset, &ttyset_old, sizeof(ttyset));
-
-	    cfsetispeed(&ttyset, (speed_t)device_speed);
-	    cfsetospeed(&ttyset, (speed_t)device_speed);
-
-	    ttyset.c_cflag &= ~(PARENB | CRTSCTS);
-	    ttyset.c_cflag |= (CSIZE & CS8) | CREAD | CLOCAL;
-	    ttyset.c_iflag = ttyset.c_oflag = ttyset.c_lflag = (tcflag_t) 0;
-	    ttyset.c_oflag = (ONLCR);
-            if (tcsetattr(ttyfd, TCSANOW, &ttyset) != 0)
-		return (-1);
-	}
+	memcpy(&session->ttyset, &session->ttyset_old, sizeof(session->ttyset));
+	cfsetispeed(&session->ttyset, (speed_t)device_speed);
+	cfsetospeed(&session->ttyset, (speed_t)device_speed);
+	session->ttyset.c_cflag &= ~(PARENB | CRTSCTS);
+	session->ttyset.c_cflag |= (CSIZE & (stopbits==2 ? CS7 : CS8)) | CREAD | CLOCAL;
+	session->ttyset.c_iflag = session->ttyset.c_oflag = session->ttyset.c_lflag = (tcflag_t) 0;
+	session->ttyset.c_oflag = (ONLCR);
+	if (tcsetattr(ttyfd, TCSANOW, &session->ttyset) != 0)
+	    return -1;
     }
     return ttyfd;
 }
 
-void serial_close()
+void gpsd_close(struct gps_session_t *session)
 {
-    if (ttyfd != -1) {
-	if (isatty(ttyfd)) {
-#if defined (USE_TERMIO)
-	    ttyset.c_cflag = CBAUD & B0;
-#else
-	    ttyset.c_ispeed = B0;
-	    ttyset.c_ospeed = B0;
-#endif
-            tcsetattr(ttyfd, TCSANOW, &ttyset);
+    if (session->gNMEAdata.gps_fd != -1) {
+	if (isatty(session->gNMEAdata.gps_fd)) {
+	    /* force hangup on close on systems that don't do HUPCL properly */
+	    cfsetispeed(&session->ttyset, (speed_t)B0);
+	    cfsetospeed(&session->ttyset, (speed_t)B0);
+	    tcsetattr(session->gNMEAdata.gps_fd, TCSANOW, &session->ttyset);
 	}
-	/* Restore original terminal parameters */
-	/* but make sure DTR goes down */
-	ttyset_old.c_cflag |= HUPCL;
-	tcsetattr(ttyfd,TCSANOW,&ttyset_old);
-
-	close(ttyfd);
-	ttyfd = -1;
+	/* this is the clean way to do it */
+	session->ttyset_old.c_cflag |= HUPCL;
+	tcsetattr(session->gNMEAdata.gps_fd,TCSANOW,&session->ttyset_old);
+	close(session->gNMEAdata.gps_fd);
     }
 }

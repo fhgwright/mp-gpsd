@@ -1,1 +1,121 @@
-fix formatting in (gpsd.c)handle_request(). the sprintfs...
+* Things to do:
+
+** On some systems gpsd doesn't pull DTR low when closing the GPS.
+
+Reported by Robert E. Anderson <rea@q.sr.unh.edu>.  He tells us this seems
+to have been introduced since 1.98.  The 1.98 code looked like this:
+
+void serial_close()
+{
+    if (ttyfd != -1) {
+	if (isatty(ttyfd)) {
+#if defined (USE_TERMIO)
+	    ttyset.c_cflag = CBAUD & B0;
+#else
+	    ttyset.c_ispeed = B0;
+	    ttyset.c_ospeed = B0;
+#endif
+            tcsetattr(ttyfd, TCSANOW, &ttyset);
+	}
+	/* Restore original terminal parameters */
+	/* but make sure DTR goes down */
+	ttyset_old.c_cflag |= HUPCL;
+	tcsetattr(ttyfd,TCSANOW,&ttyset_old);
+
+	close(ttyfd);
+	ttyfd = -1;
+    }
+}
+
+The new code looks like this:
+
+void gpsd_close(struct gps_session_t *session)
+{
+    if (session->gNMEAdata.gps_fd != -1) {
+	if (isatty(session->gNMEAdata.gps_fd)) {
+	    /* force hangup on close on systems that don't do HUPCL properly */
+	    cfsetispeed(&session->ttyset, (speed_t)B0);
+	    cfsetospeed(&session->ttyset, (speed_t)B0);
+	    tcsetattr(session->gNMEAdata.gps_fd, TCSANOW, &session->ttyset);
+	}
+	/* this is the clean way to do it */
+	session->ttyset_old.c_cflag |= HUPCL;
+	tcsetattr(session->gNMEAdata.gps_fd,TCSANOW,&session->ttyset_old);
+	close(session->gNMEAdata.gps_fd);
+    }
+}
+
+It looks as though there may be something wrong with cfsetispeed() and/or 
+cfsetospeed() in rea's environment.
+
+** Do the research to figure out just what the heck is going on with status bits
+
+NMEA actually has *three* kinds of validity bits.  Mode, status, and the
+Active/Void bit (some sources interpret 'V' as 'Navigation receiver warning').
+Sentences that have an Active/Void send V when there is no fix, so the 
+position data is no good.
+
+Let's look at which sentences send what:
+
+                GPRMC     GPGLL     GPGGA     GPGSA
+Returns fix      Yes       Yes       Yes        No
+Returns status   No        Yes       Yes        No
+Returns mode     No        No        No         Yes
+Returns A/V      Yes       Yes       No         No
+
+In addition, some sentences use empty fields to signify invalid data.
+
+My first conclusion from looking at this table is that the designers
+of NMEA 0183 should be hung for galloping incompetence.  But never mind that.
+What are we to make of this mess?
+
+The fact that the FV18 sends GPMRC/GPGLL/GPGGA but not GPGSA
+argues that GPGSA is optional.  I don't see how it can be, since it
+seems to be the only status bit that applies to altitude.  Just how are
+we supposed to know when altitude is valid if it doesn't ship GSA?  
+Can a receiver ever ship a non-empty but invalid altitude?
+
+Which of these override which other bits?  I don't think status is ever
+nonzero when mode is zero. So status overrides mode.  What other such
+relationships are there?
+
+* Things not to do:
+
+Here are several things that look like good ideas, but that turn out
+on closer inspection to be not possible or not worth the effort.
+
+** Try to crank the update rate up past 1 per second
+
+NMEA doesn't give us control of the update rate, and SiRF/Zodiac chips
+don't seem to be able to set cycle times below once per second even in
+binary mode.  Even on a chipset that permitted it, at 50km/h (31mi/h)
+that's only 13.8 meters change in position between updates.  Faster
+refresh might make sense for aviation applications, but not on foot or
+in a car.
+
+** Speak SiRF binary protocol
+
+It can't do anything interesting, for our purposes.  There's 
+little point in upping the baud rate when we can't get updates above
+1Hz -- even transmitting at infinite speed would only cut a half second
+off the expected latency,  (OK, push-to-fix mode might be interesting
+if they actually documented how to set it.)
+
+** Try to autodetect USB devices
+
+Sigh.  USB scanning won't work.
+
+The fundamental problem is that there is no GPS device class in the
+USB standard.  When you get device information about a GPS from the 
+USB subsystem, all you get is info on the USB-to-serial chipset it's
+using.
+
+This means that GPSes are not distinguishable from other USB-to-serial
+devices, in particular USB-to-RS232C adaptors.  This is a crash
+landing.  We could live with the scanning code failing to detect a
+GPS that's there, but we can't live with having it mis-identify
+another USB device as a GPS.  The least bad result from that would 
+be that the daemon opens and locks up the other device.
+
+This cannot be fixed, short of USB 1.1 growing a USB device type
+and vendor firmare advertising it.

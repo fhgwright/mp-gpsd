@@ -1,0 +1,121 @@
+# Automake descrotion for gpsd
+
+#
+# Build stuff depending on Motif
+#
+if HAVE_MOTIF
+BUILD_PROGS = xgps xgpsspeed
+endif
+
+XMLTO = xmlto
+
+bin_PROGRAMS = $(BUILD_PROGS)
+bin_SCRIPTS = gpsprobe
+
+#
+# Build xgps
+#
+xgps_SOURCES = display.c display.h xgps.c
+xgps_CFLAGS = $(X_CFLAGS)
+xgps_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(XM_LIBS) $(XT_LIBS) $(X_LIBS) $(X_PRE_LIBS) libgps.la -lm
+
+#
+# Build xgpsspeed
+#
+xgpsspeed_SOURCES = \
+	xgpsspeed.c \
+	Tachometer.c \
+	TachometerP.h \
+	Tachometer.h \
+	xgpsspeed.icon
+xgpsspeed_CFLAGS = $(X_CFLAGS)
+xgpsspeed_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(XAW_LIBS) $(XM_LIBS) $(X_LIBS) $(X_PRE_LIBS) libgps.la -lm
+
+
+#
+# Build gpsd
+#
+sbin_PROGRAMS = gpsd
+gpsd_SOURCES = gpsd.c
+gpsd_LDADD = $(LIBM) libgps.la -lm
+
+
+#
+# Build shared library
+#
+libgps_la_LDFLAGS = -version-number 3:0:0
+lib_LTLIBRARIES = libgps.la
+
+libgps_la_SOURCES = \
+	netlib.c \
+	nmea_parse.c \
+	serial.c \
+	drivers.c \
+	zodiac.c \
+	libgpsd_core.c \
+	libgps.c \
+	report.c
+
+libgps_la_LIBADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET)
+
+#
+# Create Manpages
+#
+man_MANS = \
+	gpsd.1 \
+	libgps.3 \
+	libgpsd.3 \
+	gpsprobe.1
+
+gpsd.1 gps.1 xgpsspeed.1: gpsd.xml
+	$(XMLTO) man gpsd.xml
+
+libgps.3: libgps.xml
+	$(XMLTO) man libgps.xml
+
+libgpsd.3: libgpsd.xml
+	$(XMLTO) man libgpsd.xml
+
+gpsprobe.1: gpsprobe.xml
+	$(XMLTO) man gpsprobe.xml
+
+#
+# Do a release with a tar.gz and a tar.bz2
+#
+release: distdir
+	-chmod -R a+r $(distdir)
+	GZIP=$(GZIP_ENV) $(AMTAR)$(TAR) chozf $(distdir).tar.gz $(distdir)
+	rm -f $(distdir)/gpsd.spec
+	sed '/^Source:/s/\.tar\.gz$$/\.tar\.bz2/' gpsd.spec \
+		> $(distdir)/gpsd.spec
+	BZIP2=$(BZIP2_ENV) $(AMTAR)$(TAR) --bzip2 -chof $(distdir).tar.bz2 $(distdir)
+	-rm -rf $(distdir)
+
+include_HEADERS = gps.h gpsd.h
+
+# Automake is buggy and doesn't automatically include bin_SCRIPTS in dist
+EXTRA_DIST = \
+	autogen.sh \
+	README \
+	INSTALL \
+	COPYING \
+	HACKING \
+	TODO \
+	AUTHORS \
+	gpsd.xml \
+	libgpsd.xml \
+	libgps.xml \
+	gpsprobe.xml \
+	$(man_MANS) \
+	xgps.ad \
+	xgpsspeed.ad \
+	gpsd.init \
+	gpsd.spec \
+	gps.py \
+	gpsd.py \
+	gpsprobe \
+	logextract
+
+# This is not distributed
+libgps: libgps.c .libs/libgps.a
+	$(CC) -o libgps -DTESTMAIN libgps.c .libs/libgps.a

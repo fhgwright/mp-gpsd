@@ -1,0 +1,165 @@
+<!doctype html public "-//w3c//dtd html 4.0 transitional//en">
+<html>
+<head>
+   <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
+   <meta name="Author" content="Remco Treffkorn">
+   <meta name="Description" content="gpsd is a utility that can listen to a GPS or Loran Receiver and re-publish the positional data in a simpler format.">
+   <meta name="Keywords" content="GPS, translator, GIS">
+   <title>GPSd &mdash; Put your GPS on the net!</title>
+</head>
+<body background="paper.gif">
+
+<h1 align='center'><code>gpsd</code> &mdash; a GPS service daemon</h1>
+
+<p><code>gpsd</code> is a service daemon that monitors a GPS attached
+to a host computer through a serial or USB port, making its data on
+the location/course/velocity of the sensor available to be queried on
+TCP port 2947 of the host computer.  With <code>gpsd</code>, multiple
+GPS client applications (such as navigational and wardriving software)
+can share access to a GPS without contention or loss of data. Also,
+gpsd responds to queries with a format that is substantially easier to
+parse than the NMEA 0183 emitted by most GPSes.  The <code>gpsd</code>
+distribution includes a linkable C service library and a Python
+module that developers of <code>gpsd</code>-aware applications can use
+to encapsulate all communication with <code>gpsd</code>.</para>
+
+<p>The goal of the <code>gpsd</code> project is to create a solid layer of
+open-source infrastructure for programs that want to be
+location-sensitive. We aim for simple, robust interfaces, unfussy
+operation, and an easy learning curve for application developers.
+Applications that presently use <code>gpsd</code> include
+<a href="http://www.pygps.org">pyGPS</a>,
+<a href="http://www.kismetwireless.net/">Kismet</a>, 
+<a href="http://www.gpsdrive.cc/">GPSdrive</a>, and 
+<a href="http://qpegps.sourceforge.net/">gpeGPS</a>.</p>
+
+<p>The most recent release was @VERSION@. 
+This web page was last updated on @DATE@.</p>
+
+<p>Note: As of mid-October 2004, Kismet is currently not working well
+with <code>gpsd</code>.  The symptom is a "Lost GPS signal" shortly
+after kismet startup.  There is a workaround, which is to run 
+<code>gpsd</code> with the -n option.  GPS interface code that works
+with both old and new <code>gpsd</code> is already in the development branch of
+Kismet and is intended to go into a future mainline release.</p>
+
+<p>We have a <a href='hardware.html'>list of compatible GPSses</a>
+with some technical information.  We also have <a href='NMEA.txt'>a
+list of NMEA sentences</a>.</p>
+
+<p>If you are new to GPS technology and don't quite understand what
+<code>gpsd</code> is about, you might find <a
+href="gps-hacking.html">ESR's Guide to Hacking With GPS</a>
+interesting.</p>
+
+<h1>Code and community</h1>
+
+<p>Look in the <a
+href="http://developer.berlios.de/project/showfiles.php?group_id=2116">download</a>
+directory for tarballs of all released versions. Access to the
+bleeding-edge developer version is supported <a
+href="http://developer.berlios.de/svn/?group_id=2116">via
+Subversion</a>.  The main project page is <a
+href='http://developer.berlios.de/projects/gpsd/'>here</a>.</p>
+
+<p>There are three project mailing lists:</p>
+
+<ul>
+<li><a
+href="https://lists.berlios.de/mailman/listinfo/gpsd-announce">gpsd-announce</a>
+is for release announcements and project news.</p></li>
+<li><a
+href="https://lists.berlios.de/mailman/listinfo/gpsd-users">gpsd-users</a>
+is for questions and technical support on <code>gpsd</code>, including support
+for application builders using <code>gpsd</code> as a component.</p></li>
+
+<li><a
+href="https://lists.berlios.de/mailman/listinfo/gpsd-dev">gpsd-dev</a>
+is for <code>gpsd</code> developers.</p></li>
+</ul>
+
+<h1>Documentation</h1>
+
+<p>The following manual pages describe the code:</p>
+
+<dl>
+<dt><a href="gpsd.html">gpsd.1</a></dt>
+<dd>The <code>gpsd</code> daemon.</dd>
+
+<dt><a href="libgps.html">libgps.3</a></dt>
+<dd>An interface library that manages communication with the daemon.</dt>
+
+<dt><a href="libgpsd.html">libgpsd.3</a></dt>
+<dd>The low-level library used by <code>gpsd</code> to talk to a GPS.</dd>
+
+<dt><a href="gpsprobe.html">gpsprobe.1</a></dt>
+<dd>The <code>gpsprobe</code> program for querying GPS capabilities.</dd>
+</dl>
+
+<p>Note that these describe gpsd-2, not the 1.x versions you may have
+seen before.</p>
+
+<h1>The gps client</h1>
+
+<p>Included in the package is a sample client called <code>gps</code>. It
+connects to a <code>gpsd</code> at any host you tell it to, and
+requests raw data, so that it can display the current location of all
+visible GPS satellites your receiver 'sees'.</p>
+
+<p><img SRC="gpsd1.gif" ALT="[image] The GPS receiver has no fix yet."/></p>
+
+<p>The GPS receiver has not yet acquired a fix.  The receiver has not
+tracked the grey satellites, but knows where they should be.</p>
+
+<p>The next image shows a good fix. A 3d fix provides latitude, longitude
+as well as altitude data, and requires at least four good satellites. A
+2d fix does not give altitude, but only requires 3 satellites.</p>
+
+<p><img SRC="gpsd2.gif" ALT="[image] The GPS receiver has a good 3d fix."/></p>
+
+<p>Depending on your GPS receiver, the additional satellites may be used
+to determine location with better accuracy.</p>
+
+<h1>Recipes and related resources</h1>
+
+<p><code>gpsd</code> also works with <a href="bt.html">bluetooth
+GPS</a> receivers.</p>
+
+<p>Robin Cull has a Gentoo Linux <a
+href="http://www.digitalevacuation.org/ebuilds/gpsd-1.07.ebuild">ebuild
+script</a>.</p>
+
+<h1>Other GPSDs</h1>
+
+<p>There are two Linux-based forks of <code>gpsd</code> in the wild, but
+there are plans to unfork at least one of them soon.  You can read a brief <a
+href="history.html">history</a> of the <code>gpsd</code> project if
+you are curious.</p>
+
+<p>There is a <a href='http://www.navsys.org/navsys/'>NavSys</a>
+project that includes a fork of gpsd called ngpsd.  The developer
+is now on the <code>gpsd</code> list and we plan an unfork.</p>
+
+<p>There is a project called <a
+href='http://www.mgix.com/gps3d/'>gps3d</a> that ships a gpsd with
+similar goals to ours, but which appears to be an independent
+development. There haven't been any releases since early 2002.</p>
+
+<p>There is a <code>gpsd</code>-like hack hosted under <a
+href='http://www2.musatcha.com/musatcha/computers/software/gpsd/'>Microsoft
+Windows</a>. It provides gpsd service from data in netstumbler under
+win32.  This way programs such as <a
+href='http://www.wigle.net'>JiGLE</a> can still get gps data from
+netstumbler. This program is not genetically related to
+<code>gpsd</code>.</p>
+
+<p>There is an interesting alpha-stage proposal called <a
+href='http://www.gpster.net/locod.html'>locod</a> that aims to
+integrate location information from GPSes and other sources.</p>
+
+<p>We aren't the Greenville Public School District or the Greater
+Peoria Sanitary District, nor do we have anything to do with the
+General Product Safety Directive.</p>
+
+</body>
+</html>

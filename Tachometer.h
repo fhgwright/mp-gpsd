@@ -1,12 +1,6 @@
+/* Tachometer.h -- tachometer widget interface */
 #ifndef _Tachometer_h
 #define _Tachometer_h
-
-/***********************************************************************
- *
- * Tachometer Widget
- *
- *
- ***********************************************************************/
 
 #include <X11/Xaw/Simple.h>
 
@@ -39,11 +33,10 @@
 #define XtNtachometerNeedleSpeed "needleSpeed"
 #define XtNtachometerCircleColor "circleColor"
 #define XtNtachometerNeedleColor "needleColor"
-
 #define XtCtachometerNeedleSpeed "NeedleSpeed"
 
-extern int TachometerGetValue(/* Widget */);
-extern int TachometerSetValue(/* Widget, int */);
+extern int TachometerGetValue(Widget);
+extern int TachometerSetValue(Widget, int);
 
 /* Class record constants */
 
@@ -51,6 +44,5 @@ extern WidgetClass tachometerWidgetClass;
 
 typedef struct _TachometerClassRec *TachometerWidgetClass;
 typedef struct _TachometerRec      *TachometerWidget;
-
 
 #endif /* _Tachometer_h */

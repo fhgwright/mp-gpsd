@@ -1,0 +1,325 @@
+Name: gpsd
+%define SO3VERSION	3.0.0
+%define SO1VERSION	2
+Summary: service daemon for mediating access to a GPS
+Version: @VERSION@
+Release: 1
+License: GPL
+Group: System Environment/Daemons
+Provides: gpsd
+URL: http://developer.berlios.de/projects/gpsd/
+Source0: %{name}-%{version}.tar.gz
+BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
+#Destinations: mailto:gpsd-announce@lists.berlios.de, mailto:gpsd-users@lists.berlios.de, mailto:gpsd-dev@lists.berlios.de
+
+%description 
+gpsd is a service daemon that mediates access to a GPS sensor
+connected to the host computer by serial or USB interface, making its
+data on the location/course/velocity of the sensor available to be
+queried on TCP port 2947 of the host computer.  With gpsd, multiple
+GPS client applications (such as navigational and wardriving software) 
+can share access to a GPS without contention or loss of data.  Also,
+gpsd responds to queries with a format that is substantially easier
+to parse than NMEA 0183.
+
+After installing this RPM, gpsd will try to start up at boot time.  If
+your distribution does not use udevd, you must manually create a
+symlink named /dev/gps to the serial or USB port that your GPS will
+plug in to (normally this will be /dev/ttyUSB0 or /dev/ttyS0).  The
+daemon will be quiescent when there are no clients asking for location
+information, and copes gracefully when the GPS is unplugged.
+
+%package -n gpsd-devel
+Summary: Client libraries in C and Python for talking to a running gpsd or GPS.
+Group: Development/Libraries
+Requires: gpsd
+
+%description -n gpsd-devel
+This package provides C libraries and Python modules that manage
+access to a GPS for applications.  You will need to have gpsd installed
+for it to work.
+
+%prep
+%setup -q
+
+%build
+%configure
+make %{?_smp_mflags}
+
+%install
+[ "$RPM_BUILD_ROOT" -a "$RPM_BUILD_ROOT" != / ] && rm -rf "$RPM_BUILD_ROOT"
+# gpsd files
+mkdir -p "$RPM_BUILD_ROOT"%{_sbindir}
+cp .libs/gpsd "$RPM_BUILD_ROOT"%{_sbindir}
+mkdir -p "$RPM_BUILD_ROOT"%{_bindir}
+cp .libs/xgps .libs/xgpsspeed gpsprobe "$RPM_BUILD_ROOT"%{_bindir}
+mkdir -p "$RPM_BUILD_ROOT"%{_mandir}/man1/
+cp gpsd.1 gpsprobe.1 "$RPM_BUILD_ROOT"%{_mandir}/man1/
+mkdir -p "$RPM_BUILD_ROOT"/etc/init.d/
+cp gpsd.init "$RPM_BUILD_ROOT"/etc/init.d/gpsd
+# gpsd-devel files
+mkdir -p "$RPM_BUILD_ROOT"%{_libdir}/
+cp .libs/libgps.la "$RPM_BUILD_ROOT"%{_libdir}
+cp .libs/libgps.so.%{SO3VERSION} "$RPM_BUILD_ROOT"%{_libdir}
+ln -f "$RPM_BUILD_ROOT"%{_libdir}/libgps.so.%{SO3VERSION} "$RPM_BUILD_ROOT"%{_libdir}/libgps.so.%{SO1VERSION}
+ln -f "$RPM_BUILD_ROOT"%{_libdir}/libgps.so.%{SO3VERSION} "$RPM_BUILD_ROOT"%{_libdir}/libgps.so
+mkdir -p "$RPM_BUILD_ROOT"%{_mandir}/man3/
+cp libgps.3 "$RPM_BUILD_ROOT"%{_mandir}/man3/
+cp libgpsd.3 "$RPM_BUILD_ROOT"%{_mandir}/man3/
+mkdir -p "$RPM_BUILD_ROOT"%{_includedir}
+cp gpsd.h "$RPM_BUILD_ROOT"%{_includedir}
+cp gps.h "$RPM_BUILD_ROOT"%{_includedir}
+PYVERSION=`python -c "import sys; print sys.version[:3]"`
+mkdir -p "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-packages
+cp gps.py gpsd.py "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-packages
+mkdir -p "$RPM_BUILD_ROOT"%{_libdir}/X11/app-defaults/
+cp xgps.ad "$RPM_BUILD_ROOT"%{_libdir}/X11/app-defaults/xgps
+cp xgpsspeed.ad "$RPM_BUILD_ROOT"%{_libdir}/X11/app-defaults/xgpsspeed
+
+%clean
+[ "$RPM_BUILD_ROOT" -a "$RPM_BUILD_ROOT" != / ] && rm -rf "$RPM_BUILD_ROOT"
+
+%post -n gpsd
+/sbin/chkconfig --add gpsd
+/sbin/chkconfig gpsd on
+/sbin/ldconfig
+if [ -d /etc/udev/rules.d/ ]; then echo 'KERNEL="ttyS0", SYMLINK="gps"' >/etc/udev/rules.d/80-gpsd.rules; fi
+
+%preun -n gpsd
+/sbin/chkconfig --del gpsd
+
+%postun -n gpsd
+/sbin/ldconfig
+if [ -d /etc/udev/rules.d/ ]; then rm /etc/udev/rules.d/80-gpsd.rules; fi
+
+%files
+%defattr(-,root,root,-)
+%doc README INSTALL COPYING gpsd.xml TODO
+%defattr(-,root,root,-)
+%attr(755, root, root) %{_sbindir}/gpsd
+%attr(755, root, root) %{_bindir}/xgps
+%attr(755, root, root) %{_bindir}/xgpsspeed
+%attr(755, root, root) %{_bindir}/gpsprobe
+%{_libdir}/libgps.so.%{SO3VERSION}
+%{_libdir}/libgps.so.%{SO1VERSION}
+%{_mandir}/man1/gpsd.1*
+%{_mandir}/man1/gpsprobe.1*
+%{_mandir}/man3/libgps.3*
+%{_mandir}/man3/libgpsd.3*
+%attr(755, root, root) %{_sysconfdir}/init.d/gpsd
+%{_libdir}/X11/app-defaults/xgps
+%{_libdir}/X11/app-defaults/xgpsspeed
+
+%files -n gpsd-devel
+%doc README INSTALL COPYING libgps.xml libgpsd.xml HACKING
+%{_libdir}/libgps.la
+%{_libdir}/libgps.so
+%{_includedir}/gps.h
+%{_includedir}/gpsd.h
+%{_libdir}/python*/site-packages/gps.py*
+%{_libdir}/python*/site-packages/gpsd.py*
+
+%changelog
+* Thu Jan 27 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.9-1
+- Python files restored to RPM.
+
+* Thu Jan 27 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.8-1
+- Embarrassing typo fix in gps.py. Avoid buffer overrun in xgps.c.
+  Plug Debian security bug 292347.  This version issued on an emergency
+  basis without Python libraries, which have packaging problems due 
+  to the 2.3/2.4 transition.
+
+* Fri Jan  14 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.7-1
+- More compiler-warning cleanups.  gps client name changed to xgps.
+  Added --speedunits option to xgpsspeed, --speedunits and --altunits
+  options to xgps.  Improved GPGSV parsing so it copes gracefully if
+  we start in the middle of a sequence.  Merged Petter Reinholdtsen's
+  fix for GPGSA lists with holes.  In xgps, satellites used in the
+  last fix are now dotted in the middle.  New -P option to create
+  pidfile.  Audited for potential buffer overruns, found and fixed
+  two.
+
+* Sat Jan 01 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.6-1
+- Petter Reinholdtsen's fix for gps.py buffering.  Fix syntax errors
+  in udev scriptlets.  Clean up after GCC warning messages.  Drop use of 
+  vsprintf, so we get a link-time error on systems that might produce 
+  buffer overruns (all modern Unixes support vsnsprintf which is safe).
+
+* Thu Dec 23 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 2.5.1
+- Use gmtime instead of localtime when guessing the day or year of a date;
+  this avoids jitter in the day after 19:00 GMT.  Added -v option to dump 
+  version and exit.  Commented out a crash-causing debug line in gps.py.
+
+* Thu Dec  9 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 2.4-1
+- Minor bugs in gpsd.py fixed.  M now returns 0 status if GPGSA not yet
+  seen; this change also fixes a bug where gpsd claimed it was confused
+  if GPGSA had not been seen and status was set.  RPM will now install 
+  a udevd rule if the host system uses it.  Don't set the online flag
+  on activate.  HP port changes and -Wall cleanup.  James Cameron's 
+  fixes to clean up gps.c and use X timeouts rather than alarms.
+
+* Mon Oct 25 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 2.3-1
+- Documentation and comment fixes.  Last two globals removed from 
+  low-level interface; library should now be fully re-entrant. Mac OS X
+  port fixes. Q command fix from Robin L Darroch <robin@spade-men.com>.
+
+* Mon Oct 18 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 2.2-1
+- Documentation improvements.  BSD port fixes.  Bug fix: speed timestamp
+  wasn't initialized properly in libgps. Device is now an optional 
+  command-line argument of gpsprobe, in line with the clients.  gpsd.py
+  now should handle fvwm devices correctly.  Values in gps data
+  panel are now labeled with units.  Attempted fix for 2.1 bug of DTR
+  not being pulled low on exit.
+
+* Thu Sep 30 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 2.1-1
+- Various internal cleanups, including fossil removal in the
+  configuration machinery.  FV-18, Tripmate, Earthmate and are now
+  enabled but can be disable with --disable-$NAME at configure time.
+  When you call configure with --disable-shared, libgps is linked
+  statically to the binaries (native libs are still linked
+  shared). Fixed buggy handling of -p option in gps.c and xgpsspeed.c;
+  it's now an optional command-line argument.
+
+* Thu Sep 16 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 2.0-1
+- Packaging fixes for 2.0 release.
+
+* Wed Sep  8 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 1.98-1
+- Only do one getdtablesize() call, otherwise we do several
+  getrlimits() each poll cycle.  TripMate is working.  gpsprobe now
+  deduces NMEA version.  Zodiac Earthmate seems to work.
+
+* Wed Sep 08 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 1.97-1
+- Removed PRWIZCH support (it still passes through in raw mode).
+  Build Motif-dependent programs conditionally.  Added gpsprobe.
+  Fixed a brown-paper-bag-bug in 1.96 RPM packaging.
+
+* Tue Aug 31 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 1.96-1
+- Implemented non-blocking writes to clients, so a stalled client
+  cannot stall gpsd.  Fixed a nasty array-overrun bug.  Timestamps
+  are now in ISO8601 format, with sub-second precision if the GPS
+  delivers that.  First cuts at Python interfaces included.  libgps.a
+  interface now bundles session fd into an allocated session block.
+  Automake-based build machinery from Jens Oberender; RPM now
+  installs shared libraries.  FV18 driver added. Offline timer in GPS.
+
+* Wed Aug 25 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 1.95-1
+- Fixed broken 'make dist', missing display.c and Tachometer.c 
+  are in there now.
+
+* Tue Aug 24 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 1.94-1
+- Fix embarrassing bug -- watcher mode did not work for more than one
+  client at a time.  Y command now carries information about which 
+  satellites were used in the last fix.  New timeout mechanism, no
+  longer dependent on FIONREAD.
+
+* Mon Aug 23 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 1.93-1
+- Fourth prerelease. Daemon-side timeouts are gone, they complicated
+  the interface without adding anything.  Command responses now 
+  contain ? to tag invalid data. -D2 feature of 1.92 backed out.
+
+* Sun Aug 22 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 1.92-1
+- Third prerelease.  Clients in watcher mode now get notified when
+  the GPS goes online or offline.  Major name changes -- old libgps
+  is new libgpsd and vice-versa (so the high-level interface is more
+  prominent).  Specfile now includes code to install gpsd so it will
+  be started at boot time.  -D2 now causes command error messages
+  to be echoed to the client.
+
+* Sat Aug 21 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 1.91-1
+- Second pre-2.0 release.  Features a linkable C library that hides the 
+  details of communicating with the daemon.  The daemon now recovers
+  gracefully from having the GPS unplugged and plugged in at any time;
+  one of the bits of status it can report is whether the GPS is online.
+  The gps and xgpsspeed clients now query the daemon; their code 
+  for direct access to the serial port has been deliberately removed.
+
+* Sun Aug 15 2004 Eric S. Raymond <esr@snark.thyrsus.com> - 1.90
+- Creation of specfile.
+
+* Sun Mar 21 2004 Remco Treffkorn <remco@rvt.com> - ?
+- Without PRWIZCH sentence: sat. colors in gps according to ss, grey==lt20, 
+  yellow==lt40 else green. 
+- Added L Q and I to the protocol. Removed G and T.
+  Changed the timeout mechanism. Try to not return Lat/Lon/Alt if
+  validity is in doubt.
+
+* Thu Jan 29 2004 Remco Treffkorn <remco@rvt.com> - ?
+- Make applications null-terminate their resource lists.
+
+* Sat Dec 20 2003 Remco Treffkorn <remco@rvt.com> - ?
+- Removed <varargs.h> from netlib. Not needed, and new gcc does not support
+  it any more.
+
+* Wed Aug 20 2003 Remco Treffkorn <remco@rvt.com> - 1.10
+- Add install target. Fix clean target. Make GPS timeout configurable.
+- Make xgpsspeed build with Apple's X11.
+- Make sure that we don't segfault if the NMEA is badly formed.
+
+* Mon Aug 18 2003 Remco Treffkorn <remco@rvt.com> - ?
+- Use cfset[io]speed() to set speed in serial.h. Glibc is quite insane
+  and I am tired to chase it, so I give up. Hope this works for BSD.
+  Set status and mode 0 after GPS timeout (5 sec) - Cougar <cougar@random.ee>
+
+* Sun Feb 16 2003 Remco Treffkorn <remco@rvt.com> - 1.09
+- Include sys/time.h in gpsd.c for struct timeval.
+
+* Sun Nov 03 2002 Remco Treffkorn <remco@rvt.com> - ?
+- G or g command returns six-digit Maidenhead grid square (like FN12fx)
+
+* Thu Oct 03 2002 Remco Treffkorn <remco@rvt.com> - 1.08
+- Added sockopt SO_REUSEADDR to netlib.c passive_sock.
+
+* Tue Feb 05 2002 Remco Treffkorn <remco@rvt.com> - 1.07
+- What happend with 1.02 to 1.06?
+- em.c uses <time.h> (as it should). Removed some <sys/time.h>
+- where they were not needed.
+
+* Sun Mar 05 2000 Remco Treffkorn <remco@rvt.com> - 1.01
+- Updated to IANA port.
+- Fixes to DGPS support.
+
+* Sun Jan 02 2000 Remco Treffkorn <remco@rvt.com> - 1.0
+- Added DGPS fixes from Curt Mills. (See README for contact info.)
+
+* Mon Dec 13 1999 Remco Treffkorn <remco@rvt.com> - 0.99dgps
+- Added minimal DGPS support by Derrick J Brashear
+
+* Sat Jul 17 1999 Remco Treffkorn <remco@rvt.com> - 0.99
+- Rockwell binary is now translated to NMEA format, so that
+  clients like gps will work with an EarthMate.
+- Added speedometer application. Thanks to Derrick J Brashear
+  for his work (see README for contact info).
+
+* Thu Mar 04 1999 Remco Treffkorn <remco@rvt.com> - 0.96
+- Changed EarthMate support. Rockwell binary is now almost properly
+  supported. Only the minimum required information is extracted.
+
+* Sat Feb 06 1999 Remco Treffkorn <remco@rvt.com> - 0.95
+- Added suport for EarthMate receivers. Since I do not have one, this is 
+  untested.
+- If it works, it does the following: You start gpsd with a baudrate of 9600
+  and give it the -Te option. If gpsd gets the EartMate it will enable the 
+  receiver and then attempt to switch it into NMEA mode. If the EarthMate id 
+  is not received, but a binary data header is received, then we will try to 
+  switch NMEA too.
+
+* Sun Jan 24 1999 Remco Treffkorn <remco@rvt.com> - 0.94
+- Y2K compliant ;-)  (... is NOT. Look for "FIXME:" in nmea_parse.c)
+
+* Tue Jan 27 1998 Remco Treffkorn <remco@rvt.com> - 0.93
+- using GNU autoconf now.
+- combined gpsd + gpsclient. No more init files, command line only.
+
+* Tue May 13 1997 Remco Treffkorn <remco@rvt.com> - 0.9
+- some cleanups in the ini code. version 0.9 ...
+
+* Fri Apr 25 1997 Remco Treffkorn <remco@rvt.com> - 0.8
+- version 0.8, some bug fixes. New MODE member, STATUS member changed.
+
+* Mon Apr 21 1997 Remco Treffkorn <remco@rvt.com> - 0.7
+- released version 0.7
+
+# The following sets edit modes for GNU EMACS
+# Local Variables:
+# mode:rpm-spec
+# End:

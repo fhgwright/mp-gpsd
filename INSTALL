@@ -1,56 +1,94 @@
+Here are the steps for installing gpsd and verifying its performance:
 
-The following is from Brook:==================================================
+1. Start by making sure you can get data from your GPS, otherwise the later
+steps will be very frustrating.  In this command
 
-Run ./configure (or sh configure if the script does not have execute
-permission).
+      stty -F /dev/ttyXXX ispeed 4800 && cat </dev/ttyXXX
 
-Check the Makefile.
+replace ttyXXX with the filename of the port.  This will probably be
+either /dev/ttyUSB0 or /dev/ttyS0.  When you run this command, you
+should see text lines beginning with $ come to stdout (possibly after
+a short initial burst of binary garbage).  If you don't see this, you
+may have OS-level problems with your serial support, but more likely
+have the wrong device.  Look again.
 
-run make:  libgpsd.a, gpsd, and gps are built.
+2. Make a symlink named /dev/gps to your GPS port; the command will be
 
-Copy gpsd and gps wherever you want them to live.
+     ln -s /dev/ttyXXX /dev/gps
 
-Copy the app-defaults file Gps to your home directory or to the
-system-wide X app-defaults directory.
+where ttyXXX is as in step 1.
 
-Command line options:
-  -D integer   [ set debug level ] 
-  -L longitude [ set longitude ] 
-  -S integer   [ set port for daemon ] 
-  -h           [ help message ] 
-  -l latitude  [ set latitude ] 
-  -p string    [ set gps device name ] 
-  -s baud_rate [ set baud rate on gps device ] 
+3. Build gpsd from source (skip this step if you have installed a gpsd
+binary package).
 
-Gps device names may be either device files (e.g., /dev/gps) or ports
-served by gpsd (e.g., localhost:2947).  The deamon port option
-determines which port the daemon will monitor for connections from
-either clients or cascaded daemons.  Note that the baud rate is only
-important when connected directly to the gps device through a serial
-port.  The latitude/longitude (which must be strings ending in E/W or
-N/S, respectively) options are only required if the gps device must be
-initialized with a position.
+You will need to have either Motif or LessTif installed in order for
+xgps and xgpsspeed to build.  If you're on a Linux system, you probably
+already have LessTif.  Source code is available from
+<http://www.lesstif.org/>.
 
-Good luck ;)
-==============================================================================
+To build from source, run ./autogen.sh (or sh autogen.sh if the
+script does not have execute permission).  Then run make: libgps.so,
+gpsd, xgps, and xgpsspeed will be built. Copy the app-defaults files
+xgps.ad and xgpsspeed.ad to your home directory or to the system-wide X
+app-defaults directory.
 
+4. Determine whether you need a non-NMEA driver.  Usually you will not,
+but there are unusual exceptions.  Consult the hardware page at
 
-Let me add:
+    http://gpsd.berlios.de/hardware.html
 
-The "right" thing to do is, to start gpsd on a serial port that has the gps
-connected to it.
+to find out if your hardware is one of them.  If so, you may need to
+specify a driver type option at gpsd startup time; if you installed 
+a binary RPM, this will mean editing the gpsd init script.
 
-Then start gps and have it connect to gpsd via a socket. Give it a device
-name like "localhost:2947", which means: connect to the host localhost using
-port 2947.
+5. Start gpsd on a serial or USB port that has the GPS connected to it.
+If you made a /dev/gps symlink, just invoking "gpsd" as root should do it.
+If you installed from an RPM, gpsd will be started for you automatically 
+at boot time.
 
-You can also telnet to this port for testing. When doing that, type an 'R'
-followed by <cr>. This should display the RAW nmea sentences the deamon
-receives from the gps.
+6. Once gpsd is running, telnet to port 2947.  Type "r" to start raw
+and watcher modes.  You should see NMEA data (text lines beginning
+with $) spewing out.  You will also see lines with a GPSD prefix;
+these are sentence translations in GPSD protocol.
 
-You can (but please don't) connect gps (the program) directly to a serial
-port and a gps (the device). 
+Note that until your GPS has acquired a fix, typing "p" to get position
+will only return this:
 
-Now I am geting confused :)
+GPSD,P=?
 
- Remco
+This response does not mean that gpsd is broken or that the GPS is not
+sending data, merely that gpsd has not yet seen any *valid* position data.
+You will have to wait for the GPS to acquire satellite lock.  If you have 
+raw or watcher mode on it should be obvious when you get a lock.
+
+7. Start the xgps client.  Calling it with no arguments should do the right 
+thing.  You should see a GUI panel with position/velocity-time information,
+and a satellite display.  The displays won't look very interesting until 
+the GPS acquires satellite lock.
+
+8. Check out the list of supported hardware at 
+
+   http://gpsd.berlios.de/hardware.html
+
+If your GPS isn't on the list, please send us information to add a new
+line to the table.  Here's what we need:
+
+1. Name (preferably with a URL to the vendor's product page or spec sheet).
+2. Chipset.  Ideally we'd like to know both the GPS engine chip and
+   the USB-to-serial chip the device uses.  80% of the time this will be
+   SiRF-II + PL2303, but it's the exceptions that are interesting.
+3. Interface type -- RS232, USB, CF, etc.
+4. Vendor (preferably with a URL to the vendor's website).
+5. gpsd type -- usually this will be 'n'.  If you had to specify a
+   non-NMEA driver type to make gpsd work, give it.
+6. Version of gpsd you tested with.
+7. NMEA protocol version.
+8. List of NMEA sentences the GPS emits.
+9. Notes -- anything interesting or unusual about this GPS.
+
+You may get some help on fields 2, 7, and 8 by running gpsprobe.  Note that
+you will have to stop gpsd to do this.
+
+We can also use updates of the latest version number known to work with
+hardware already supported.
+

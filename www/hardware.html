@@ -1,0 +1,369 @@
+<!doctype html public "-//w3c//dtd html 4.0 transitional//en">
+<html>
+<head>
+   <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
+   <meta name="Author" content="Eric Raymond">
+   <meta name="Description" content="Hardware known to work with GPSD.">
+   <meta name="Keywords" content="GPS, translator, mxmap, GIS">
+   <title>Compatible GPSes</title>
+</head>
+
+<body background="paper.gif">
+
+<h1 align='center'>GPSD-Compatible GPSes</h1>
+
+<p><code>gpsd</code> should work with any GPS using an RS232C or USB
+interface that advertises NMEA-0183 compliance.  Here are some notes
+on hardware we have tested.  Hyperlinks lead to technical information.
+The "Works with" column is the last <code>gpsd</code> version with
+which this GPS is known to have been successfully tested.</p>
+
+<table border='1'>
+<tr>
+<th>Name</th>
+<th>Compatibility</th>
+<th>Chipset</th>
+<th>Interface</th>
+<th>Vendor</th>
+<th>gpsd type</th>
+<th>Works with</th>
+<th>NMEA version</th>
+<th>Sentences</th>
+<th width="50%">Notes</th>
+</tr>
+<tr>
+<td><a href='http://www.haicom.com.tw/products.htm'>HI-204S</a></td>
+<td>Excellent</td>
+<td>SiRF-II + PL2303</td>
+<td>USB</td>
+<td><a href='http://www.haicom.com.tw/'>Haicom</a></td>
+<td align='center'>n</td>
+<td>2.5</td>
+<td>2.2</td>
+<td>GPGGA, GPGSA, GPGSV, GPRMC, GPVTG</td>
+<td>Haicom provided a test unit. Manual states incorrectly that VTG
+is off by default.</td>
+</tr>
+<tr>
+<td><a href='http://www.haicom.com.tw/products.htm'>HI-204E</a></td>
+<td>Excellent</td>
+<td>Evermore BBP1202 + PL2303</td>
+<td>USB</td>
+<td><a href='http://www.haicom.com.tw/'>Haicom</a></td>
+<td align='center'>n</td>
+<td>2.6</td>
+<td>2.2</td>
+<td>GPGGA, GPGSA, GPGSV, GPRMC, GPVTG</td>
+<td>Probably uses PL2303 but we have not verified this.</td>
+</tr>
+<tr>
+<td><a href='bu_303b.html'>BU-303</a></td>
+<td>Excellent</d>
+<td>SiRF-II + PL2303</td>
+<td>USB</td>
+<td><a href='http://www.globalsat.com.tw/english/products_detail.php?main_id=5&p_id=9'>Globalsat</a>; OEMed as 
+NaviLock, Hyperdata</td>
+<td align='center'>n</td>
+<td>2.6</td>
+<td>2.2</td>
+<td>GPGGA, GPGSA, GPGSV, GPRMC, GPGLL, GPVTG</td>
+<td>
+GlobalSat provided three test units.
+Older versions of the BU-303 had a <a href='bu_303.html'>design
+defect</a> that made it likely to fail if subjected to vibration or
+mechanical shock, but this was fixed in September 2004.  There is
+a CF version of this called the BU-307; we have a report that it
+works but no test hardware.
+</td>
+</tr>
+<tr>
+<td>TripNav 200</td>
+<td>Unknown</d>
+<td>SiRF-II + FTDI</td>
+<td>USB</td>
+<td><a href='http://www.rayming.com/'>Rayming</a></td>
+<td>-</td>
+<td>-</td>
+<td>2.2</td>
+<td>GPGGA, GPGSA, GPGSV, GPRMC, GPGLL, GPVTG</td>
+<td>
+Older versions of the GlobalSat PCB the TripNav is based on 
+had a <a href='bu_303.html'>design
+defect</a> that made it likely to fail if subjected to vibration or
+mechanical shock, but this was fixed in September 2004.  The
+<a href='http://ftdi-usb-sio.sourceforge.net/'>FTDI USB-to-serial
+chip</a> is supported only as alpha software not yet
+incorporated into the Linux kernel.  Rayming says it's thinking
+of moving this product to the PL2303.
+</td>
+</tr>
+<tr>
+<td>EarthMate</td>
+<td>Good</td>
+<td>Zodiac</td>
+<td>RS-232</td>
+<td>DeLorme</td>
+<td align='center'>e</td>
+<td>2.0</td>
+<td>2.2?</td>
+<td>PRWIZCH, GPGSA, GPRMC</td>
+<td>The old Zodiac version spoke Rockwell binary protocol. These 
+models have been discontinued but are still common.</td>
+</tr>
+<tr>
+<td>EarthMate USB</td>
+<td>Good</td>
+<td>SiRFII (GPS2e/LP-7451) + Cypress M8 (CY7C64013)</td>
+<td>USB</td>
+<td>DeLorme</td>
+<td align='center'>n</td>
+<td>2.5</td>
+<td>2.2</td>
+<td>GPGGA,GPGSA,GPGSV,GPRMC,GPGLL,GPVTG</td>
+<td>This is the replacement for the old Zodiac version that spoke
+Rockwell binary protocol. Some other sentences can be enabled.
+Requires a 2.6.10 or better kernel for the Cypress support.</td>
+</tr>
+<tr>
+<td><a href='http://www.sanav.com/gps_engine_board/fv-18.htm'>FV-18</a></td>
+<td>Good</td>
+<td>FV-18</td>
+<td>RS-232 (5V TTL)</td>
+<td><a href='http://www.sanav.com/'>San Jose Navigation</a></td>
+<td align='center'>f</td>
+<td>2.0</td>
+<td>2.3</td>
+<td>GPGGA, GPGSA, GPGSV, GPRMC, GPVTG, GPZDA, GPDTM, GPGLL</td>
+<td>Special gpsd support uses 8N2 and requests sentences that gpsd
+requires.  OEM module only, not a retail version.</td>
+</tr>
+<tr>
+<td><a
+href='http://www.royaltek.com/proditem.asp?hotitem=yes&hid=1'>RoyalTek
+Sapphire USB</a></a></td>
+<td>Good</td>
+<td>SiRF-II</td>
+<td>USB</td>
+<td>RoyalTek</td>
+<td align='center'>n</td>
+<td>1.97</td>
+<td>2.2</td>
+<td>GPGGA, GPGSV, GPRMC, GPGLL, GPVTG, GPGSA</td>
+<td>There's an RS232 variant as well, not yet tested.</td>
+</tr>
+<tr>
+<td><a href='http://vancouver-webpages.com/peter/tripmate.faq'>TripMate</a></td>
+<td>Good</td>
+<td>Zodiac</td>
+<td>RS-232</td>
+<td>DeLorme</td>
+<td align='center'>t</td>
+<td>1.97</td>
+<td>?</td>
+<td>GPRMC, GPGSA, GPGGA, GPGSV, PRWIRID, PRWIZCH</td>
+<td>
+Discontinued sometime before November 1998. 
+Takes optional latitude/longitude initialization.
+</td>
+</tr>
+<tr>
+<td>Garmin 48</td>
+<td>Excellent</td>
+<td>Garmin</td>
+<td>RS-232</td>
+<td><a href="http://www.garmin.com">Garmin</a></td>
+<td align='center'>n</td>
+<td>2.3</td>
+<td>2.0</td>
+<td>
+PGRME, GPGLL, PGRMZ, PGRMM, GPBOD, GPRTE, GPWPL, 
+GPRMC, GPRMB, GPGGA, GPGSA, GPGSV
+</td>
+<td>
+Garmin 12XL and 45 are nearly identical and should work as well.<BR>
+NMEA mode must be set to 183 v2.0.<BR>
+Details on Garmin's proprietary protocol can be found
+<a href="http://www.garmin.com/support/commProtocol.html">here</a>.
+</td>
+</tr>
+<tr>
+<td>
+<a href='http://www.garmin.com/manuals/GPS18_TechnicalSpecification.pdf'>
+Garmin GPS-18</a></td>
+<td>Good</td>
+<td>Garmin</td>
+<td>USB</td>
+<td><a href='http://www.garmin.com/'>Garmin</a></td>
+<td align='center'>n</td>
+<td>2.5</td>
+<td>?</td>
+<td>
+GPGSV, GPRMC, GPGGA, GPGSA, GPGLL
+</td>
+<td>
+DOP (Dilution of Precision) information not available (Garmin protocol 
+includes EPE only). DGPS information in GPGGA sentence is not returned.
+Speed and course over ground are calculated from the north/east
+velocity  and may not be accurate.  Magnetic variation information 
+is not available. Garmin uses a nonstandard 16-bit SNR scale.
+</td>
+</tr>
+<tr>
+<td><a href='http://www.garmin.com/manuals/Geko201_OwnersManual.pdf'>Garmin Geko 201</a></td>
+<td>Good</td>
+<td>Garmin</td>
+<td>RS-232</td>
+<td><a href="http://www.garmin.com">Garmin</a></td>
+<td align='center'>n</td>
+<td>2.5</td>
+<td>?</td>
+<td>
+PGRME, GPGLL, PGRMZ, GPBOD, GPRTE, 
+GPRMC, GPRMB, GPGGA, GPGSA, GPGSV
+</td>
+<td>
+The online copy of the owner's manual seems to be badly garbled.
+</td>
+</tr>
+<tr>
+<td>TechWay TP-051</td>
+<td>Good</td>
+<td>SiRF-II? + PL2303</td>
+<td>USB</td>
+<td><a href='http://www.techwayinc.com.tw/'>Techway</a></td>
+<td align='center'>n</td>
+<td>2.3</td>
+<td>?</td>
+<td>
+GPGSV, GPRMC, GPGGA, GPGSA
+</td>
+<td>
+This waterproof GPS receiver connects to a USB port on a laptop or
+computer
+</td>
+</tr>
+</table>
+
+<p>We want to extend this table.  To report on a GPS, please
+tell us the following:</p>
+
+<ol>
+<li>The GPS model name</li>
+<li>Whether or not it works</li>
+<li>If possible, an URL to a technical reference on it</li>
+<li>The GPS and (if applicable) USB-to-serial chip it uses.  (Look at
+the output of lsusb(1), it may identifty the USB-to-serial chip.)</li>
+<li>The interface type (RS232, USB, CF)</li>
+<li>The vendor</li>
+<li>The gpsd driver type (almost always 'n')</li>
+<li>Version of gpsd you tested with</li>
+<li>NMEA version it emits, or '?' if the documentation doesn't say</li>
+<li>A list of NMEA sentences it emits</li>
+<li>Notes on the device</li>
+</ol>
+
+<p>You should be able to determine many of these things by running
+gpsprobe against the device and looking at the output.</p>
+
+<h2>Notes on chipset support:</h2>
+
+<p>SiRF-II: A <a
+href='http://www.rayming.com/download/NEMA_commands.pdf'>technical
+manual</a> describing NMEA extensions supported by this chipset is
+available from Globalsat's U.S. reseller.  For SiRF binary '
+protocol itself, look <a href='sirf_protocol.pdf'>here</a>.</p>
+
+<p>A technical spec for the Evermore chipset <a
+href='http://www.twintrading.co.kr/pdf/himark/bbp120brief.pdf'>is
+available</a>.</p>
+
+<p>Zodiac: See the <a href='zodiac.pdf'>Zodiac Serial Data
+Interface Specification</a></p>
+
+<p>PL2303: support is broken in late 2.4 Linux kernels (it broke after
+2.4.18) but good in 2.6.8 and later.</p>
+
+<h2>RS232 levels:</h2>
+
+<p>TTL level RS-232 uses 0v and +5v, ordinary RS-232 uses -12v to -5v
+and +5v to +12 volts for the signal (IIRC). These are not compatible,
+and attempting to combine them can zorch your GPS.  Converters do
+exist, see Google.</p>
+
+<h2>Unsupported Hardware:</h2>
+
+<p>Here is a list of the vendors we don't yet have test hardware from.
+An annoyingly large percentage of these outfits do not advertise
+email contact addresses on their websites.  If you have test results 
+for any of this hardware, please tell us.  Most are straight NMEA and
+will probably work fine.</p>
+
+<table border='1'>
+<tr>
+<th>Name</th>
+<th>Contact address</th>
+<th>Products</th>
+<th>Notes</th>
+</tr>
+<tr>
+<td><a href='http://www.delorme.com/'>DeLorme</a></td>
+<td>?</td>
+<td>Earthmate</td>
+<td>Now SiRF-II-based</td>
+</tr>
+<tr>
+<td><a href='http://www.deluoelectronics.com/'>Deluo</a></td>
+<td>billing@deluo.com</td>
+<td>Deluo GPS Pro</td>
+<td>Looks like another SiRF-II unit.  Advertises Linux 2.4 support.
+USB and RS232-DB9 adaptors sold separately.</td>
+</tr>
+<tr>
+<td><a href='http://www.garmin.com/'>Garmin</a></td>
+<td>sales@garmin.com</td>
+<td>eTrex, foreTrex, GPS12, GPS72, GPS76</td>
+<td>All handhelds with consoles.  These guys are focused on the
+aviation market.</td>
+</tr>
+<tr>
+<td><a href='http://www.laipac.com/'>Laipac</a></td>
+<td>?</td>
+<td>G-10</td>
+<td>Another SiRF unit.</td>
+</tr>
+<tr>
+<td><a href='http://www.leadtek.com/gps.html'>Leadtek</a></td>
+<td>gps@leadtek.com</td>
+<td>GPS9531, GPS9532</td>
+<td>SiRF-II, uses R232C via RJ11 jack.  One illustration of the 9531
+seems to show the RJ11 plugged into an adaptor that goes to USB and
+DB9 connectors.</td>
+</tr>
+<tr>
+<td><a href='http://www.magellangps.com/'>Magellan</a></td>
+<td>?</td>
+<td>Roadmate, eXplorist, Meridian, SportTrack, MLR</td>
+<td>Handhelds with consoles.</td>
+</tr>
+<tr>
+<td><a href='http://www.rikaline.com/'>Rikaline</a></td>
+<td>?</td>
+<td>GPS-6012, GPS-6010-X5, GPS-6010</td>
+<td>The 6012 uses their own chipset; the others are SiRF-II.  All ship
+with PS/2 connectors, presumably going to RS232 or USB adaptors.</td>
+</tr>
+<tr>
+<td><a href='http://www.royaltek.com/'>Royaltek</a></td>
+<td>?</td>
+<td>Sapphire, Onyx</td>
+<td>Sapphire is tested.  Onyx also seems to be SiRF-II-based.</td>
+</tr>
+</table>
+
+<!--
+SiRF-II contact: Richard Saucedo  (408)-392-8385 rsaucedo@sirf.com
+-->
+
+
+</body>
+</html>

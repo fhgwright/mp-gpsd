@@ -1,14 +1,21 @@
-#include "config.h"
 #include <unistd.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <syslog.h>
 #include <signal.h>
 #include <errno.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <string.h>
 #include <netdb.h>
+#include <stdarg.h>
+#include <setjmp.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <netinet/in.h>
+#include <assert.h>
 
+#include "config.h"
 #if defined (HAVE_PATH_H)
 #include <paths.h>
 #else
@@ -16,616 +23,625 @@
 #define _PATH_DEVNULL    "/dev/null"
 #endif
 #endif
-
-#if defined (HAVE_STRINGS_H)
-#include <strings.h>
-#endif
-
-
-#if defined (HAVE_SYS_TERMIOS_H)
-#include <sys/termios.h>
-#else
-#if defined (HAVE_TERMIOS_H)
-#include <termios.h>
-#endif
-#endif
-
 #if defined (HAVE_SYS_SELECT_H)
 #include <sys/select.h>
 #endif
-
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <stdio.h>
 #if defined(HAVE_SYS_TIME_H)
 #include <sys/time.h>
 #endif
 
-#include "nmea.h"
 #include "gpsd.h"
-#include "version.h"
 
-#define QLEN		5
-#define BUFSIZE		4096
-#define GPS_TIMEOUT	5		/* Consider GPS connection loss after 5 sec */
+#define QLEN			5
 
-int gps_timeout = GPS_TIMEOUT;
-int debug = 0;
-int device_speed = B4800;
-int device_type;
-char *device_name = 0;
-char *latitude = 0;
-char *longitude = 0;
-char latd = 'N';
-char lond = 'W';
-				/* command line option defaults */
-char *default_device_name = "/dev/gps";
-char *default_latitude = "3600.000";
-char *default_longitude = "12300.000";
+struct gps_session_t *session;
+static char *device_name = DEFAULT_DEVICE_NAME;
+static char *pid_file = NULL;
+static fd_set all_fds, nmea_fds, watcher_fds;
+static int debuglevel, nfds, in_background = 0;
 
-int nfds, dsock;
-int verbose = 1;
-int bincount;
+static jmp_buf	restartbuf;
+#define THROW_SIGHUP	1
 
-int reopen = 0;
-
-static int handle_input(int input, fd_set * afds, fd_set * nmea_fds);
-static int handle_request(int fd, fd_set * fds);
+static void restart(int sig UNUSED)
+{
+    longjmp(restartbuf, THROW_SIGHUP);
+}
 
 static void onsig(int sig)
 {
-    serial_close();
-    close(dsock);
-    syslog(LOG_NOTICE, "Received signal %d. Exiting...", sig);
+    gpsd_wrap(session);
+    gpsd_report(1, "Received signal %d. Exiting...\n", sig);
     exit(10 + sig);
 }
 
-static void sigusr1(int sig)
+static void store_pid(pid_t pid)
 {
-  reopen = 1;
+	FILE *fp;
+
+	if ((fp = fopen(pid_file, "w")) != NULL) {
+		fprintf(fp, "%u\n", pid);
+		(void) fclose(fp);
+	} else {
+		gpsd_report(1, "Cannot create PID file: %s.\n", pid_file);
+	}
 }
 
-static int daemonize()
+static int daemonize(void)
 {
     int fd;
     pid_t pid;
 
-    pid = fork();
-
-    switch (pid) {
+    switch (pid = fork()) {
     case -1:
 	return -1;
-    case 0:
+    case 0:	/* child side */
 	break;
-    default:
-	_exit(pid);
+    default:	/* parent side */
+	if (pid_file)
+		store_pid(pid);
+	exit(0);
     }
 
     if (setsid() == -1)
 	return -1;
     chdir("/");
-    fd = open(_PATH_DEVNULL, O_RDWR, 0);
-    if (fd != -1) {
+    if ((fd = open(_PATH_DEVNULL, O_RDWR, 0)) != -1) {
 	dup2(fd, STDIN_FILENO);
 	dup2(fd, STDOUT_FILENO);
 	dup2(fd, STDERR_FILENO);
 	if (fd > 2)
 	    close(fd);
     }
+    in_background = 1;
     return 0;
 }
 
-static void send_dgps()
+void gpsd_report(int errlevel, const char *fmt, ... )
+/* assemble command in printf(3) style, use stderr or syslog */
 {
-  char buf[BUFSIZE];
+    if (errlevel <= debuglevel) {
+	char buf[BUFSIZ];
+	va_list ap;
 
-  sprintf(buf, "R %0.8f %0.8f %0.2f\r\n", gNMEAdata.latitude,
-	  gNMEAdata.longitude, gNMEAdata.altitude);
-  write(dsock, buf, strlen(buf));
-}
+	strcpy(buf, "gpsd: ");
+	va_start(ap, fmt) ;
+	vsnprintf(buf + strlen(buf), sizeof(buf)-strlen(buf), fmt, ap);
+	va_end(ap);
 
-static void usage()
-{
-	    fputs("usage:  gpsd [options] \n\
-  options include: \n\
-  -D integer   [ set debug level ] \n\
-  -L longitude [ set longitude ] \n\
-  -S integer   [ set port for daemon ] \n\
-  -T e         [ earthmate flag ] \n\
-  -h           [ help message ] \n\
-  -l latitude  [ set latitude ] \n\
-  -p string    [ set gps device name ] \n\
-  -s baud_rate [ set baud rate on gps device ] \n\
-  -t timeout   [ set timeout in seconds on fix/mode validity ] \n\
-  -c           [ use dgps service for corrections ] \n\
-  -d host      [ set dgps server ] \n\
-  -r port      [ set dgps rtcm-sc104 port ] \n\
-", stderr);
-}
-
-static int set_baud(long baud)
-{
-    int speed;
-    
-    if (baud < 200)
-	baud *= 1000;
-    if (baud < 2400)
-	speed = B1200;
-    else if (baud < 4800)
-	speed = B2400;
-    else if (baud < 9600)
-	speed = B4800;
-    else if (baud < 19200)
-	speed = B9600;
-    else if (baud < 38400)
-	speed = B19200;
-    else
-	speed = B38400;
-
-    return speed;
-}
-
-static int set_device_type(char what)
-{
-    int type;
-
-    if (what=='t')
-	type = DEVICE_TRIPMATE;
-    else if (what=='e')
-	type = DEVICE_EARTHMATE;
-    else {
-	fprintf(stderr, "Invalid device type \"%s\"\n"
-		"Using GENERIC instead\n", optarg);
-	type = 0;
-    }
-    return type;
-}
-
-
-static void print_settings(char *service, char *dgpsserver,
-	char *dgpsport, int need_dgps)
-{
-    fprintf(stderr, "command line options:\n");
-    fprintf(stderr, "  debug level:        %d\n", debug);
-    fprintf(stderr, "  gps device name:    %s\n", device_name);
-    fprintf(stderr, "  gps device speed:   %d\n", device_speed);
-    fprintf(stderr, "  gpsd port:          %s\n", service);
-    if (need_dgps) {
-      fprintf(stderr, "  dgps server:        %s\n", dgpsserver);
-      fprintf(stderr, "  dgps port:        %s\n", dgpsport);
-    }
-    fprintf(stderr, "  latitude:           %s%c\n", latitude, latd);
-    fprintf(stderr, "  longitude:          %s%c\n", longitude, lond);
-}
-
-static int handle_dgps()
-{
-    char buf[BUFSIZE];
-    int rtcmbytes, cnt;
-
-    if ((rtcmbytes=read(dsock, buf, BUFSIZE))>0 && (gNMEAdata.fdout!=-1)) {
-
-	if (device_type == DEVICE_EARTHMATEb)
-	    cnt = em_send_rtcm(buf, rtcmbytes);
+	if (in_background)
+	    syslog((errlevel == 0) ? LOG_ERR : LOG_NOTICE, "%s", buf);
 	else
-	    cnt = write(gNMEAdata.fdout, buf, rtcmbytes);
-	
-	if (cnt<=0)
-	    syslog(LOG_WARNING, "Write to rtcm sink failed");
+	    fputs(buf, stderr);
     }
-    else {
-	syslog(LOG_WARNING, "Read from rtcm source failed");
-    }
-
-    return rtcmbytes;
 }
 
-static void deactivate()
+static void usage(void)
 {
-    gNMEAdata.fdin = -1;
-    gNMEAdata.fdout = -1;
-    serial_close();
-    if (device_type == DEVICE_EARTHMATEb)
-	device_type = DEVICE_EARTHMATE;
-    syslog(LOG_NOTICE, "Closed gps");
-    gNMEAdata.mode = 1;
-    gNMEAdata.status = 0;
+    printf("usage:  gpsd [options] \n\
+  Options include: \n\
+  -p string (default %s)   = set GPS device name \n"
+#ifdef NON_NMEA_ENABLE
+"  -T devtype (default 'n')       = set GPS device type \n"
+#endif /* NON_NMEA_ENABLE */
+"  -S integer (default %4s)      = set port for daemon \n"
+#ifdef TRIPMATE_ENABLE
+"  -i %%f[NS]:%%f[EW]               = set initial latitude/longitude \n"
+#endif /* TRIPMATE_ENABLE */
+"  -s baud_rate                   = set baud rate on gps device \n\
+  -d host[:port]                 = set DGPS server \n\
+  -P pidfile                     = set file to record process ID \n\
+  -D integer (default 0)         = set debug level \n\
+  -h                             = help message \n",
+	   DEFAULT_DEVICE_NAME, DEFAULT_GPSD_PORT);
+#ifdef NON_NMEA_ENABLE
+    {
+    struct gps_type_t **dp;
+    printf("Here are the available driver types:\n"); 
+    for (dp = gpsd_drivers; *dp; dp++)
+	if ((*dp)->typekey)
+	    printf("   %c -- %s\n", (*dp)->typekey, (*dp)->typename);
+    }
+#else
+    printf("This gpsd was compiled with support for NMEA only.\n");
+#endif /* NON_NMEA_ENABLE */
 }
 
-static int activate()
+static int throttled_write(int fd, char *buf, int len)
+/* write to client -- throttle if it's gone or we're close to buffer overrun */
 {
-    int input;
+    int status;
 
-    if ((input = serial_open()) < 0)
-	errexit("serial open: ");
-    syslog(LOG_NOTICE, "Opened gps");
-    gNMEAdata.fdin = input;
-    gNMEAdata.fdout = input;
+    gpsd_report(3, "=> client(%d): %s", fd, buf);
+    if ((status = write(fd, buf, len)) > -1)
+	return status;
+    if (errno == EBADF)
+	gpsd_report(3, "Client on %d has vanished.\n", fd);
+    else if (errno == EWOULDBLOCK)
+	gpsd_report(3, "Dropped client on %d to avoid overrun.\n", fd);
+    else
+	gpsd_report(3, "Client write to %d: %s\n", fd, strerror(errno));
+    FD_CLR(fd, &all_fds); FD_CLR(fd, &nmea_fds); FD_CLR(fd, &watcher_fds);
+    return status;
+}
 
-    return input;
+static int validate(void)
+{
+#define VALIDATION_COMPLAINT(level, legend) \
+        gpsd_report(level, legend " (status=%d, mode=%d).\r\n", \
+		    session->gNMEAdata.status, session->gNMEAdata.mode)
+    if ((session->gNMEAdata.status == STATUS_NO_FIX) != (session->gNMEAdata.mode == MODE_NO_FIX)) {
+	VALIDATION_COMPLAINT(3, "GPS is confused about whether it has a fix");
+	return 0;
+    }
+    else if (session->gNMEAdata.status > STATUS_NO_FIX && session->gNMEAdata.mode > MODE_NO_FIX) {
+	VALIDATION_COMPLAINT(3, "GPS has a fix");
+	return session->gNMEAdata.mode;
+    }
+    VALIDATION_COMPLAINT(3, "GPS has no fix");
+    return 0;
+#undef VALIDATION_CONSTRAINT
+}
+
+static int handle_request(int fd, char *buf, int buflen)
+/* interpret a client request; fd is the socket back to the client */
+{
+    char reply[BUFSIZE], phrase[BUFSIZE], *p;
+    int i, j;
+    struct gps_data_t *ud = &session->gNMEAdata;
+
+    sprintf(reply, "GPSD");
+    p = buf;
+    while (*p && p - buf < buflen) {
+	switch (toupper(*p++)) {
+	case 'A':
+	    if (!validate())
+		strcpy(phrase, ",A=?");
+	    else
+		sprintf(phrase, ",A=%f", ud->altitude);
+	    break;
+	case 'D':
+	    if (ud->utc[0])
+		sprintf(phrase, ",D=%s", ud->utc);
+	    else
+		strcpy(phrase, ",D=?");
+	    break;
+	case 'L':
+	    sprintf(phrase, ",l=1 " VERSION " admpqrstvwxy");
+	    break;
+	case 'M':
+	    if (ud->mode == MODE_NOT_SEEN)
+		strcpy(phrase, ",M=?");
+	    else
+		sprintf(phrase, ",M=%d", ud->mode);
+	    break;
+	case 'P':
+	    if (!validate())
+		strcpy(phrase, ",P=?");
+	    else
+		sprintf(phrase, ",P=%f %f", 
+			ud->latitude, ud->longitude);
+	    break;
+	case 'Q':
+	    if (!validate())
+		strcpy(phrase, ",Q=?");
+	    else
+		sprintf(phrase, ",Q=%d %f %f %f",
+			ud->satellites_used, ud->pdop, ud->hdop, ud->vdop);
+	    break;
+	case 'R':
+	    if (*p == '1' || *p == '+') {
+		FD_SET(fd, &nmea_fds);
+		gpsd_report(3, "%d turned on raw mode\n", fd);
+		sprintf(phrase, ",R=1");
+		p++;
+	    } else if (*p == '0' || *p == '-') {
+		FD_CLR(fd, &nmea_fds);
+		gpsd_report(3, "%d turned off raw mode\n", fd);
+		sprintf(phrase, ",R=0");
+		p++;
+	    } else if (FD_ISSET(fd, &nmea_fds)) {
+		FD_CLR(fd, &nmea_fds);
+		gpsd_report(3, "%d turned off raw mode\n", fd);
+		sprintf(phrase, ",R=0");
+	    } else {
+		FD_SET(fd, &nmea_fds);
+		gpsd_report(3, "%d turned on raw mode\n", fd);
+		sprintf(phrase, ",R=1");
+	    }
+	    break;
+	case 'S':
+	    sprintf(phrase, ",S=%d", ud->status);
+	    break;
+	case 'T':
+	    if (!validate())
+		strcpy(phrase, ",T=?");
+	    else
+		sprintf(phrase, ",T=%f", ud->track);
+	    break;
+	case 'V':
+	    if (!validate())
+		strcpy(phrase, ",V=?");
+	    else
+		sprintf(phrase, ",V=%f", ud->speed);
+	    break;
+	case 'W':
+	    if (*p == '1' || *p == '+') {
+		FD_SET(fd, &watcher_fds);
+		gpsd_report(3, "%d turned on watching\n", fd);
+		sprintf(phrase, ",W=1");
+		p++;
+	    } else if (*p == '0' || *p == '-') {
+		FD_CLR(fd, &watcher_fds);
+		gpsd_report(3, "%d turned off watching\n", fd);
+		sprintf(phrase, ",W=0");
+		p++;
+	    } else if (FD_ISSET(fd, &watcher_fds)) {
+		FD_CLR(fd, &watcher_fds);
+		gpsd_report(3, "%d turned off watching\n", fd);
+		sprintf(phrase, ",W=0");
+	    } else {
+		FD_SET(fd, &watcher_fds);
+		gpsd_report(3, "%d turned on watching\n", fd);
+		sprintf(phrase, ",W=1");
+	    }
+	    break;
+        case 'X':
+	    sprintf(phrase, ",X=%d", ud->online);
+	    break;
+	case 'Y':
+	    if (!ud->satellites)
+		strcpy(phrase, ",Y=?");
+	    else {
+		int used;
+		sprintf(phrase, ",Y=%d:", ud->satellites);
+		if (SEEN(ud->satellite_stamp)) {
+		    int reported = 0;
+		    for (i = 0; i < ud->satellites; i++) {
+			used = 0;
+			for (j = 0; j < ud->satellites_used; j++)
+			    if (ud->used[j] == ud->PRN[i]) {
+				used = 1;
+				break;
+			    }
+			if (ud->PRN[i]) {
+			    sprintf(phrase+strlen(phrase), "%d %d %d %d %d:", 
+				    ud->PRN[i], 
+				    ud->elevation[i],ud->azimuth[i],
+				    ud->ss[i],
+				    used);
+			    reported++;
+			}
+		    }
+		    assert(reported == ud->satellites);
+		}
+	    }
+	    break;
+	case '\r': case '\n':
+	    goto breakout;
+	}
+	if (strlen(reply) + strlen(phrase) < sizeof(reply) - 1)
+	    strcat(reply, phrase);
+	else
+	    return -1;	/* Buffer would overflow.  Just return an error */
+    }
+ breakout:
+    strcat(reply, "\r\n");
+
+    return throttled_write(fd, reply, strlen(reply));
+}
+
+static void notify_watchers(char *sentence)
+/* notify all watching clients of an event */
+{
+    int fd;
+
+    for (fd = 0; fd < nfds; fd++)
+	if (FD_ISSET(fd, &watcher_fds))
+	    throttled_write(fd, sentence, strlen(sentence));
+}
+
+static void raw_hook(char *sentence)
+/* hook to be executed on each incoming sentence */
+{
+    int fd;
+
+    for (fd = 0; fd < nfds; fd++) {
+	/* copy raw NMEA sentences from GPS to clients in raw mode */
+	if (FD_ISSET(fd, &nmea_fds))
+	    throttled_write(fd, sentence, strlen(sentence));
+
+	/* some listeners may be in watcher mode */
+	if (FD_ISSET(fd, &watcher_fds)) {
+#define PUBLISH(fd, cmds)	handle_request(fd, cmds, sizeof(cmds)-1)
+	    if (PREFIX("$GPRMC", sentence)) {
+		PUBLISH(fd, "pdtvs");
+	    } else if (PREFIX("$GPGGA", sentence)) {
+		PUBLISH(fd, "pdas");	
+	    } else if (PREFIX("$GPGLL", sentence)) {
+		PUBLISH(fd, "pd");
+	    } else if (PREFIX("$GPVTG", sentence)) {
+		PUBLISH(fd, "tv");
+	    } else if (PREFIX("$GPGSA", sentence)) {
+		PUBLISH(fd, "qm");
+	    } else if (PREFIX("$GPGSV", sentence)) {
+		if (nmea_sane_satellites(&session->gNMEAdata))
+		    PUBLISH(fd, "y");
+	    }
+#undef PUBLISH
+	}
+    }
+}
+
+static int passivesock(char *service, char *protocol, int qlen)
+{
+    struct servent *pse;
+    struct protoent *ppe;
+    struct sockaddr_in sin;
+    int s, type, one = 1;
+
+    memset((char *) &sin, '\0', sizeof(sin));
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = INADDR_ANY;
+
+    if ( (pse = getservbyname(service, protocol)) )
+	sin.sin_port = htons(ntohs((u_short) pse->s_port));
+    else if ((sin.sin_port = htons((u_short) atoi(service))) == 0) {
+	gpsd_report(0, "Can't get \"%s\" service entry.\n", service);
+	return -1;
+    }
+    if ((ppe = getprotobyname(protocol)) == 0) {
+	gpsd_report(0, "Can't get \"%s\" protocol entry.\n", protocol);
+	return -1;
+    }
+    if (strcmp(protocol, "udp") == 0)
+	type = SOCK_DGRAM;
+    else
+	type = SOCK_STREAM;
+    if ((s = socket(PF_INET, type, ppe->p_proto)) < 0) {
+	gpsd_report(0, "Can't create socket\n");
+	return -1;
+    }
+    if (setsockopt(s,SOL_SOCKET,SO_REUSEADDR,(char *)&one,sizeof(one)) == -1) {
+	gpsd_report(0, "Error: SETSOCKOPT SO_REUSEADDR\n");
+	return -1;
+    }
+    if (bind(s, (struct sockaddr *) &sin, sizeof(sin)) < 0) {
+	gpsd_report(0, "Can't bind to port %s\n", service);
+	return -1;
+    }
+    if (type == SOCK_STREAM && listen(s, qlen) < 0) {
+	gpsd_report(0, "Can't listen on %s port%s\n", service);
+	return -1;
+    }
+    return s;
 }
 
 int main(int argc, char *argv[])
 {
-    char *default_service = "gpsd";
-    char *default_dgpsserver = "dgps.wsrcc.com";
-    char *default_dgpsport = "rtcm-sc104";
-    char *service = 0;
-    char *dgpsport = 0;
-    char *dgpsserver = 0;
+    static int nowait = 0, gpsd_speed = 0;
+    static char gpstype = 'n', *dgpsserver = NULL;
+    char *service = NULL; 
     struct sockaddr_in fsin;
-    int msock;
     fd_set rfds;
-    fd_set afds;
-    fd_set nmea_fds;
-    int alen;
-    int fd, input;
-    int need_gps, need_dgps = 0, need_init = 1;
+    int option, msock, fd, need_gps; 
     extern char *optarg;
-    int option;
-    char buf[BUFSIZE];
-    int sentdgps = 0, fixcnt = 0;
-    time_t curtime;
 
-    while ((option = getopt(argc, argv, "D:L:S:T:hncl:p:s:d:r:t:")) != -1) {
+    debuglevel = 1;
+    while ((option = getopt(argc, argv, "D:S:d:hnp:P:s:v"
+#if TRIPMATE_ENABLE || defined(ZODIAC_ENABLE)
+			    "i:"
+#endif /* TRIPMATE_ENABLE || defined(ZODIAC_ENABLE) */
+#ifdef NON_NMEA_ENABLE
+			    "T:"
+#endif /* NON_NMEA_ENABLE */
+		)) != -1) {
 	switch (option) {
+#ifdef NON_NMEA_ENABLE
 	case 'T':
-	    device_type = set_device_type(*optarg);
+	    gpstype = *optarg;
 	    break;
+#endif /* NON_NMEA_ENABLE */
 	case 'D':
-	    debug = (int) strtol(optarg, 0, 0);
-	    break;
-	case 'd':
-	    dgpsserver = optarg;
-	    break;
-	case 'L':
-	    if (optarg[strlen(optarg)-1] == 'W' || optarg[strlen(optarg)-1] == 'w'
-		|| optarg[strlen(optarg)-1] == 'E' || optarg[strlen(optarg)-1] == 'e') {
-		lond = toupper(optarg[strlen(optarg)-1]);
-		longitude = optarg;
-		longitude[strlen(optarg)-1] = '\0';
-	    } else
-		fprintf(stderr,
-		  "skipping invalid longitude (-L) option; "
-		  "%s must end in W or E\n", optarg);
+	    debuglevel = (int) strtol(optarg, 0, 0);
 	    break;
 	case 'S':
 	    service = optarg;
 	    break;
-	case 'r':
-	    dgpsport = optarg;
+	case 'd':
+	    dgpsserver = optarg;
 	    break;
-	case 'l':
-	    if (optarg[strlen(optarg)-1] == 'N' || optarg[strlen(optarg)-1] == 'n'
-		|| optarg[strlen(optarg)-1] == 'S' || optarg[strlen(optarg)-1] == 's') {
-		latd = toupper(optarg[strlen(optarg) - 1]);
-		latitude = optarg;
-		latitude[strlen(optarg) - 1] = '\0';
-	    } else
+#if TRIPMATE_ENABLE || defined(ZODIAC_ENABLE)
+	case 'i': {
+	    char *colon;
+	    if (!(colon = strchr(optarg, ':')) || colon == optarg)
+		fprintf(stderr, 
+			"gpsd: required format is latitude:longitude.\n");
+	    else if (!strchr("NSns", colon[-1]))
 		fprintf(stderr,
-			"skipping invalid latitude (-l) option;  "
-		       	"%s must end in N or S\n", optarg);
+			"gpsd: latitude field is invalid; must end in N or S.\n");
+	    else if (!strchr("EWew", optarg[strlen(optarg)-1]))
+		fprintf(stderr,
+			"gpsd: longitude field is invalid; must end in E or W.\n");
+	   else {
+		*colon = '\0';
+		session->latitude = optarg;
+ 		session->latd = toupper(optarg[strlen(session->latitude) - 1]);
+		session->latitude[strlen(session->latitude) - 1] = '\0';
+		session->longitude = colon+1;
+		session->lond = toupper(session->longitude[strlen(session->longitude)-1]);
+		session->longitude[strlen(session->longitude)-1] = '\0';
+	    }
+	    break;
+	}
+#endif /* TRIPMATE_ENABLE || defined(ZODIAC_ENABLE) */
+	case 'n':
+	    nowait = 1;
 	    break;
 	case 'p':
 	    device_name = optarg;
 	    break;
+	case 'P':
+	    pid_file = optarg;
+	    break;
 	case 's':
-	    device_speed = set_baud(strtol(optarg, NULL, 0));
+	    gpsd_speed = atoi(optarg);
 	    break;
-	case 'c':
-	    need_dgps = 1;
-	    break;
-	case 'n':
-	    need_init = 0;
-	    break;
-	case 't':
-	    gps_timeout = strtol(optarg, NULL, 0);
-	    break;
-	case 'h':
-	case '?':
+	case 'v':
+	    printf("gpsd %s\n", VERSION);
+	    exit(0);
+	case 'h': case '?':
 	default:
 	    usage();
 	    exit(0);
 	}
     }
 
-    if (!device_name) device_name = default_device_name;
-
-    if (need_init && !latitude) latitude = default_latitude;
-    if (need_init && !longitude) longitude = default_longitude;
-    
-    if (!service) {
-	if (!getservbyname(default_service, "tcp"))
-	    service = "2947";
-	else service = default_service;
-    }
-
-    if (need_dgps && !dgpsserver) dgpsserver = default_dgpsserver;
-    if (need_dgps && !dgpsport) dgpsport = default_dgpsport;
-    
-    if (debug > 0) 
-	print_settings(service, dgpsserver, dgpsport, need_dgps);
-    
-    if (debug < 2)
+    if (!service)
+	service = getservbyname("gpsd", "tcp") ? "gpsd" : DEFAULT_GPSD_PORT;
+    if (debuglevel < 2)
 	daemonize();
 
     /* Handle some signals */
-    signal(SIGUSR1, sigusr1);
+    signal(SIGHUP, restart);
     signal(SIGINT, onsig);
-    signal(SIGHUP, onsig);
     signal(SIGTERM, onsig);
     signal(SIGQUIT, onsig);
     signal(SIGPIPE, SIG_IGN);
 
     openlog("gpsd", LOG_PID, LOG_USER);
-    syslog(LOG_NOTICE, "Gpsd started (Version %s)", VERSION);
-    syslog(LOG_NOTICE, "Gpsd listening on port %s", service);
+    gpsd_report(1, "launching (Version %s)\n", VERSION);
+    if ((msock = passivesock(service, "tcp", QLEN)) < 0) {
+	gpsd_report(0, "startup failed, netlib error %d\n", msock);
+	exit(2);
+    }
+    gpsd_report(1, "listening on port %s\n", service);
 
-    msock = passiveTCP(service, QLEN);
-
-    nfds = getdtablesize();
-
-    FD_ZERO(&afds);
-    FD_ZERO(&nmea_fds);
-    FD_SET(msock, &afds);
-
-    if (need_dgps) {
-	char hn[256];
-
-	if (!getservbyname(dgpsport, "tcp"))
-	    dgpsport = "2101";
-
-	dsock = connectsock(dgpsserver, dgpsport, "tcp");
-	if (dsock < 0) 
-	    errexit("Can't connect to dgps server");
-
-	gethostname(hn, sizeof(hn));
-
-	sprintf(buf, "HELO %s gpsd %s\r\nR\r\n", hn, VERSION);
-	write(dsock, buf, strlen(buf));
-	FD_SET(dsock, &afds);
+    /* user may want to re-initialize the session */
+    if (setjmp(restartbuf) == THROW_SIGHUP) {
+	gpsd_wrap(session);
+	gpsd_report(1, "gpsd restarted by SIGHUP\n");
     }
 
-    /* mark fds closed */
-    input = -1;
-    gNMEAdata.fdin = input;
-    gNMEAdata.fdout = input;
+    FD_ZERO(&all_fds); FD_ZERO(&nmea_fds); FD_ZERO(&watcher_fds);
+    FD_SET(msock, &all_fds);
+    nfds = FD_SETSIZE;
 
-    while (1) {
+    session = gpsd_init(gpstype, dgpsserver);
+    if (gpsd_speed)
+	session->baudrate = gpsd_speed;
+    session->gpsd_device = device_name;
+    session->gNMEAdata.raw_hook = raw_hook;
+    if (session->dsock >= 0)
+	FD_SET(session->dsock, &all_fds);
+    if (nowait) {
+	if (gpsd_activate(session) < 0) {
+	    gpsd_report(0, "exiting - GPS device nonexistent or can't be read\n");
+	    exit(2);
+	}
+	FD_SET(session->gNMEAdata.gps_fd, &all_fds);
+    }
+
+    for (;;) {
 	struct timeval tv;
 
-	tv.tv_sec = 1;
-	tv.tv_usec = 0;
+        memcpy((char *)&rfds, (char *)&all_fds, sizeof(rfds));
 
-        memcpy((char *)&rfds, (char *)&afds, sizeof(rfds));
-
+	/* 
+	 * Poll for user commands or GPS data.  The timeout doesn't
+	 * actually matter here since select returns whenever one of
+	 * the file descriptors in the set goes ready. 
+	 */
+	tv.tv_sec = 1; tv.tv_usec = 0;
 	if (select(nfds, &rfds, NULL, NULL, &tv) < 0) {
 	    if (errno == EINTR)
 		continue;
-	    errexit("select");
+	    gpsd_report(0, "select: %s\n", strerror(errno));
+	    exit(2);
 	}
 
-	/* invalidate status if gps went quiet */
- 	curtime = time(NULL);
- 	if (curtime > gNMEAdata.last_update + gps_timeout) {
- 	  gNMEAdata.mode = 0;
- 	  gNMEAdata.status = 0;
- 	}
-
-	need_gps = 0;
-
-	if (reopen && input != -1) {
-	    FD_CLR(input, &afds);
-	    deactivate();
-	    input = activate();
-	    FD_SET(input, &afds);
-	}
-
-	if (FD_ISSET(dsock, &rfds))
-	    handle_dgps();
-
+	/* always be open to new connections */
 	if (FD_ISSET(msock, &rfds)) {
-	    int ssock;
-
-	    alen = sizeof(fsin);
-	    ssock = accept(msock, (struct sockaddr *) &fsin, &alen);
+	    socklen_t alen = sizeof(fsin);
+	    int ssock = accept(msock, (struct sockaddr *) &fsin, &alen);
 
 	    if (ssock < 0)
-		errlog("accept");
+		gpsd_report(0, "accept: %s\n", strerror(errno));
+	    else {
+		int opts = fcntl(ssock, F_GETFL);
 
-	    else FD_SET(ssock, &afds);
+		if (opts >= 0)
+		    fcntl(ssock, F_SETFL, opts | O_NONBLOCK);
+		gpsd_report(3, "client connect on %d\n", ssock);
+		FD_SET(ssock, &all_fds);
+	    }
+	    FD_CLR(msock, &rfds);
 	}
 
-	if (input >= 0 && FD_ISSET(input, &rfds)) {
-	    if (device_type == DEVICE_EARTHMATEb) 
-		handle_EMinput(input, &afds, &nmea_fds);
-	    else
-		handle_input(input, &afds, &nmea_fds);
-	}
-
-	if (gNMEAdata.status > 0) 
-	    fixcnt++;
-	
-	if (fixcnt > 10) {
-	    if (!sentdgps) {
-		sentdgps++;
-		if (need_dgps)
-		    send_dgps();
+	/* we may need to force the GPS open */
+	if (nowait && session->gNMEAdata.gps_fd == -1) {
+	    gpsd_deactivate(session);
+	    if (gpsd_activate(session) >= 0) {
+		FD_SET(session->gNMEAdata.gps_fd, &all_fds);
 	    }
 	}
 
+	/* get data from it */
+	if (session->gNMEAdata.gps_fd >= 0 && gpsd_poll(session) < 0) {
+	    gpsd_report(3, "GPS is offline\n");
+	    FD_CLR(session->gNMEAdata.gps_fd, &all_fds);
+	    gpsd_deactivate(session);
+	    notify_watchers("GPSD,X=0\r\n");
+	}
+
+	/* this simplifies a later test */
+	if (session->dsock > -1)
+	    FD_CLR(session->dsock, &rfds);
+
+	/* accept and execute commands for all clients */
+	need_gps = 0;
 	for (fd = 0; fd < nfds; fd++) {
-	    if (fd != msock && fd != input && fd != dsock && 
-		FD_ISSET(fd, &rfds)) {
-		if (input == -1) {
-		    input = activate();
-		    FD_SET(input, &afds);
+	    if (fd == msock || fd == session->gNMEAdata.gps_fd)
+		continue;
+	    /*
+	     * GPS must be opened if commands are waiting or any client is
+	     * streaming (raw or watcher mode).
+	     */
+	    if (FD_ISSET(fd, &rfds) || FD_ISSET(fd, &nmea_fds) || FD_ISSET(fd, &watcher_fds)) {
+		if (session->gNMEAdata.gps_fd == -1) {
+		    gpsd_deactivate(session);
+		    if (gpsd_activate(session) >= 0) {
+			FD_SET(session->gNMEAdata.gps_fd, &all_fds);
+		    }
 		}
-		if (handle_request(fd, &nmea_fds) == 0) {
-		    (void) close(fd);
-		    FD_CLR(fd, &afds);
-		    FD_CLR(fd, &nmea_fds);
+
+		if (FD_ISSET(fd, &rfds)) {
+		    char buf[BUFSIZE];
+		    int buflen = read(fd, buf, sizeof(buf) - 1);
+		    if (buflen <= 0) {
+			(void) close(fd);
+			FD_CLR(fd, &all_fds);
+		    } else {
+		        buf[buflen] = '\0';
+			gpsd_report(1, "<= client: %s", buf);
+			if (handle_request(fd, buf, buflen) < 0) {
+			    (void) close(fd);
+			    FD_CLR(fd, &all_fds);
+			}
+		    }
 		}
 	    }
-	    if (fd != msock && fd != input && FD_ISSET(fd, &afds)) {
+	    if (fd != session->gNMEAdata.gps_fd && fd != msock && FD_ISSET(fd, &all_fds))
 		need_gps++;
-	    }
 	}
 
-	if (!need_gps && input != -1) {
-	    FD_CLR(input, &afds);
-	    input = -1;
-	    deactivate();
-	}
-    }
-}
-
-static int handle_request(int fd, fd_set * fds)
-{
-    char buf[BUFSIZE];
-    char reply[BUFSIZE];
-    char *p;
-    int cc;
-
-    cc = read(fd, buf, sizeof(buf) - 1);
-    if (cc < 0)
-	return 0;
-
-    buf[cc] = '\0';
-
-    sprintf(reply, "GPSD");
-    p = buf;
-    while (*p) {
-	switch (*p) {
-	case 'P':
-	case 'p':
-	    sprintf(reply + strlen(reply),
-		    ",P=%f %f",
-		    gNMEAdata.latitude,
-		    gNMEAdata.longitude);
-	    break;
-	case 'D':
-	case 'd':
-	    sprintf(reply + strlen(reply),
-		    ",D=%s",
-		    gNMEAdata.utc);
-	    break;
-	case 'A':
-	case 'a':
-	    sprintf(reply + strlen(reply),
-		    ",A=%f",
-		    gNMEAdata.altitude);
-	    break;
-	case 'V':
-	case 'v':
-	    sprintf(reply + strlen(reply),
-		    ",V=%f",
-		    gNMEAdata.speed);
-	    break;
-	case 'T':
-	case 't':
-           sprintf(reply + strlen(reply),
-                   ",T=%f",
-                   gNMEAdata.track);
-           break;
-	case 'G':
-	case 'g':
-	    sprintf(reply + strlen(reply),
-		    ",G=%6.6s",
-		    gNMEAdata.grid);
-	    break;
-	case 'R':
-	case 'r':
-	    if (FD_ISSET(fd, fds)) {
-		FD_CLR(fd, fds);
-		sprintf(reply + strlen(reply),
-			",R=0");
-	    } else {
-		FD_SET(fd, fds);
-		sprintf(reply + strlen(reply),
-			",R=1");
-	    }
-	    break;
-	case 'S':
-	case 's':
-	    sprintf(reply + strlen(reply),
-		    ",S=%d",
-		    gNMEAdata.status);
-	    break;
-	case 'M':
-	case 'm':
-	    sprintf(reply + strlen(reply),
-		    ",M=%d",
-		    gNMEAdata.mode);
-	    break;
-	case '\r':
-	case '\n':
-	    *p = '\0';		/* ignore the rest */
-	    break;
-
-	}
-	p++;
-    }
-    strcat(reply, "\r\n");
-
-    if (cc && write(fd, reply, strlen(reply) + 1) < 0)
-	return 0;
-
-    return cc;
-}
-
-void send_nmea(fd_set *afds, fd_set *nmea_fds, char *buf)
-{
-    int fd;
-
-    for (fd = 0; fd < nfds; fd++) {
-	if (FD_ISSET(fd, nmea_fds)) {
-	    if (write(fd, buf, strlen(buf)) < 0) {
-		syslog(LOG_NOTICE, "Raw write: %s", strerror(errno));
-		FD_CLR(fd, afds);
-		FD_CLR(fd, nmea_fds);
-	    }
+	if (!nowait && !need_gps && session->gNMEAdata.gps_fd != -1) {
+	    FD_CLR(session->gNMEAdata.gps_fd, &all_fds);
+	    session->gNMEAdata.gps_fd = -1;
+	    gpsd_deactivate(session);
 	}
     }
-}
 
-static int handle_input(int input, fd_set *afds, fd_set *nmea_fds)
-{
-    static unsigned char buf[BUFSIZE];	/* that is more then a sentence */
-    static int offset = 0;
-
-    while (offset < BUFSIZE) {
-	if (read(input, buf + offset, 1) != 1)
-	    return 1;
-
-	if (buf[offset] == '\n' || buf[offset] == '\r') {
-	    buf[offset] = '\0';
-	    if (strlen(buf)) {
-	        handle_message(buf);
-		strcat(buf, "\r\n");
-		send_nmea(afds, nmea_fds, buf);
-	    }
-	    offset = 0;
-	    return 1;
-	}
-
-	offset++;
-	buf[offset] = '\0';
-    }
-    offset = 0;			/* discard input ! */
-    return 1;
-}
-
-void errlog(char *s)
-{
-    syslog(LOG_ERR, "%s: %s\n", s, strerror(errno));
-}
-
-void  errexit(char *s)
-{
-    syslog(LOG_ERR, "%s: %s\n", s, strerror(errno));
-    serial_close();
-    close(dsock);
-    exit(2);
+    gpsd_wrap(session);
+    return 0;
 }

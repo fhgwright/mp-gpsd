@@ -1,0 +1,399 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<!DOCTYPE refentry PUBLIC 
+   "-//OASIS//DTD DocBook XML V4.1.2//EN"
+   "docbook/docbookx.dtd">
+<refentry id='gpsd.1'>
+<refmeta>
+<refentrytitle>gpsd</refentrytitle>
+<manvolnum>1</manvolnum>
+<refmiscinfo class='date'>9 Aug 2004</refmiscinfo>
+</refmeta>
+<refnamediv id='name'>
+<refname>gpsd</refname>
+<refname>xgps</refname>
+<refname>xgpsspeed</refname>
+<refpurpose>interface daemon for GPS receivers, test client,
+and speedometer</refpurpose>
+</refnamediv>
+<refsynopsisdiv id='synopsis'>
+
+<cmdsynopsis>
+  <command>gpsd</command>  
+      <arg choice='opt'>-T <replaceable>GPS-type</replaceable></arg>
+      <arg choice='opt'>-p <replaceable>GPS-devicename</replaceable></arg>
+      <arg choice='opt'>-S <replaceable>listener-port</replaceable></arg>
+      <arg choice='opt'>-s <replaceable>baudrate</replaceable></arg>
+      <arg choice='opt'>-d <replaceable>DGPS-server</replaceable></arg>
+      <arg choice='opt'>-i <replaceable>initial-position</replaceable></arg>
+      <arg choice='opt'>-n </arg>      
+      <arg choice='opt'>-h </arg>
+      <arg choice='opt'>-P <replaceable>pidfile</replaceable></arg>
+      <arg choice='opt'>-D <replaceable>debuglevel</replaceable></arg>
+      <arg choice='opt'>-v </arg>
+</cmdsynopsis>
+<cmdsynopsis>
+  <command>xgps</command>  
+      <arg choice='opt'><replaceable>X-options</replaceable></arg>
+      <arg choice='opt'>-h </arg>
+      <arg choice='opt'>-v </arg>
+      <arg choice='opt'><replaceable>server</replaceable></arg>
+      <arg choice='opt'>--speedunits <group choice='req'><arg>mph</arg><arg>kph</arg><arg>knots</arg></group></arg>
+      <arg choice='opt'>--altunits <group choice='req'><arg>feet</arg><arg>meters</arg></group></arg>
+</cmdsynopsis>
+<cmdsynopsis>
+  <command>xgpsspeed</command>  
+      <arg choice='opt'>-rv</arg>
+      <arg choice='opt'>-nc <replaceable>X-color</replaceable></arg>
+      <arg choice='opt'>-h </arg>
+      <arg choice='opt'>-v </arg>
+      <arg choice='opt'>--speedunits <group choice='req'><arg>mph</arg><arg>kph</arg><arg>knots</arg></group></arg>
+      <arg choice='opt'><replaceable>server</replaceable></arg>
+</cmdsynopsis>
+
+</refsynopsisdiv>
+
+<refsect1 id='description'><title>DESCRIPTION</title>
+
+<refsect2 id='gpsd'><title>gpsd</title>
+
+<para><application>gpsd</application> is a monitor daemon that watches
+a TCP/IP port (2947 by default), waiting for an application to request
+location information from a GPS.  The GPS is expected to be
+direct-connected to the machine running
+<application>gpsd</application> via a USB or RS232C serial port which
+is specified to gpsd at startup.</para>
+
+<para>Optionally, <application>gpsd</application> may get
+differential-GPS corrections from a ground station running a RTCM-S104
+server; this will improve position-fix accuracy from roughly 10 meters
+to roughly 2 meters, provided you are within 1000 kilometers or so of
+the ground station.</para>
+
+<para>The program accepts the following options:</para>
+<variablelist remap='TP'>
+<varlistentry>
+<term>-p</term>
+<listitem>
+<para>Set GPS device name (default is <filename>/dev/gps</filename>).</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term>-T <replaceable>device-type</replaceable></term>
+<listitem>
+<para>Set GPS type, usually not necessary because most GPSes now speak
+the standard NMEA 0183 protocol. For a list of driver types,
+look at what <command>gpsd -?</command> writes to standard output.
+This option may be unavailable if the daemon was compiled without
+support for the non-NMEA drivers.</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term>-S</term>
+<listitem><para>Set TCP/IP port (default is 2947).</para></listitem>
+</varlistentry>
+<varlistentry>
+<term>-s</term>
+<listitem><para>Set GPS communication speed in bits per second 
+(default is set by device type).</para></listitem>
+</varlistentry>
+<varlistentry>
+<term>-d</term>
+<listitem>
+<para>Query a differential-GPS (DGPS) server.  If a suffix of the
+server name begins with ":" it is interpreted as a port number,
+overriding the default IANA-assigned port of 2101.
+For DGPS servers available for use with this option, see
+<ulink url='http://www.wsrcc.com/wolfgang/gps/dgps-ip.html'>
+DGPS corrections over the Internet</ulink>.</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term>-i</term>
+<listitem>
+<para>Set initial longitude/latitude in degrees (TripMate and
+EarthMate only; helps them develop a first fix more quickly).
+Required format is %f[NS]:%f[EW]; that is a decimal number of degrees
+latitude, followed by the suffix N or S, followed by a colon, followed
+by a decimal number of degrees longitude, followed by the suffix E or
+W.  The numbers may have fractional parts to the right of a decimal
+point.  This option may be unavailable if the daemon was compiled
+without TripMate or EarthMate support.</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term>-n</term>
+<listitem><para>Don't wait for a client to connect before polling
+the GPS.  The wait is a feature; many serial GPSes go to a standby
+mode (not drawing power) before the host machine asserts DTR, so
+waiting for the first actual request can save valuable battery power
+on portable equipment.  This option combines well with -D2 to enable
+monitoring of the GPS data stream.</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term>-h</term>
+<listitem><para>Display help message and terminate.</para></listitem>
+</varlistentry>
+<varlistentry>
+<term>-P</term>
+<listitem>
+<para>Specify the name and path to record the daemon's process ID.</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term>-D</term>
+<listitem>
+<para>Set debug level. At debug levels 2 and above,
+<application>gpsd</application> stays in foreground and reports
+incoming sentence and actions to standard error.</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term>-v</term>
+<listitem>
+<para>Dump version and exit.</para>
+</listitem>
+</varlistentry>
+</variablelist>
+
+<para><application>gpsd</application> should be able to query any GPS
+that speaks either the standard textual NMEA 0183 protocol or the
+binary Rockwell protocol used by EarthMate and some other
+GPSes.</para>
+
+<para>The request protocol for gpsd clients is very simple.  Each
+request consists of a single ASCII character followed by a newline.
+Case of the request character is ignored,  Each request returns a line
+of response text ended by a CR/LF.  Requests and responses are as 
+follows, with %f standing for a decimal float numeral and %d for
+decimal integer numeral:</para>
+
+<variablelist>
+<varlistentry>
+<term>a</term>
+<listitem><para>The current altitude as "A=%f", meters above mean sea level.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>d</term>
+<listitem><para>Returns the UTC time in the ISO 8601 format,
+"D=yyyy-mm-ddThh:nmm:ss.ssZ". Digits of precision in the fractional-seconds
+part will vary and may be zero.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>l</term>
+<listitem><para>Returns three fields: a protocol revision number,
+the gpsd version, and a list of accepted request letters.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>m</term>
+<listitem><para>The gps mode as "M=%d". 0=no mode value yet seen, 
+1=no fix, 2=2D (no altitude), 3=3D (with altitude).</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>p</term>
+<listitem><para>Returns the current position in the form "P=%f %f";
+numbers are in degrees, latitude first.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>q</term>
+<listitem>
+<para>Returns "Q=%d %f %f %f": a count of satellites used in the last
+fix, and three estimated position errors in meters &mdash; position, 
+horizontal, and vertical.</para>
+</listitem>
+</varlistentry>
+
+<varlistentry>
+<term>r</term>
+<listitem><para>Sets or toggles 'raw' mode. Return "R=0" or "R=1". In
+raw mode you read the NMEA data stream from the GPS. (Non-NMEA GPSes
+get their communication format translated to NMEA on the fly.)  The
+command 'r' immediately followed by the digit '1' or the plus sign '+'
+sets raw mode.  The command 'r' followed by the digit '0' or the minus
+sign '-' clears raw mode.  The command 'r' with neither suffix toggles
+raw mode.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>s</term>
+<listitem><para>The gps status as "S=%d". 0=no fix, 1=fix,
+2=DGPS-corrected fix.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>t</term>
+<listitem>
+<para>Track made good; course "T=%f" in degrees from true north.</para>
+</listitem>
+</varlistentry>
+
+<varlistentry>
+<term>v</term>
+<listitem><para>The current speed as "V=%f" in knots.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>w</term>
+<listitem><para>Sets or toggles 'watcher' mode (see the descroiption
+below). Return "W=0" or "W=1".The command 'w' immediately followed by
+the digit '1' or the plus sign '+' sets watcher mode.  The command 'w'
+followed by the digit '0' or the minus sign '-' clears watcher mode.
+The command 'w' with neither suffix toggles watcher
+mode.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>x</term>
+<listitem><para>Returns "X=1" if the GPS is online, "X=0" if
+not.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>y</term> 
+<listitem>
+<para>Returns Y= followed by a count not more than 12, followed by
+that many quintuples of satellite PRNs, elevation/azimuth pairs
+(elevation an integer formatted as %d in range 0-90, azimuth an
+integer formatted as %d in range 0-359), signal strengths in
+decibels, and 1 or 0 according as the satellite was or was
+not used in the last fix. Each number is followed by one space.</para>
+</listitem>
+</varlistentry>
+</variablelist>
+
+<para>Note that a response consisting of just ? following the =
+means that there is no valid data available.</para>
+
+<para>Requests can be concatenated and sent as a string; gpsd will then
+respond with a comma-separated list of replies.</para>
+
+<para>Every gpsd reply will start with the string "GPSD" followed by
+the replies. Examples:</para>
+
+<screen>
+      query:       "p\n"
+      reply:       "GPSD,P=36.000000 123.000000\r\n"
+
+      query:       "d\n"
+      reply:       "GPSD,D=2002-11-16T02:45:05.12Z\r\n"
+
+      query:       "va\n"
+      reply:       "GPSD,V=0.000000,A=37.900000\r\n"
+</screen>
+
+<para>When clients are active but the GPS is not responding, gpsd will spin 
+trying to open the GPS device once per second.  Thus, it can be left
+running in background and survive having the GPS repeatedly unplugged
+and plugged back in.</para>
+
+<para>The recommended mode for clients is watcher mode.  In watcher
+mode <application>gpsd</application> ships a line of data to the
+client each time the the GPS sends a sentence, but rather than being
+raw NMEA the line is a gpsd response as if the user had just sent some
+set of gpsd commands.  That set of commands is the minimum for which
+the incoming sentence is relevant &mdash; e.g., a GPRMC sentence ships
+a "pvs" response because it contains position, velocity and GPS status
+data.  Additionally, watching clients get notifications in the form
+X=0 or X=1 when the online/offline status of the GPS changes.</para>
+
+<para>Sending SIGHUP to a running <application>gpsd</application>
+forces it to close the GPS and all client connections.  It will then
+attempt to reconnect to the GPS and resume listening for client
+connections.  This may be useful if your GPS enters a wedged or
+confused state but can be soft-reset by pulling down DTR.</para>
+
+</refsect2>
+<refsect2><title>xgps</title>
+
+<para><application>xgps</application> is a simple test client for
+<application>gpsd</application> with an X interface. It displays
+current GPS animation and (for GPSes that support the feature) the
+locations of accessible satellites.</para>
+
+<para><application>xgps</application> accepts an -h option as for
+<application>gpsd</application>, or a -v option to dump the package
+version and exit. An optional argument may specify an
+server to get data from; a colon-separated suffix is taken as a port
+number.  The misfeature of previous versions that allowed it to
+direct-connect to the serial device has been removed.</para>
+
+<para>The --speedunits option can be used to set the speed units for
+display; follow the keyword with knots for nautical miles per hour,
+kph for kilometres per hour, or mph for miles per hour.  The default
+is miles per hour.  This option can also be set as the X resource 
+'speedunits'.</para>
+
+<para>The --altunits option can be used to set the altitude units for
+display; follow the keyword with 'meters' or 'feet'.  The default
+is feet.  This option can also be set as the X resource 'altunits'.</para>
+
+</refsect2>
+<refsect2><title>xgpsspeed</title>
+
+<para><application>xgpsspeed</application> is a speedometer that uses
+position information from the GPS. It accepts an -h option and
+optional argument as for <application>gps</application>, or a -v
+option to dump the package version and exit.  Additionally, it accepts
+-rv (reverse video) and -nc (needle color) options.</para>
+
+<para>The --speedunits option can be used to set the speed units for
+display; follow the keyword with knots for nautical miles per hour,
+kph for kilometres per hour, or mph for miles per hour.  The default
+is miles per hour.   This option can also be set as the X resource 
+'speedunits'.</para>
+
+</refsect2>
+</refsect1>
+<refsect1 id='limitations'><title>LIMITATIONS</title> 
+
+<para>There is a limitation in the accuracy of
+<application>gpsd</application>-using applications that stems from the
+fact that <application>gpsd</application> waits passively for updates
+from the sensor rather than actively polling for them (which can't be
+done in a device-independent way).  Most GPSes ship updates just once
+per second.  At 50km/h (31mi/h) that's 13.8 meters change in position
+between updates.  This is good enough if you're on foot or in a car
+but not good enough for aviation applications.</para>
+
+</refsect1>
+<refsect1 id='standards'><title>APPLICABLE STANDARDS</title> 
+
+<para>The official NMEA protocol standard is available on paper from
+the <ulink url='http://www.nmea.org/pub/0183/'>National Marine
+Electronics Association</ulink>. A description of the protocol is
+<ulink url='http://vancouver-webpages.com/peter/nmeafaq.txt'>available
+on the Web</ulink>.  gpsd parses the following NMEA sentences: GPRMC,
+GPGLL, GPVTG, GPGGA, GPGSA, GPGSV.  Note that gpsd returns pure
+decimal degrees, not the hybrid degree/minute format described in the
+NMEA standard.</para>
+
+<para>The Rockwell protocol is described as an addendum on <ulink
+url='http://www.gpsinformation.net/dale/nmea.htm'>this page about
+NMEA</ulink>.</para>
+
+</refsect1>
+<refsect1 id='see_also'><title>SEE ALSO</title>
+<para>
+<citerefentry><refentrytitle>libgps</refentrytitle><manvolnum>3</manvolnum></citerefentry>
+<citerefentry><refentrytitle>libgpsd</refentrytitle><manvolnum>3</manvolnum></citerefentry>
+<citerefentry><refentrytitle>gpsprobe</refentrytitle><manvolnum>1</manvolnum></citerefentry>
+</para>
+</refsect1>
+
+<refsect1 id='maintainer'><title>AUTHORS</title> 
+
+<para>Remco Treffcorn, Derrick Brashear, Russ Nelson, Eric S. Raymond.
+This manual page by Eric S. Raymond <email>esr@thyrsus.com</email>.
+There is a project page, with <application>xgps</application>
+screenshots, <ulink
+url="http://gpsd.berlios.de/">here</ulink>.</para>
+
+</refsect1>
+
+</refentry>
+

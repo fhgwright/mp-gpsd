@@ -1,6 +1,3 @@
-
-
-
 COPYRIGHT
 =========
 
@@ -9,52 +6,49 @@ Remco Treffkorn, I am releasing it under the terms and conditions of the
 
 	GNU GENERAL PUBLIC LICENSE Version 2, June 1991
 
-or later. A copy off which is included in the file COPYING.
-
-
-
+or later. a copy of which is included in the file COPYING.
 
 GENERAL
 =======
 
-Gpsd is a user land daemon acting as a liason between a gps or
+gpsd is a userland daemon acting as a liason between a GPS or
 Loran-C receiver and clients. The receiver is expected to generate
-position information as NMEA-0183 sentences, or Rockwell binary format,
-although that can be changed.
+position information either as NMEA-0183 sentences or in Rockwell 
+binary format.
 
-Gpsd listens on port 2947 for clients requesting position, time,
-velocity or altitude information.
+gpsd listens on port 2947 for clients requesting position, time,
+velocity or altitude information.  gpsd can take information from the
+GPS and translate it into something easier to understand for clients.
 
-Gpsd can take information from the gps and translate it into
-something easier to understand for clients.
+There is a test client included. It is called "xgps". It simply
+connects to the daemon and displays your latitude, longitude,
+altitude, speed, track, and the signal quality from visible
+satellites.  When the GPS emits GSV, it will show a diagram of
+satellites in their current position in the sky.
 
-The client does not have to run on the same computer ;-)
-I have a boat connected to the internet (Ricochet modem) running
-gpsd, the maping program runs here at home (no, I will not give
-you the boats IP address :-)
+The gpsprobe program queries GPSes for their capabilities and generates
+a gnuplot recipe for an error scattergram to standard outout.
 
-There is a sample client included. It is called "gps". It simply connects
-to a gpsd and displays satellites in their current position in the sky.
-This only works for some GPS receivers!
+There is a project site for gpsd at <http://gpsd.berlios.de/>.
+Look there for updates, news, and project mailing lists.  See that
+website for a list of GPS units known to be compatible.
 
-Gpsd is tested with DeLorme's TripMate, EarthMate and Garmin units.
-
+See the file INSTALL for installation instructions and some tips on
+how to troubleshoot your installation.
 
 CREDITS
 =======
 
-Nmea_parse.c is modeled after code seen in gpstrans-0.31b by
-Carsten Tschach.
+Remco Treffkorn designed and originated the code.
 
-Thanks to Bob Lorenzini <hwm@netcom.com> for his testing and feedback.
+Carsten Tschach's gpstrans-0.31b code was the original model for nmea_parse.c.
 
-Thanks goes to Brook Milligan <brook@trillium.NMSU.Edu> for his
-efforts to combine gpsd and gpsclient into one package.
-He also changed the configuration method from Imake to GNU
-autoconf. This made it easy to port the code to YOUR particular
-platform.
+Bob Lorenzini <hwm@netcom.com> provided testing and feedback.
 
-Derrick J Brashear <shadow@dementia.org> (KB3EGH) added code for the
+Brook Milligan <brook@trillium.NMSU.Edu> combined gpsd and gpsclient
+into one package and autoconfiscated it.
+
+Derrick J. Brashear <shadow@dementia.org> (KB3EGH) added code for the
 EarthMate DeLame. He also added "incredibly gross code to output
 NMEA sentences" (his own words :-) He also did the first cut at
 DGPS support (see http://www.wsrcc.com/wolfgang/gps/dgps-ip.html), 
@@ -63,17 +57,34 @@ for the Earthmate.
 Curt Mills <BowHunter@mail.com> (WE7U) furthered the dgps support,
 writing the portion for other GPS receivers.
 
-Tom Mayo <tmayo1@rochester.rr.com> N1MU contributed the G/g command,
-which returns a 6 digit Maidenhead grid square.
-
-Be advised: any bugs in this code are mine, and mine only ;-)
-
-Thanks for Russ Nelson for providing a home for gpsd!
-
-This is as it stands today, Feburary 05 2002.
-
-remco@emc.rvt.com
-
-Actually, some bugs may be mine too now. Sorry.
-
-Derrick J. Brashear, 2 January 2000
+Eric S. Raymond drastically rewrote this code to clean it up and extend it.
+His new features include:
+   * Documentation (what a concept!)
+   * Cleaned up, simplified command-line options.
+   * Now understands the GLL (Geographic position - Latitude, Longitude)
+     sentence from NMEA 3.0. 
+   * Now parses both the NMEA 3.01 and pre-3.01 variants of the VTG sentence 
+     correctly.
+   * New y command supports satellite location -- it should no longer ever be 
+     necessary for clients to go to raw mode unless they want to monitor and 
+     log the NMEA stream itself.
+   * New 'w' command toggles 'watcher' mode. In watcher mode gpsd ships
+     a gpsd-style response for each incoming sentence as if the client
+     had just sent all commands that asked for data contained in the sentence.
+   * New 'x' command allows the client to query whether or not the GPS
+     is on-line.
+   * Massive refactoring -- one main loop now calls a self-contained
+     driver object for each type.
+   * The GPS-bashing code the daemon uses can now be directly linked as a
+     library, libgpsd(3). 
+   * C and Python libraries are available to encapsulate the client side of
+     querying gpsd, see libgps(3).
+   * Cleaned-up error reporting, we don't use syslog when running in foreground
+     but send all error and status messages to the tty instead.
+   * Added -n option to do batch monitoring of GPSes.
+   * xgpsspeed is working again.  xgps has been seriously reworked and improved.
+   * RPMs which include installation of gpsd to start up at boot time 
+     are available.
+   * New gpsprobe program probes the capabilities of GPSes and generates
+     error scattergrams from fixes.
+   * All this in fewer lines of C than the 1.10 version.
