@@ -1,99 +1,208 @@
-# Automake descrotion for gpsd
+# Automake description for gpsd
+
+#SUBDIRS = contrib
 
 #
 # Build stuff depending on Motif
 #
 if HAVE_MOTIF
-BUILD_PROGS = xgps xgpsspeed
+MOTIF_PROGS = xgps xgpsspeed
 endif
 
 XMLTO = xmlto
 
-bin_PROGRAMS = $(BUILD_PROGS)
-bin_SCRIPTS = gpsprobe
+if HAVE_DBUS
+INCLUDES = $(DBUS_CFLAGS) $(DBUS_GLIB_CFLAGS) -DDBUS_API_SUBJECT_TO_CHANGE=1
+DBUSPROGS = gpxlogger
+DBUSPAGES = gpxlogger.1
+gpxlogger_LDADD = $(DBUS_GLIB_LIBS)
+endif
+
+bin_PROGRAMS = $(DBUSPROGS) $(MOTIF_PROGS) sirfmon rtcmdecode gpspipe gpsflash cgps
+dist_bin_SCRIPTS = gpsprof gpsfake 
+sbin_PROGRAMS = gpsd
+check_PROGRAMS = bits_test gpsmm_test packet_test
 
 #
 # Build xgps
 #
 xgps_SOURCES = display.c display.h xgps.c
-xgps_CFLAGS = $(X_CFLAGS)
-xgps_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(XM_LIBS) $(XT_LIBS) $(X_LIBS) $(X_PRE_LIBS) libgps.la -lm
+xgps_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(XM_LIBS) $(XT_LIBS) $(X_LIBS) $(X_PRE_LIBS) libgps.la -lm $(LIBPTHREAD)
 
 #
 # Build xgpsspeed
 #
-xgpsspeed_SOURCES = \
+xgpsspeed_c_sources = \
 	xgpsspeed.c \
 	Tachometer.c \
 	TachometerP.h \
-	Tachometer.h \
+	Tachometer.h
+xgpsspeed_SOURCES = \
+	$(xgpsspeed_c_sources) \
 	xgpsspeed.icon
-xgpsspeed_CFLAGS = $(X_CFLAGS)
-xgpsspeed_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(XAW_LIBS) $(XM_LIBS) $(X_LIBS) $(X_PRE_LIBS) libgps.la -lm
+xgpsspeed_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(XAW_LIBS) $(XM_LIBS) $(X_LIBS) $(X_PRE_LIBS) libgps.la -lm $(LIBPTHREAD)
 
+#
+# Build cgps
+#
+cgps_SOURCES = cgps.c
+cgps_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) -lncurses libgps.la -lm $(LIBPTHREAD)
 
 #
 # Build gpsd
 #
-sbin_PROGRAMS = gpsd
-gpsd_SOURCES = gpsd.c
-gpsd_LDADD = $(LIBM) libgps.la -lm
-
+gpsd_SOURCES = \
+	gpsd_dbus.h \
+	gpsd_dbus.c \
+	gpsd.c
+gpsd_LDADD = $(DBUS_LIBS) $(LIBM) libgps.la -lm $(LIBPTHREAD)
 
 #
-# Build shared library
+# Build gpspipe
 #
-libgps_la_LDFLAGS = -version-number 3:0:0
+gpspipe_SOURCES = \
+	gpspipe.c
+gpspipe_LDADD = $(DBUS_LIBS) $(LIBM) libgps.la -lm
+
+#
+# Build sirfmon
+#
+sirfmon_SOURCES = sirfmon.c
+sirfmon_LDADD = $(LIBM) -lncurses libgps.la -lm $(LIBPTHREAD)
+
+#
+# Build rtcmdecode
+#
+rtcmdecode_SOURCES = rtcmdecode.c
+rtcmdecode_LDADD = $(LIBM) -lncurses libgps.la -lm $(LIBPTHREAD)
+
+#
+# Build gpsflash
+#
+gpsflash_SOURCES = gpsflash.c gpsflash.h sirfflash.c
+gpsflash_LDADD = $(LIBM) libgps.la -lm
+
+#
+# Build shared libraries
+#
+libgps_la_LDFLAGS = -version-number 15:0:0
 lib_LTLIBRARIES = libgps.la
 
-libgps_la_SOURCES = \
+libgps_c_sources = \
 	netlib.c \
 	nmea_parse.c \
 	serial.c \
 	drivers.c \
 	zodiac.c \
+	garmin.c \
+	tsip.c \
+	evermore.c \
+	italk.c \
 	libgpsd_core.c \
+	ntpshm.c \
 	libgps.c \
-	report.c
+	packet.c \
+	gpsutils.c \
+	geoid.c \
+	dgpsip.c \
+	sirf.c \
+	report.c \
+	isgps.c \
+	rtcm.c \
+	srecord.c \
+	bits.h \
+	truenorth.c \
+	timebase.h
 
-libgps_la_LIBADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET)
+BUILT_SOURCES = packet_names.h
+packet_names.h: packet_states.h
+	sed -e '/^ *\([A-Z][A-Z0-9_]*\),/s//   "\1",/' <packet_states.h >packet_names.h
+
+libgps_la_SOURCES = $(libgps_c_sources) libgpsmm.cpp packet_states.h
+nodist_libgps_la_SOURCES = packet_names.h
+libgps_la_LIBADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(LIBPTHREAD)
+
+#
+# Build gpsmm_test
+#
+gpsmm_test_SOURCES = gpsmm_test.cpp
+gpsmm_test_LDADD = $(LIBC) libgps.la -lm
+
+#
+# Build bits_test tester
+#
+bits_test_SOURCES = bits_test.c
+bits_test_LDADD = $(LIBC) libgps.la
+
+#
+# Build packets tester
+#
+packet_test_SOURCES = packet_test.c
+packet_test_LDADD = $(LIBC) libgps.la -lm
 
 #
 # Create Manpages
 #
 man_MANS = \
-	gpsd.1 \
+	gpsd.8 \
+	xgps.1 \
 	libgps.3 \
+	libgpsmm.3 \
 	libgpsd.3 \
-	gpsprobe.1
+	gpsprof.1 \
+	gpsfake.1 \
+	sirfmon.1 \
+	$(DBUSPAGES) \
+	gpspipe.1 \
+	rtcmdecode.1 \
+	gpsflash.1 \
+	rtcm-104.5 \
+	srec.5
 
-gpsd.1 gps.1 xgpsspeed.1: gpsd.xml
-	$(XMLTO) man gpsd.xml
+gpsd.8: gpsd.xml
+	-$(XMLTO) man gpsd.xml
+
+xgps.1 xgpsspeed.1: xgps.xml
+	-$(XMLTO) man xgps.xml
 
 libgps.3: libgps.xml
-	$(XMLTO) man libgps.xml
+	-$(XMLTO) man libgps.xml
+
+libgpsmm.3: libgpsmm.xml
+	-$(XMLTO) man libgpsmm.xml
 
 libgpsd.3: libgpsd.xml
-	$(XMLTO) man libgpsd.xml
+	-$(XMLTO) man libgpsd.xml
 
-gpsprobe.1: gpsprobe.xml
-	$(XMLTO) man gpsprobe.xml
+gpsprof.1: gpsprof.xml
+	-$(XMLTO) man gpsprof.xml
 
-#
-# Do a release with a tar.gz and a tar.bz2
-#
-release: distdir
-	-chmod -R a+r $(distdir)
-	GZIP=$(GZIP_ENV) $(AMTAR)$(TAR) chozf $(distdir).tar.gz $(distdir)
-	rm -f $(distdir)/gpsd.spec
-	sed '/^Source:/s/\.tar\.gz$$/\.tar\.bz2/' gpsd.spec \
-		> $(distdir)/gpsd.spec
-	BZIP2=$(BZIP2_ENV) $(AMTAR)$(TAR) --bzip2 -chof $(distdir).tar.bz2 $(distdir)
-	-rm -rf $(distdir)
+gpsfake.1: gpsfake.xml
+	-$(XMLTO) man gpsfake.xml
 
-include_HEADERS = gps.h gpsd.h
+sirfmon.1: sirfmon.xml
+	-$(XMLTO) man sirfmon.xml
 
-# Automake is buggy and doesn't automatically include bin_SCRIPTS in dist
+gpxlogger.1: gpxlogger.xml
+	-$(XMLTO) man gpxlogger.xml
+
+gpspipe.1: gpspipe.xml
+	-$(XMLTO) man gpspipe.xml
+
+rtcmdecode.1: rtcmdecode.xml
+	-$(XMLTO) man rtcmdecode.xml
+
+rtcm-104.5: rtcm-104.xml
+	-$(XMLTO) man rtcm-104.xml
+
+srec.5: srec.xml
+	-$(XMLTO) man srec.xml
+
+gpsflash.1: gpsflash.xml
+	-$(XMLTO) man gpsflash.xml
+
+include_HEADERS = gps.h gpsd.h libgpsmm.h 
+
 EXTRA_DIST = \
 	autogen.sh \
 	README \
@@ -102,20 +211,113 @@ EXTRA_DIST = \
 	HACKING \
 	TODO \
 	AUTHORS \
+	dgpsip-servers \
 	gpsd.xml \
+	xgps.xml \
 	libgpsd.xml \
 	libgps.xml \
-	gpsprobe.xml \
+	libgpsmm.xml \
+	gpsprof.xml \
+	gpsfake.xml \
+	sirfmon.xml \
+	gpxlogger.xml \
+	gpspipe.xml \
+	rtcmdecode.xml \
+	rtcm-104.xml \
+	srec.xml \
+	gpsflash.xml \
 	$(man_MANS) \
 	xgps.ad \
 	xgpsspeed.ad \
-	gpsd.init \
+	gpsd.spec.in \
 	gpsd.spec \
 	gps.py \
-	gpsd.py \
-	gpsprobe \
-	logextract
+	gpsfake.py \
+	gpsd.hotplug \
+	gpsd.usermap \
+	valgrind-audit \
+	valgrind-suppressions \
+	driver_proto.c \
+	logextract \
+	striplog \
+	invert-bitfields.pl
+
+CLEANFILES = packet_names.h
 
 # This is not distributed
 libgps: libgps.c .libs/libgps.a
-	$(CC) -o libgps -DTESTMAIN libgps.c .libs/libgps.a
+	$(CC) -o libgps -lm -DTESTMAIN -g libgps.c .libs/libgps.a
+
+# Report splint warnings
+splint:
+	@echo "Running splint on daemon and libraries..."
+	-splint -redef $(gpsd_SOURCES) $(libgps_c_sources)
+	@echo "Running splint on xgps..."
+	-splint -exportlocal $(xgps_SOURCES)
+	@echo "Running splint on cgps..."
+	-splint -exportlocal $(cgps_SOURCES)
+	@echo "Running splint on xgpsspeed..."
+	-splint -exportlocal $(xgpsspeed_c_sources)
+	@echo "Running splint on sirfmon..."
+	-splint $(sirfmon_SOURCES)
+	@echo "Running splint on gpspipe..."
+	-splint $(gpspipe_SOURCES)
+	@echo "Running splint on rtcmdecode..."
+	-splint -exportlocal rtcmdecode.c
+	@echo "Running splint on gpsflash..."
+	-splint $(gpsflash_SOURCES)
+	@echo "Running splint on bits_test test harness..."
+	-splint $(bits_test_SOURCES)
+	@echo "Running splint on packet_test test harness..."
+	-splint $(packet_test_SOURCES)
+
+#
+# Regression tests begin here
+#
+
+# Regression-test the daemon
+# This requires gcc4; the use of the math coprocessor's on-board trig functions
+# apparently increases the accuracy of computation in a way that
+# that affects the low-order digits of the track field in the O response.
+gps-regress: gpsd
+	@echo "Testing the daemon..."
+	@for f in test/*.log; do gpsfake -b -p $${f} | grep -v "^GPSD,X" >test/test.chk; diff -ub $${f}.chk test/test.chk; done; rm test/test.chk
+
+# Test that super-raw mode works. Compare each logfile against itself 
+# dumped through the daemon running in R=2 mode.  (This test is not
+# included in the normal regressions.)
+raw-regress:
+	@echo "Testing super-raw mode..."
+	@for f in test/*.log; do gpsfake -b -p -r "r=2" $${f} | striplog -1 >test/test1.chk; striplog <$${f} >test/test2.chk; cmp test/test[12].chk; done; rm test/test[12].chk
+
+# Build the regression tests for the daemon.
+gps-makeregress: gpsd
+	@for f in test/*.log; do gpsfake -b -p $${f} | grep -v "^GPSD,X" >$${f}.chk; done
+
+# Regression-test the RTCM decoder.
+rtcm-regress: rtcmdecode
+	@echo "Testing RTCM decoding..."
+	@for f in test/*.rtcm; do rtcmdecode <$${f} >test/test.chk; diff -ub $${f}.chk test/test.chk; done; rm test/test.chk
+
+# Rebuild the RTCM regression tests.
+rtcm-makeregress: rtcmdecode
+	@for f in test/*.rtcm; do rtcmdecode <$${f} >$${f}.chk; done
+
+# Regression-test the packet getter.
+packet-regress: packet_test
+	@echo "Testing detection of invalid packets..."
+	@packet_test | diff -u test/packet.test.chk -
+
+# Rebuild the packet-getter regression test
+packet-makeregress: packet_test
+	packet_test >test/packet.test.chk
+
+# Test RTCM encoding using passthrough mode.
+undump-regress: rtcmdecode
+	@echo "Testing RTCM encoding..."
+	@rtcmdecode -p <test/undump.sample >/tmp/undump.test
+	@diff -u test/undump.sample /tmp/undump.test
+	@rm /tmp/undump.test
+
+testregress: gps-regress rtcm-regress packet-regress undump-regress
+	@echo "Regressions complete."

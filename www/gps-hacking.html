@@ -5,11 +5,40 @@
    <meta name="Author" content="Eric S. Raymond">
    <meta name="Description" content="Programmer's guide to GPS hacking.">
    <meta name="Keywords" content="GPS, translator, GIS">
+   <link rel="stylesheet" href="main.css" type="text/css"/>
    <title>ESR's Guide to Hacking With GPS</title>
 </head>
-<body background="paper.gif">
+<body>
 
-<h1>ESR's Guide to Hacking With GPS</h1>
+<div id="Header">
+ESR's Guide to Hacking With GPS
+</div>
+
+<div id="Menu">
+    <img src="gpsd-logo-small.png"/><br />
+    <a href="index.html">Home</a><br/>
+    <a href="index.html#news">News</a><br/>
+    <a href="index.html#downloads">Downloads</a><br/>
+    <a href="index.html#mailing-lists">Mailing lists</a><br/>
+    <a href="index.html#documentation">Documentation</a><br/>
+    <a href="faq.html">FAQ</a><br/>
+    <a href="xgps-sample.html">Screenshots</a><br/>
+    <a href="index.html#recipes">Recipes</a><br/>
+    <a href="index.html#others">Other GPSDs</a><br/>
+    <a href="hardware.html">Hardware</a><br/>
+    <a href="references.html">References</a><br/>
+    <a href="history.html">History</a><br/>
+
+    <a href='http://www.catb.org/hacker-emblem/'>
+    <img src='http://www.catb.org/hacker-emblem/glider.png'
+    alt='hacker emblem' /></a><br />
+
+    <a href="http://validator.w3.org/check/referer"><img
+          src="http://www.w3.org/Icons/valid-xhtml10"
+          alt="Valid XHTML 1.0!" height="31" width="88" /></a>
+</div>
+
+<div id="Content">
 
 <p>This is a gentle introduction to writing GPS-aware applications
 &mdash; or, How I Stopped Worrying And Learned To Love Spherical
@@ -20,10 +49,6 @@ writing location-aware applications.</p>
 <p>We'll go from general to specific, beginning with an overview of how
 GPS works and ending with architectural suggestions about how to use
 <code>gpsd</code> to make your application location-aware.</p>
-
-<p>Developers who have written applications with <code>gpsd</code> 1.x
-may want to skip directly to the advice on <a
-href="#migrating">programming with gpsd-2</a>.</p>
 
 <h2>How GPS Works</h2>
 
@@ -73,13 +98,17 @@ the signals.  The U.S. military knew the pattern, but nobody else did
 
 <p>Now that 'Selective Availability' is gone, the important limits are
 natural.  One is a variable amount of signal lag produced as the GPS
-signals pass through the ionosphere, which partly reflects radio waves.
-This can be largely compensated for by a technique called "Differential
-GPS" or DGPS, in which your receiver takes timings both from satellites
-and ground stations.  The ground stations can measure and compensate for
-the ionospheric lag.</p>
+signals pass through the ionosphere, which partly reflects radio
+waves.  This can be largely compensated for by a technique called
+"Differential GPS" or DGPS, in which your receiver takes timings both
+from satellites and ground stations.  The ground stations are in a
+known fixed positions, so they can compute the exact distance to
+satellites from an ephemeris. Thus, they can measure the for the
+ionospheric lag and tell nearby GPSes how to correct ranges for it.
+WAAS and EGNOS are similar systems.  See <a href="#ggps">DGPS, WAAS,
+and EGNOS</a> for details on how this works.</p>
 
-<p>In practice, though. the most important limit is the actual
+<p>In practice, the most important limit on accuracy is the actual
 visibility of satellites.  A timing signal has to be fairly strong and
 clear, with little noise or distortion, before a GPS can use it.  The
 frequencies GPS has to use in order to punch through the ionosphere
@@ -112,6 +141,46 @@ href="http://vancouver-webpages.com/pub/peter/gpsfaq.txt">GPS FAQ</a>;
 note however that their accuracy estimates are from the Selective
 Availability period and expected error has decreased quite a bit
 since (the WAAS system they talk about is now generally deployed).</p>
+
+<h1 id='dgps'>DGPS, WAAS, and EGNOS</h1>
+
+<p>DGPS requires out-of-band communication with a service
+providing GPS signal correction information to make the GPS
+positioning more accurate.  WAAS and EGNOS are almost identical
+systems, WAAS being the system covering USA, and EGNOS being the
+system covering Europe.  They provide DGPS-like corrections with
+in-band communication &mdash; geo-stationary satellites broadcasting
+GPS signal correction information on the same frequency and format as the
+GPS satellites.  The WAAS/EGNOS system makes GPSes more accurate,
+and adds integrity checks making it possible to detect when the
+GPS location is totally wrong.  Unlike DGPS, your GPS will generally
+use these systems automatically whenever it can see the satellites.</p>
+
+<p>WAAS/EGNOS data starts out as normal DGPS stations observing the errors.
+That data gets processed and interpolated into a grid which models
+ionospheric and tropospheric delay over the WAAS/EGNOS .  The GPSes then
+interpolate into that grid to get an estimate of lag for their current
+position. For points close to a DGPS station, raw DGPS should give better
+accuracy than WAAS/EGNOS.  For points far between any reference stations, 
+WAAS should be more accurate than software arbitrarily choosing one 
+'nearby' DGPS station or another.</p>
+
+<p>The definitive <a href='http://gps.gov/gps/WAAS-DGPS.htm'>FAQ</a>
+says this: "On the average, WAAS and DGPS accuracy are virtually the
+same, although DGPS accuracy is better when the user is near a DGPS
+transmitting site.  The WAAS architecture is designed to provide
+uniform 7m accuracy (95%) regardless of the location of the receiver
+within the WAAS service area. DGPS is designed to provide better than
+10m navigation service (95%), but typically provides better than 1
+meter horizontal positioning accuracy (95%) when the user is less than
+100 nautical miles from the DGPS transmitting site. Accuracy then
+degrades at a rate of approximately 1 meter per hundred nautical miles
+as the user moves away from the transmitting site."</p>
+
+<!-- System management: 
+Lt Cdr John Schutzenhofer
+john.e.schutzenhofer@uscg.mil
+703-313-5939 -->
 
 <h1>How GPS Hardware Talks To Computers</h1>
 
@@ -166,7 +235,7 @@ that want to convey data to computers.</p>
 
 <h2>The bad news about NMEA</h2>
 
-<p>That's the good news.  Now for the bad news, which comes in three
+<p>That's the good news.  Now for the bad news, which comes in five
 pieces:</p>
 
 <p>First, the NMEA standard does <em>not</em> specify a command
@@ -192,7 +261,7 @@ fresher by a few milliseconds (which might make a difference if, say,
 you're using a GPS-enabled autopilot to land an aircraft).  Some GPSes
 feature data rates upwards of 38400bps. However, this actually does
 little good unless the application polls the GPS at a rate faster than
-1Hz rather than waitiung for it, as most GPS sensors cannot be told to
+1Hz rather than waiting for it, as most GPS sensors cannot be told to
 ship updates faster than once per second &mdash; and the polling
 commands (when they exist at all) are proprietary. And the fact that
 GPSes don't have a single data rate graven in stone brings back all
@@ -217,6 +286,14 @@ in NMEA mode. which is where it boots up.  The idea seems to be
 that you can switch to binary to improve your bits-per-second
 in latency-critical applications.</p>
 
+<p>The fourth problem with NMEA is that it doesn't deliver all the
+information that the GPS has in one atomic message.  In particular,
+you can't get altitude (delivered in the GPGGA sentence only) and speed
+(delivered in GPRMC and GPVTG) at the same time.  This is annoying;
+ideal, you want you position/velocity/time oracle to deliver one
+observation tuple conveying all seven degrees of freedom (t, x, y, z,
+vx, vy, vz) and their error estimates.</p>
+
 <h2>Learning more about NMEA</h2>
 
 <p>The final irritation about NMEA is that it's expensive to buy a
@@ -233,16 +310,14 @@ violations.</p>
 have never seen a copy of the official NMEA standard.  Fortunately, it
 isn't necessary for even <code>gpsd</code> developers to know most of
 it, since most modern GPS sensors only emit about a half-dozen of the
-eighty or so NMEA sentences.  RMC, GLL, VTG, GGA, GSA, GSV are all you
-are ever likely to need to know about, and the only even moderately
-tricky bit is that there are two variants of the VTG sentence (grep
-for it in the <code>gpsd</code> code if you're really curious).</p>
+eighty or so NMEA sentences.  RMC, GGA, GSA, GSV are all you are ever
+likely to need to know about.</p>
 
 <p>After you've read about those sentences, it can be instructive to
 run <code>gpsd</code> in a mode something like this:</p>
 
 <listing>
-./gpsd -n -D 2 -p /dev/ttyUSB0
+./gpsd -N -n -D 2 /dev/ttyUSB0
 </listing>
 
 <p>Watching the output for thirty seconds or so will give you a good
@@ -282,102 +357,14 @@ power-management issue.  When no clients are active, <code>gpsd</code> will
 automatically close the GPS device, re-opening it only when another
 client connects to the daemon.</p>
 
-<h1 id='migrating'>Programming With <code>gpsd</code>-2</h1>
-
-<p>The easiest way to make your program GPS-aware is to link it with
-the libgps.a or libgps.so library (and ensure that your host system
-starts <code>gpsd</code> at boot time).</p>
-
-<p>There is a limitation in the accuracy of <code>gpsd</code> that
-stems from the fact that it waits passively for updates from the
-sensor rather than actively polling for them (which can't be done in a
-device-independent way).  Most GPSes ship updates just once per
-second.  At 50km/h (31mi/h) that's only 13.8 meters change in position
-between updates.  This is good enough if you're on foot or in a car
-but not good enough for aviation applications,</p>
-
-<p>If you have written a <code>gpsd</code>-aware application, here are
-some good functional reasons to migrate to 2.0:</p>
-
-<ol>
-<li>Your application can now query whether or not the GPS is online
-and get an authoritative answer.</li>
-
-<li>Timestamps are now no longer truncated to seconds, but reported to 
-whatever resolution the GPS ships.  Often (notably on SiRF-II GPses)
-this is milliseconds.</li>
-
-<li>There is a new "watcher" mode.  It is like raw mode in that the
-GPS streams updates at you, but unlike it in that the updates are in 
-the simpler GPSD format rather than the more complex NMEA one.</li>
-
-<li>The daemon now automatically tries to reconnect to the GPS once
-a second when it is offline but clients are connected.</li>
-
-<li>Writes to clients are nonblocking, so new <code>gpsd</code> cannot
-be stalled by a wedged client.</p>
-</ol>
-
-<p>These changes mean that even if users casually unplug and reconnect a
-GPS, your application can notice the unplug and reconnect events, 
-and automatically starts getting data again a second after the reconnect.</p>
-
-<p>The <code>gpsd</code> package provides two ways for C code to get
-data from a GPS.  Both go through the libgps.a library, which supports
-two sets of entry points. The <a href="libgpsd.html">low-level
-interface</a> talks directly to the GPS.  The <a
-href="libgps.html">high-level interface</a> communicates with an
-instance of <code>gpsd</code>, which uses its own copy of libgps.a to
-talk to the device. A third way would be to open a socket to
-<code>gpsd</code> and interpret <code>gpsd</code> protocol or raw NMEA
-in your application.  Before 2.0, all <code>gpsd</code>-aware
-applications had to do this because libgps.a didn't exist.  Now that
-it does, the exercise is rather pointless.  Using libgps.a will
-probably simplify your code a lot.</p>
-
-<p>You will almost always want to use the high-level interface and go
-through the daemon; among other things, this means more than one
-application will be able to query the GPS without causing confusion.
-The only exception will be in very space-constrained single-user
-scenarios, perhaps on embedded systems or PDAs. On those it may be
-appropriate to use the low-level interface directly, probably with a
-build from source that conditions out all but one of the drivers.</p>
-
-<p>For Python programmers, there are gps.py and gpsd.py modules
-implementing respectively the high-level and low-level interfaces.
-Each exports a class that encapsulates a GPS session.</p>
-
-<p>There are three minor incompatibilities with <code>gpsd</code> 1.x:</p>
-
-<p>First, <code>gpsd</code>-2's command-line options have been changed
-and simplified.  If your <code>gpsd</code>-using application is
-starting up <code>gpsd</code> directly you may find you have to modify
-the invocation.  However, we don't recommend this.  New
-<code>gpsd</code> is designed to be started at boot time and run
-continuously just like any normal daemon.  It will do nothing, and be
-swapped out, unless there are clients trying to query the GPS.</p>
-
-<p>Second, <code>gpsd</code> now returns "?" as the contents for a 
-field when it doesn't have valid data for that field (e.g. latitude 
-or longitude before the first fix).  This is only an issue if you are
-interpreting GPSD responses yourself rather than using libgps.a or the
-gps.py Python module.</p>
-
-<p>Third, the format of the timestamp returned by the D command has
-changed, from "%m/%d/%Y %H:%M:%S" to ISO-8601: "%Y-%m-%dT%H:%M:%SZ".
-No more U.S.-centric date-format assumptions!  Also, as previously
-noted, the seconds part may have one or more digits of decimal fractional
-seconds.</p>
+<p>For more details on programming with <code>gpsd</code>, see the 
+<a href="faq.html">FAQ</a>.</p>
 
 <h1>Where to learn more</h1>
 
 <dl>
 <dt><a href="http://34n118w.net/htmldir/GPS.html">GPS Resources</a></dt>
 <dd>This is where the orbital simulation came from.</dd>
-
-<dt><a href='http://www.topology.org/soft/gps.html'>GPS interfaces and 
-software</a></dt>
-<dd>Linux and open-source resources for working with GPSes.</dd>
 
 <dt><a
 href='http://www.circuitcellar.com/library/print/0899/Cyliax109/index.htm'>Where
@@ -387,9 +374,27 @@ like <a
 href="http://www.circuitcellar.com/library/print/0899/Cyliax109/3.htm">CEP
 and DGPS</a>.</dd>
 
-<dt><a href="http://www.gpsinformation.org/dale/nmea.htm">NMEA data</a></dt>
-<dd>Excellent document on the NMEA protocol.</dd>
+<dt><a href="http://www.ualberta.ca/~ckuethe/gps/">GPS Hackery</a></dt>
+<dd>Chris Kuethe's page has links to many interesting resources.</dd>
+
+<dt><a href="http://www.ualberta.ca/~norris/gps/DOPnontech.html">DOP, 
+the non-technical description</a></dt>
+<dd>Explains the most obscure statistic in GPS output.</dd>
+
+<dt>
+<a href='http://www.eomonline.com/Common/Archives/1995aug/95aug_gps.html'>Two</a> <a href='http://www.eomonline.com/Common/Archives/1996feb/96feb_gps.html'>articles</a> from Earth Observation Magazine</dt> 
+<dd>These delve into the mysteries of GPS accuracy.</dd>
+
+<dt><a href='http://users.erols.com/dlwilson/gps.htm'>David L. Wilson's GPS Accuracy Web Page</a></dt>
+<dd>Goes in-depth on accuracy, with the math.</dd>
+
+<dt><a href='http://www.topology.org/soft/gps.html'>GPS interfaces and 
+software</a></dt>
+<dd>Linux and open-source resources for working with GPSes.</dd>
 </dl>
 
+</div>
+<hr/>
+<script language="JavaScript" src="datestamp.js" type='text/javascript'></script>
 </body>
 </html>

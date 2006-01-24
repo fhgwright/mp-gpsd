@@ -1,0 +1,135 @@
+#!/usr/bin/env python
+#
+# gpsfake -- test harness for gpsd
+#
+# Simulates a GPS, playing back a logfile
+# Most of the logic for this now lives in gpsfake.py,
+# factored out so we can write other test programs with it.
+
+import sys, os, signal, time, getopt, socket
+import gpsfake
+
+class Baton:
+    "Ship progress indications to stderr."
+    def __init__(self, prompt, endmsg=None):
+        self.stream = sys.stderr
+        self.stream.write(prompt + "... \010")
+        self.stream.flush()
+        self.count = 0
+        self.endmsg = endmsg
+        self.time = time.time()
+        return
+
+    def twirl(self, ch=None):
+        if self.stream is None:
+            return
+        if ch:
+            self.stream.write(ch)
+        else:
+            self.stream.write("-/|\\"[self.count % 4])
+            self.stream.write("\010")
+        self.count = self.count + 1
+        self.stream.flush()
+        return
+
+    def end(self, msg=None):
+        if msg == None:
+            msg = self.endmsg
+        if self.stream:
+            self.stream.write("...(%2.2f sec) %s.\n" % (time.time() - self.time, msg))
+        return
+
+(options, arguments) = getopt.getopt(sys.argv[1:], "bc:D:ghilm:o:pr:s:")
+progress = False
+cycle = 0
+monitor = ""
+speed = 4800
+linedump = False
+pipe = False
+promptme = False
+init = "w+r+"
+doptions = ""
+for (switch, val) in options:
+    if (switch == '-b'):
+        progress = True
+    elif (switch == '-c'):
+        cycle = float(val)
+    elif (switch == '-D'):
+        doptions += " -D " + val
+    elif (switch == '-g'):
+        monitor = "xterm -e gdb -tui --args "
+    elif (switch == '-i'):
+        linedump = promptme = True
+    elif (switch == '-l'):
+        linedump = True
+    elif (switch == '-m'):
+        monitor = val + " "
+    elif (switch == '-o'):
+        doptions = val
+    elif (switch == '-p'):
+        pipe = True
+        cycle = 0.05
+    elif (switch == '-r'):
+        init = val
+    elif (switch == '-s'):
+        speed = int(val)
+    elif (switch == '-h'):
+        sys.stderr.write("usage: gpsfake [-h] [-l] [-m monitor] [--D debug] [-o options] [-p] [-s speed] [-c cycle] [-b] logfile\n")
+        raise SystemExit,0
+logfile = arguments[0]
+
+
+def fakehook(linenumber, fakegps):
+    if linenumber % len(fakegps.testload.sentences) == 0:
+        if pipe and linenumber > 0:
+            return False
+        if not pipe:
+            sys.stderr.write("gpsfake: log cycle begins.\n")
+    time.sleep(cycle)
+    if linedump and fakegps.testload.legend:
+        if fakegps.testload.textual:
+            ml = fakegps.testload.sentences[linenumber % len(fakegps.testload.sentences)].strip()
+        else:
+            ml = ""
+        announce = fakegps.testload.legend % (linenumber % len(fakegps.testload.sentences) + 1) + ml
+        if promptme:
+            raw_input(announce + "? ")
+        else:
+            print announce
+    if progress:
+        baton.twirl()
+    return True
+
+if progress:
+    baton = Baton("Processing %s" % logfile, "done")
+
+test = gpsfake.TestSession(prefix=monitor, options=doptions)
+
+if pipe:
+    test.reporter = sys.stdout.write
+
+try:
+    try:
+        test.gps_add(logfile, speed=speed, pred=fakehook)
+    except gpsfake.PacketError, e:
+        sys.stderr.write("gpsfake: " + e.msg + "\n")
+        raise SystemExit, 1
+    except IOError, e:
+        sys.stderr.write("gpsfake: no such file as %s or file unreadable\n"%e.filename)
+        raise SystemExit, 1
+    except OSError:
+        sys.stderr.write("gpsfake: can't open pty.\n")
+        raise SystemExit, 1
+
+    try:
+        test.client_add(init + "\n")
+    except socket.error:
+        sys.stderr.write("gpsfake: socket error %s.\n", msg)
+        raise SystemExit, 1
+finally:
+    test.cleanup();
+
+if progress:
+    baton.end()
+
+# gpsfake ends here

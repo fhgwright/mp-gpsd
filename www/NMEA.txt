@@ -1,4 +1,5 @@
 This is a list of NMEA 0183 sentences with field descriptions.
+It is primarily intended to help people undestand GPS reports.
 
 It may originally have been redacted from the document cited as
 [NMEA200]; see the list of sources at the end of this document.
@@ -16,6 +17,8 @@ information on the following topics:
 * New documentation on BWC, DTM, GBS, GRS, GST, MSK, and MSS sentences.
 * Sentence examples merged from [GIDS]
 * Sentence explanations from [GIDS] and elsewhere
+* Corrected badly mangled GPZDA description.
+* Common talker IDs
 
 Many of these are only emitted by high-end maritime navigation systems.
 Most GPS sensors emit only RMC, GSA, GSV, GLL, and VTG.  Note that the
@@ -58,14 +61,126 @@ common, for example, to see latitude/longitude/altitude figures filled
 with zeros when the GPS has no valid data.
 
 The physical-level protocol is RS232C-compatible (actually RS422),
-4800bps, 8 bits, no parity, one *or two* stop bits.  The data is all
+4800bps, 8N1 or 7N2 (the latter is rare but does occur; the FV18 from
+San Jose Navigation uses it, for example).  The data is all
 ASCII, the high bit is not used.
 
 It appears there is an international standard, IEC 61162-1, published
 in 2000, that is essentially NMEA 0183.  [IEC] says "is closely
 aligned with NMEA 0183 version 2.30".
 
-Here are the NMEA-standard sentences:
+Here are the NMEA-standard sentences.  The names are listed without the
+"talker ID", a two-character prefix that identifies the type of the 
+transmitting unit.  By far the most common talker ID is "GP",
+identifying a generic GPS, but all of the following
+are well known:
+
+		GP      Global Positioning System receiver
+		LC      Loran-C receiver
+		II      Integrated Instrumentation
+		IN	Integrated Nvigation
+		EC      Electronic Chart Display & Information System (ECDIS)
+		CD	Digital Selective Calling (DSC)
+
+LC - LORAN-C is a marine navigation system run by the U.S. government,
+which is planning to shut it down in favor of GPS.  Some non-LORAN
+devices emit GLL but use this talker ID for backward-compatibility
+reasons, so it may outlast the actual LORAN system.
+
+II - II is emitted by the NMEA interface of a widely-used line of
+marine-navigation electronics called the AutoHelm Seatalk system, made
+by Raytheon; see also [SEATALK]. 
+
+IN -- Some Garmin GPS units use an IN talker ID.
+
+EC -- ECDIS is a specialized geographical information system intended
+to support professional maritime navigation.  NMEA talker units
+meeting the ECDIS standard use this prefix.  Some of these emit GLL.
+
+CD -- Modern marine VHF radios have a set of logic collectively known as
+Digital Selective Calling (DSC).  These radios typically take data
+from a local position indicating device.  This data is used in
+conjunction with a unique (FCC assigned) ID to cause your radio to
+broadcast your position data to others.  Conversely, these radios are
+capable of recieving position data of other stations and emitting
+sentences indicating other station positions.  This lets you plot the
+position of other vessels on a chart, for instance.  There has been at
+least one instance of a DSC enabled radio overloading (mis-using) the
+LC talker prefix for this purpose.  Otherwise they use the CD prefix.
+A vessel's nav system is likely to have both CD and some other
+position indicating talker on its bus(es).
+
+Until the U.S. Coast Guard terminated the Omega Navigation System in
+1997, another common talker prefix was "OM" for an Omega Navigation
+System receiver.
+
+Here is a more complete list of talker ID prefixes.  Most are not
+relevant to GPS systems.
+
+AG	Autopilot - General
+AP	Autopilot - Magnetic
+
+CC	Computer - Programmed Calculator (outdated)
+CD	Communications - Digital Selective Calling (DSC)
+CM	Computer - Memory Data (outdated)
+CS	Communications - Satellite
+CT	Communications - Radio-Telephone (MF/HF)
+CV	Communications - Radio-Telephone (VHF)
+CX	Communications - Scanning Receiver
+
+DE	DECCA Navigation (outdated)
+DF	Direction Finder
+
+EC	Electronic Chart Display & Information System (ECDIS)
+EP	Emergency Position Indicating Beacon (EPIRB)
+ER	Engine Room Monitoring Systems
+
+GP	Global Positioning System (GPS)
+
+HC	Heading - Magnetic Compass
+HE	Heading - North Seeking Gyro
+HN   	Heading - Non North Seeking Gyro
+
+II	Integrated Instrumentation
+IN	Integrated Navigation
+
+LA	Loran A (outdated)
+LC	Loran C
+
+MP	Microwave Positioning System (outdated)
+
+OM	OMEGA Navigation System (outdated)
+OS	Distress Alarm System (outdated)
+
+RA	RADAR and/or ARPA
+
+SD	Sounder, Depth
+SN	Electronic Positioning System, other/general
+SS	Sounder, Scanning
+
+TI	Turn Rate Indicator
+TR      TRANSIT Navigation System
+
+VD	Velocity Sensor, Doppler, other/general
+DM	Velocity Sensor, Speed Log, Water, Magnetic
+VW	Velocity Sensor, Speed Log, Water, Mechanical
+
+WI	Weather Instruments 
+
+YC	Transducer - Temperature (outdated)
+YD	Transducer - Displacement, Angular or Linear (outdated)
+YF	Transducer - Frequency (outdated)
+YL	Transducer - Level (outdated)
+YP	Transducer - Pressure (outdated)
+YR	Transducer - Flow Rate (outdated)
+YT	Transducer - Tachometer (outdated)
+YV	Transducer - Volume (outdated)
+YX      Transducer
+
+ZA	Timekeeper - Atomic Clock
+ZC	Timekeeper - Chronometer
+ZQ	Timekeeper - Quartz
+ZV	Timekeeper - Radio Update, WWV or WWVH
 
 ------------------------------------------------------------------------------
 
@@ -978,7 +1093,7 @@ Example: $GPRMB,A,0.66,L,003,004,4917.24,N,12309.57,W,001.3,052.5,000.5,V*0B
 
  Field Number: 
   1) UTC Time
-  2) Status, V = Navigation receiver warning A=Valid
+  2) Status, V=Navigation receiver warning A=Valid
   3) Latitude
   4) N or S
   5) Longitude
@@ -990,6 +1105,10 @@ Example: $GPRMB,A,0.66,L,003,004,4917.24,N,12309.57,W,001.3,052.5,000.5,V*0B
  11) E or W
  12) FAA mode indicator (NMEA 2.3 and later)
  13) Checksum
+
+A status of V means the GPS has a valid fix that is below an internal
+quality threshold, e.g. because the dilution of precision is too high 
+or an elevation mask test failed.
 
 ------------------------------------------------------------------------------
 
@@ -1399,14 +1518,16 @@ to have been introduced with NMEA 3.01 in 2002.
         |         |  |  |    |  |  |
  $--ZDA,hhmmss.ss,xx,xx,xxxx,xx,xx*hh<CR><LF>
 
- Field Number: 
-  1) Local zone minutes description, same sign as local hours
-  2) Local zone description, 00 to +- 13 hours
-  3) Year
-  4) Month, 01 to 12
-  5) Day, 01 to 31
-  6) Universal Time Coordinated (UTC)
+ Field Number:
+  1) UTC time (hours, minutes, seconds, may have fractional subsecond)
+  2) Day, 01 to 31
+  3) Month, 01 to 12
+  4) Year (4 digits)
+  5) Local zone description, 00 to +- 13 hours
+  6) Local zone minutes description, apply same sign as local hours
   7) Checksum
+
+Example: $GPZDA,160012.71,11,03,2004,-1,00*7D
 
 ------------------------------------------------------------------------------
 
@@ -1457,11 +1578,30 @@ ZDL - Time and Distance to Variable Point
 
 Vendor extensions (this list is very incomplete):
 
+Garmin Estimated Error
+
+        1  2  3  4  5  6  7
+        |  |  |  |  |  |  |
+$PGRME,hhh,M,vvv,M,ttt,M*hh<CR><LF>
+
+ Field Number: 
+   1) Estimated horizontal position error (HPE), 
+   2) M=meters
+   3) Estimated vertical position error (VPE)
+   4) M=meters
+   5) Overall spherical equivalent position error
+   6) M=meters
+   7) Checksum
+
+Example: $PGRME,15.0,M,45.0,M,25.0,M*22
+
 ------------------------------------------------------------------------------
+
+Magellan Status
 
           1   2 3  4    5    6  7    8
           |   | |  |    |    |  |    |
-$PMGNST,xx.xx,m,t,nnn,xx.xx,nnn,nn,c*hh<CR><LF>
+$PMGNST,xx.xx,m,t,nnn,xx.xx,nnn,nn,c
 
  Field Number: 
   1) Firmware version number?
@@ -1537,3 +1677,7 @@ Sources:
 [IEC]
     "International Standard IEC 61162-1" (preview)
     http://domino.iec.ch/preview/info_iec61162-1%7Bed2.0%7Den.pdf
+
+[SEATALK]
+    "SeaTalk Technical Reference"
+    http://www.thomasknauf.de/seatalk.htm

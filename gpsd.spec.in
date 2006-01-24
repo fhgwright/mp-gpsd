@@ -1,14 +1,13 @@
 Name: gpsd
-%define SO3VERSION	3.0.0
-%define SO1VERSION	2
 Summary: service daemon for mediating access to a GPS
 Version: @VERSION@
 Release: 1
-License: GPL
+License: BSD
 Group: System Environment/Daemons
 Provides: gpsd
 URL: http://developer.berlios.de/projects/gpsd/
 Source0: %{name}-%{version}.tar.gz
+BuildRequires: ncurses-devel gcc4
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
 #Destinations: mailto:gpsd-announce@lists.berlios.de, mailto:gpsd-users@lists.berlios.de, mailto:gpsd-dev@lists.berlios.de
 
@@ -17,17 +16,18 @@ gpsd is a service daemon that mediates access to a GPS sensor
 connected to the host computer by serial or USB interface, making its
 data on the location/course/velocity of the sensor available to be
 queried on TCP port 2947 of the host computer.  With gpsd, multiple
-GPS client applications (such as navigational and wardriving software) 
+GPS client applications (such as navigational and wardriving software)
 can share access to a GPS without contention or loss of data.  Also,
-gpsd responds to queries with a format that is substantially easier
-to parse than NMEA 0183.
+gpsd responds to queries with a format that is substantially easier to
+parse than NMEA 0183.  A client library is provided for applications.
 
-After installing this RPM, gpsd will try to start up at boot time.  If
-your distribution does not use udevd, you must manually create a
-symlink named /dev/gps to the serial or USB port that your GPS will
-plug in to (normally this will be /dev/ttyUSB0 or /dev/ttyS0).  The
-daemon will be quiescent when there are no clients asking for location
-information, and copes gracefully when the GPS is unplugged.
+After installing this RPM, gpsd will automatically connect to USB
+GPSes when they are plugged in and requires no configuration.  For
+serial GPSes, you will need to start gpsd by hand.  Once connected,
+the daemon automatically discovers the correct baudrate, stop bits,
+and protocol. The daemon will be quiescent when there are no
+clients asking for location information, and copes gracefully when the
+GPS is unplugged and replugged.
 
 %package -n gpsd-devel
 Summary: Client libraries in C and Python for talking to a running gpsd or GPS.
@@ -35,99 +35,307 @@ Group: Development/Libraries
 Requires: gpsd
 
 %description -n gpsd-devel
-This package provides C libraries and Python modules that manage
-access to a GPS for applications.  You will need to have gpsd installed
-for it to work.
+This package provides C header files for the gpsd shared libraries
+that manage access to a GPS for applications; also Python modules.
+You will need to have gpsd installed for it to work.
 
+%package -n gpsd-clients
+Summary: Clients for gpsd with an X interface.
+Group: Applications/System
+BuildRequires: openmotif-devel
+
+%description -n gpsd-clients
+xgps is a simple test client for gpsd with an X interface. It displays
+current GPS position/time/velocity information and (for GPSes that
+support the feature) the locations of accessible satellites.
+
+xgpsspeed is a speedometer that uses position information from the GPS.
+It accepts an -h option and optional argument as for gps, or a -v option
+to dump the package version and exit. Additionally, it accepts -rv
+(reverse video) and -nc (needle color) options.
+
+cgps resembles xgps, but without the pictorial satellite display.  It
+can run on a serial terminal or terminal emulator.
 %prep
 %setup -q
 
 %build
+#CC=gcc4 ./autogen.sh
 %configure
-make %{?_smp_mflags}
+# Requires gcc4 to compile the RTCM104 support correctly.
+CC=gcc4 make -e CFLAGS=-D_GNU_SOURCE %{?_smp_mflags}
 
 %install
 [ "$RPM_BUILD_ROOT" -a "$RPM_BUILD_ROOT" != / ] && rm -rf "$RPM_BUILD_ROOT"
-# gpsd files
-mkdir -p "$RPM_BUILD_ROOT"%{_sbindir}
-cp .libs/gpsd "$RPM_BUILD_ROOT"%{_sbindir}
-mkdir -p "$RPM_BUILD_ROOT"%{_bindir}
-cp .libs/xgps .libs/xgpsspeed gpsprobe "$RPM_BUILD_ROOT"%{_bindir}
-mkdir -p "$RPM_BUILD_ROOT"%{_mandir}/man1/
-cp gpsd.1 gpsprobe.1 "$RPM_BUILD_ROOT"%{_mandir}/man1/
-mkdir -p "$RPM_BUILD_ROOT"/etc/init.d/
-cp gpsd.init "$RPM_BUILD_ROOT"/etc/init.d/gpsd
-# gpsd-devel files
-mkdir -p "$RPM_BUILD_ROOT"%{_libdir}/
-cp .libs/libgps.la "$RPM_BUILD_ROOT"%{_libdir}
-cp .libs/libgps.so.%{SO3VERSION} "$RPM_BUILD_ROOT"%{_libdir}
-ln -f "$RPM_BUILD_ROOT"%{_libdir}/libgps.so.%{SO3VERSION} "$RPM_BUILD_ROOT"%{_libdir}/libgps.so.%{SO1VERSION}
-ln -f "$RPM_BUILD_ROOT"%{_libdir}/libgps.so.%{SO3VERSION} "$RPM_BUILD_ROOT"%{_libdir}/libgps.so
-mkdir -p "$RPM_BUILD_ROOT"%{_mandir}/man3/
-cp libgps.3 "$RPM_BUILD_ROOT"%{_mandir}/man3/
-cp libgpsd.3 "$RPM_BUILD_ROOT"%{_mandir}/man3/
-mkdir -p "$RPM_BUILD_ROOT"%{_includedir}
-cp gpsd.h "$RPM_BUILD_ROOT"%{_includedir}
-cp gps.h "$RPM_BUILD_ROOT"%{_includedir}
-PYVERSION=`python -c "import sys; print sys.version[:3]"`
-mkdir -p "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-packages
-cp gps.py gpsd.py "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-packages
+%makeinstall
+# additional gpsd files
 mkdir -p "$RPM_BUILD_ROOT"%{_libdir}/X11/app-defaults/
 cp xgps.ad "$RPM_BUILD_ROOT"%{_libdir}/X11/app-defaults/xgps
 cp xgpsspeed.ad "$RPM_BUILD_ROOT"%{_libdir}/X11/app-defaults/xgpsspeed
+mkdir -p "$RPM_BUILD_ROOT"%{_sysconfdir}/hotplug/usb
+cp gpsd.hotplug gpsd.usermap "$RPM_BUILD_ROOT"%{_sysconfdir}/hotplug/usb/
+# additional gpsd-devel files
+mkdir -p "$RPM_BUILD_ROOT"%{_datadir}/gpsd
+#cp dgpsip-servers "$RPM_BUILD_ROOT"%{_datadir}/gpsd/
+PYVERSION=`python -c "import sys; print sys.version[:3]"`
+mkdir -p "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-packages
+cp gps.py gpsfake.py "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-packages
 
 %clean
 [ "$RPM_BUILD_ROOT" -a "$RPM_BUILD_ROOT" != / ] && rm -rf "$RPM_BUILD_ROOT"
 
 %post -n gpsd
-/sbin/chkconfig --add gpsd
-/sbin/chkconfig gpsd on
 /sbin/ldconfig
-if [ -d /etc/udev/rules.d/ ]; then echo 'KERNEL="ttyS0", SYMLINK="gps"' >/etc/udev/rules.d/80-gpsd.rules; fi
-
-%preun -n gpsd
-/sbin/chkconfig --del gpsd
 
 %postun -n gpsd
 /sbin/ldconfig
-if [ -d /etc/udev/rules.d/ ]; then rm /etc/udev/rules.d/80-gpsd.rules; fi
 
 %files
 %defattr(-,root,root,-)
-%doc README INSTALL COPYING gpsd.xml TODO
-%defattr(-,root,root,-)
+%doc README INSTALL COPYING
 %attr(755, root, root) %{_sbindir}/gpsd
+%attr(755, root, root) %{_bindir}/gpsprof
+%attr(755, root, root) %{_bindir}/sirfmon
+%{_libdir}/libgps.la
+%{_libdir}/libgps.so*
+%{_libdir}/libgps.a
+%{_mandir}/man8/gpsd.8*
+%{_mandir}/man1/gpsprof.1*
+%{_mandir}/man1/sirfmon.1*
+%{_sysconfdir}/hotplug/usb/gpsd.hotplug
+%{_sysconfdir}/hotplug/usb/gpsd.usermap
+#%{_datadir}/gpsd/dgpsip-servers
+%{_libdir}/python*/site-packages/gps.py*
+
+%files -n gpsd-devel
+%defattr(-,root,root,-)
+%doc README INSTALL COPYING HACKING TODO
+%attr(755, root, root) %{_bindir}/gpsfake
+%attr(755, root, root) %{_bindir}/rtcmdecode
+%attr(755, root, root) %{_bindir}/gpsflash
+%{_libdir}/python*/site-packages/gpsfake.py*
+%{_includedir}/gps.h
+%{_includedir}/libgpsmm.h
+%{_includedir}/gpsd.h
+%{_mandir}/man1/gpsfake.1*
+%{_mandir}/man1/rtcmdecode.1*
+%{_mandir}/man1/gpsflash.1*
+%{_mandir}/man3/libgps.3*
+%{_mandir}/man3/libgpsmm.3*
+%{_mandir}/man3/libgpsd.3*
+%{_mandir}/man5/rtcm-104.5*
+%{_mandir}/man5/srec.5*
+
+%files -n gpsd-clients
+%defattr(-,root,root,-)
 %attr(755, root, root) %{_bindir}/xgps
 %attr(755, root, root) %{_bindir}/xgpsspeed
-%attr(755, root, root) %{_bindir}/gpsprobe
-%{_libdir}/libgps.so.%{SO3VERSION}
-%{_libdir}/libgps.so.%{SO1VERSION}
-%{_mandir}/man1/gpsd.1*
-%{_mandir}/man1/gpsprobe.1*
-%{_mandir}/man3/libgps.3*
-%{_mandir}/man3/libgpsd.3*
-%attr(755, root, root) %{_sysconfdir}/init.d/gpsd
+%attr(755, root, root) %{_bindir}/cgps
+%attr(755, root, root) %{_bindir}/gpspipe
+#%attr(755, root, root) %{_bindir}/gpxlogger
+%{_mandir}/man1/xgps.1*
+%{_mandir}/man1/gpspipe.1*
+#%{_mandir}/man1/gpxlogger.1*
 %{_libdir}/X11/app-defaults/xgps
 %{_libdir}/X11/app-defaults/xgpsspeed
 
-%files -n gpsd-devel
-%doc README INSTALL COPYING libgps.xml libgpsd.xml HACKING
-%{_libdir}/libgps.la
-%{_libdir}/libgps.so
-%{_includedir}/gps.h
-%{_includedir}/gpsd.h
-%{_libdir}/python*/site-packages/gps.py*
-%{_libdir}/python*/site-packages/gpsd.py*
-
 %changelog
+* Wed Sep 14 2005 Eric S. Raymond <esr@snark.thyrsus.com> - @VERSION@-1
+- Prevent core dump on -d option.  The .log option is no longer required for
+  test loads.  cgps and xgps now have configurable latitude/longitude formats 
+  via the -l option.  Introduced new 'g' command that allows clients to
+  specify whether they want GPS or RTCM104 information.
+
+* Fri Aug 19 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.29-1
+- Added Sony CXD2951 support, untested.  All error estimates are
+  now nailed to 95% confidence interval.  Added rtcmdecode and its
+  documentation; also, gpsd can now monitor serial devices emitting 
+  RTCM104 and display differential-GPS data in a readable format.  
+  Added dangerous alpha version of gpsflash.  Work around a nasty bug 
+  in SiRFStar III firmware version < 3.1.1.  Added support for True 
+  North Technologies Revolution 2X Digital compass.  Added the 
+  gpxlogger client for systems with DBUS support and the gpspipe 
+  and cgps clients for general use.
+
+* Wed Jul  6 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.28-1
+- The 2.27 source tarball somehow got truncated on upload.
+  Due to procedural mechanics at berlios.de, shipping a new release
+  seems to be the least painful way to recover.  This release is
+  identical to 2.27 except the roadmap stuff has been added to TODO.
+
+* Wed Jul 06 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.27
+- Arrange for the daemon to remove its pid file on exit.  Fix some
+  buffering problems with the Python side of the hotplug interface.
+  gpsfake can now run sessions under a monitor like Valgrind.  Most
+  of the gpsfake logic now lives in a module that can be used to write
+  other test loads; its progress baton is now optional.  Fixed
+  some minor bugs found by valgrind audit, including (1) a slow
+  memory leak, (2) a possible but unconfirmed file-descriptor leak, 
+  and (3) a subtle error in the channel-assignment logic that only
+  showed up with multiple sessions active.  In fact, the daemon code
+  no longer uses dynamic-memory allocation at all.  Also, the code
+  no longer relies on FIONREAD working.  The track error field in the
+  O response is now computed.  The project website has some new eye candy.
+  Client connections now time out when the mode is neither raw nor watcher.
+  Fixed a core-dump that could happen if C, B or I commands were issued
+  at odd times.
+
+* Wed Jun 22 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.26
+- Time DOP and total DOP are now passed on from GPSes that report 
+  them.  Ensure longitude has a leading zero when <100, for
+  compatibility with gpsdrive.  Synchronous and thread hooks are now
+  separate in the client library.  Packet-sniffing on a new device no
+  longer holds up incoming data on already-connected ones.  There is
+  now a super-raw mode (R=2) that dumps a hex-encoding of every binary
+  packet received to the client; sirfmon uses it to operate through
+  the daemon if one is running.  Support for Trimble TSIP GPSes
+  merged. gpsfake now works with SiRF and Zodiac logs.  Python library
+  supports thread callbacks.  New -p option of gpsfake supports
+  regression testing of the daemon, and there is a test suite included
+  with the distribution.  PPS support is turned off, as there is some
+  pthreads problem that sometimes kills the daemon on pthreads exit.
+  Correct off-by-one error in GPZDA processing.  The code has been
+  audited and cleaned with splint (www.splint.org).
+
+* Sat May 21 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.25-1
+- Various signedness and scaling fixes and an OpenBSD port patch for the 
+  Zodiac driver. Command-line arguments to gpsd are now treated as a default 
+  device list; -f is still supported but deprecated.  sirfmon now tries not
+  changing the line speed first, so it syncs up much faster.  Prevent a 
+  potential buffer overrun in the client library.  PPS-thread support is now
+  on by default.  Lots of documentation improvements. D-BUS broadcast support 
+  by Amaury Jacquot.  Added Alfredo Pironti's thread-callback and C++
+  support.  gpsd no longer uses the system clock for anything, so it
+  can be used to set that clock.
+
+* Tue May 17 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.24-1
+- Crazy-speed bug is finally fixed. Autobauding now starts with the
+  current speed of the device, not the stored gpsd speed; this means
+  hunting only takes place when device and GPS speed aren't matched.  
+  xgpsspeed unit-conversion bug introduced in 2.22 is fixed.  Satellite
+  display now really shows 12 channels, not just 11. Major improvements 
+  in ntp notifications.
+
+* Wed May  4 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.23-1
+- For better security, the daemon now drops root privileges after startup.
+  gpsd-clients is now a separate RPM; this is helpful on lean systems
+  that don't run X.  The O command now reports speeds in meters per second 
+  rather than knots, client code has been adjusted so there is no user-visible
+  change.  We now compute the missing components of DOP when using SiRF chips.
+  /dev/gps is no longer special; there is no default GPS device unless you
+  specify one.  The intermittent processor-hogging problem introduced by the
+  control-channel change in 2.21 has been solved.
+
+* Mon Apr 25 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.22-1
+- SiRF-binary driver can now get leap-second corrections from subframe data.
+  Device add/delete commands now send back OK or ERROR.  Error-modeling
+  corrections from the SiRF folks.  Higher precision in position reports.
+
+* Tue Apr 12 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.21-1
+- Add tag and timestamp to Y response.  Use computed geoid separation as 
+  SiRF packet 42 is flaky.  Security fix: hotplug scripts now do device
+  add/removes through a separate local control channel.  True multi-device
+  support is in place.  When in watcher mode, device switches are announced.
+
+* Thu Mar 31 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.20-1
+- Rob Janssen's patches to fix timezone issues and improve cooperation
+  with NTP.  License changed to BSD so linking to libgps won't make people 
+  nervous.  gpsprobe and gpsd.py are obsolete and have been removed, the 
+  autoprobe and profiling capabilities in the daemon more than replace 
+  them.  gpsprof now ships self-contained GNUPLOT scripts to stdout,
+  so they can be saved and redisplayed.  Zodiac sort of works again, but 
+  occasionally spins madly during autobauding.
+
+* Sat Mar 26 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.19-1
+- Fix brown-paper-bag bug with NMEA parsing. Set SiRF GPSes to use
+  SBAS.  sirfmon now displays SBAS parameters, and is included in the
+  installed programs.  Add to FAQ a fix for spurious high speeds reported
+  in XTrac mode.  We now interpret GPZDA.  We no longer fudge a missing 
+  ddmmyy in NMEA timestamps from the system clock, so replay will work better.
+
+* Wed Mar 23 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.18-1
+- First cut at cooperating with NTP.  Major library restructuring; 
+  a fix is now a data structure of its own, and per-field timestamps 
+  are gone. Use new 'o' command for watcher mode.  Compute some estimated 
+  error bounds.
+
+* Wed Mar 16 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.17
+- Fix packet-engine problem that made disconnect/reconnect unreliable
+  (important!).  Fix bonehead error in interpretation of PGRME.  We 
+  don't use O_SYNC (it turned out not to be reliable) so remove it to make 
+  life easier under Mac OS X.  Allow gpsfake to accept subsecond cycle times.
+  Add a FAQ to the HTML documentation.  gps_poll() now handles multi-line
+  responses.  Add N command for switching driver modes.
+
+* Fri Mar 11 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.16-1
+- New F command allows changing the GPS device after startup time.
+  Hotplug scripts to go with it are now installed by the RPM.  The
+  Garmin probe is working.  The -T and -s options are gone.  We have 
+  achieved zero configuration!
+
+* Wed Mar 02 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.15-1
+- A new packet engine autobauds much more quickly, and now iterates
+  over both 1 and 2 stopbits. Explicit support for FV18 (the -T f
+  option) is gone; instead, gpsd syncs with any 7N2 device and always
+  ships a suitable init string.  New E command, supporting the Garmin
+  position-error sentence or computing these numbers from DOP and an
+  error model. New U command reports climb/sink from GPSes that report
+  vertical velocity.  There is a prototype driver for SiRF-binary GPses,
+  invoked automatically when SiRF packets present themselves on the
+  wire after device open.
+
+* Fri Feb 25 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.14-1
+- Pass zero magnetic variation in generated NMEA from binary GPSes
+  correctly.  Use O_SYNC rather than timeouts to guarantee that 
+  baud-rate change strings get to the GPS before changing the line
+  parameters.  Introduced I command.  Spatial scattergram plotting
+  moved from gpsprobe to gpsprof.
+
+* Mon Feb 21 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.13-1
+- Correct a bug in binary-protocol dumping (applies to Zodiac and
+  Garmin only).  Gary Miller's patch to deal gracefully with GPSes
+  like the Magellan EC10X that send only GPRMC and never GPGGA or
+  GPGSA, and thus never set mode or status fields.  Fixed buggy
+  handling of units options in xgps and xgpsspeed.  Bumped library
+  major version, since seen_sentences is now exposed and drivers have
+  more capabilities.  Stricter NMEA buffer validation.  Withdrew the
+  change that always passed up a timestamp; on SiRF-IIs, the year part
+  is garbage when the PVT fields are garbage.  Can now recognize
+  SiRF-II GPSes.  Experimental baud-switching support for Zodiac.
+
+* Tue Feb 15 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.12-1
+- Fixed core-dump bug in processing of the GLL variant that does not
+  include an FAA Mode Indicator. When using the NMEA driver, gpsd now
+  hunts for a baud rate rather than requiring a fixed one to be set.
+  A new 'B' command returns the RS232 parameters, and a new 'C'
+  command returns the update cycle time.  Added gpsfake test harness.
+  Alpha driver for Garmin binary protocol added, requires Linux
+  garmin_usb kernel driver.  The daemon now always passes up a
+  timestamp for every sentence that has one, even if the PVT fields
+  aren't valid.
+
+* Thu Feb 10 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.11-1
+- Added gpsprof and the capability to generate GPS latency profiles.
+  gpsprobe now hunts through plausible baud rates when looking for NMEA
+  data from a GPS. The -b (baudrate) option fixes a speed, disabling
+  the baud-matching logic.  Also, gpsprobe can now recognize SiRF 
+  protocol, though not speak it.  Fixed a math domain error in 
+  gps.EarthDistance due to numeric blowup on points very close together,
+  and another in gps.MeterOffset() that was screwing up gpsprobe plots.
+
+* Tue Feb  1 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.10
+- Add -N option to explicitly foreground the daemon.  Fixed a bug
+  that was causing gpsd to keep reopening the GPS device after
+  leaving raw or watcher mode.  Fixed Gary Miller's core-dump bug.
+
 * Thu Jan 27 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.9-1
 - Python files restored to RPM.
 
 * Thu Jan 27 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.8-1
 - Embarrassing typo fix in gps.py. Avoid buffer overrun in xgps.c.
-  Plug Debian security bug 292347.  This version issued on an emergency
-  basis without Python libraries, which have packaging problems due 
-  to the 2.3/2.4 transition.
+  Plug Debian security bug 292347, CVE number CAN-2004-1388.  
+  This version issued on an emergency basis without Python libraries, 
+  which have packaging problems due to the 2.3/2.4 transition.
 
 * Fri Jan  14 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.7-1
 - More compiler-warning cleanups.  gps client name changed to xgps.
@@ -270,9 +478,34 @@ if [ -d /etc/udev/rules.d/ ]; then rm /etc/udev/rules.d/80-gpsd.rules; fi
 - Added sockopt SO_REUSEADDR to netlib.c passive_sock.
 
 * Tue Feb 05 2002 Remco Treffkorn <remco@rvt.com> - 1.07
-- What happend with 1.02 to 1.06?
 - em.c uses <time.h> (as it should). Removed some <sys/time.h>
 - where they were not needed.
+- Russ Nelson: Improved Earthmate support: added state machine for
+  EARTHA recognizer, removed alignment problems seen on ARM architecture.  
+  Added setsockopt to add SO_REUSEADDR, so that
+  gpsd can stop and immediately restart.  Added support for bitrates
+  higher than 38400, needed for the SIRF chipset.
+- Derrick: my patch causes longitude when under 100 degrees to be printed 
+  zero-padded as needed, the latitude same deal under 10, fixes the GGA
+  sentence to not erroneously print fix type (2/3) instead of fix quality,
+  and calculates fix type correctly.
+
+* Fri Aug 11 2000 Remco Treffkorn <remco@rvt.com> - 1.06
+- Change from C++ (/) to C comments (/* */)for compatibility.
+- Added -n (need init) flag.
+- Don't init unless lat/lon specified.
+- Remove gps.mayko.com as the default hostname.
+
+* Fri May 12 2000 Remco Treffkorn <remco@rvt.com> - 1.05
+- (even though version.h says 1.04)
+- Added some includes to xgpsspeed.c for portability.
+- Fix problem with flags being overwritten, and using the wrong port
+- variable also in xgpsspeed.c
+- Add a note about Y2K compatibility fix.
+- Pass latitude and longitude into em_init().
+
+* Fri Mar 17 2000 Remco Treffkorn <remco@rvt.com> - 1.02
+- (even though version.h says 1.01)
 
 * Sun Mar 05 2000 Remco Treffkorn <remco@rvt.com> - 1.01
 - Updated to IANA port.
@@ -295,7 +528,7 @@ if [ -d /etc/udev/rules.d/ ]; then rm /etc/udev/rules.d/80-gpsd.rules; fi
   supported. Only the minimum required information is extracted.
 
 * Sat Feb 06 1999 Remco Treffkorn <remco@rvt.com> - 0.95
-- Added suport for EarthMate receivers. Since I do not have one, this is 
+- Added support for EarthMate receivers. Since I do not have one, this is 
   untested.
 - If it works, it does the following: You start gpsd with a baudrate of 9600
   and give it the -Te option. If gpsd gets the EartMate it will enable the 

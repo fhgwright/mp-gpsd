@@ -3,20 +3,15 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
 #include <string.h>
 #include <unistd.h>
-
-#include "config.h"
+#include <math.h>
 #include "gpsd.h"
 
-#ifdef ZODIAC_ENABLE
-enum {
-    ZODIAC_HUNT_FF, ZODIAC_HUNT_81, ZODIAC_HUNT_ID, ZODIAC_HUNT_WC,
-    ZODIAC_HUNT_FLAGS, ZODIAC_HUNT_CS, ZODIAC_HUNT_DATA, ZODIAC_HUNT_A
-};
+#define LITTLE_ENDIAN_PROTOCOL
+#include "bits.h"
 
-#define O(x) (x-6)
+#ifdef ZODIAC_ENABLE
 
 struct header {
     unsigned short sync;
@@ -30,21 +25,21 @@ static unsigned short zodiac_checksum(unsigned short *w, int n)
 {
     unsigned short csum = 0;
 
-    while (n--)
+    while (n-- > 0)
 	csum += *(w++);
     return -csum;
 }
 
 /* zodiac_spew - Takes a message type, an array of data words, and a length
-   for the array, and prepends a 5 word header (including nmea_checksum).
-   The data words are expected to be nmea_checksummed */
+   for the array, and prepends a 5 word header (including checksum).
+   The data words are expected to be checksummed */
 #if defined (WORDS_BIGENDIAN)
 /* data is assumed to contain len/2 unsigned short words
  * we change the endianness to little, when needed.
  */
 static int end_write(int fd, void *d, int len)
 {
-    char buf[BUFSIZE];
+    char buf[BUFSIZ];
     char *p = buf;
     char *data = (char *)d;
 
@@ -58,87 +53,79 @@ static int end_write(int fd, void *d, int len)
 #define end_write write
 #endif
 
-static void zodiac_spew(struct gps_session_t *session, int type, unsigned short *dat, int dlen)
+static void zodiac_spew(struct gps_device_t *session, int type, unsigned short *dat, int dlen)
 {
     struct header h;
+    int i;
+    char buf[BUFSIZ];
 
-    h.flags = 0;
     h.sync = 0x81ff;
-    h.id = type;
-    h.ndata = dlen - 1;
+    h.id = (unsigned short)type;
+    h.ndata = (unsigned short)(dlen - 1);
+    h.flags = 0;
     h.csum = zodiac_checksum((unsigned short *) &h, 4);
 
-    if (session->gNMEAdata.gps_fd != -1) {
-	end_write(session->gNMEAdata.gps_fd, &h, sizeof(h));
-	end_write(session->gNMEAdata.gps_fd, dat, sizeof(unsigned short) * dlen);
+    if (session->gpsdata.gps_fd != -1) {
+	(void)end_write(session->gpsdata.gps_fd, &h, sizeof(h));
+	(void)end_write(session->gpsdata.gps_fd, dat, sizeof(unsigned short) * dlen);
     }
+
+    (void)snprintf(buf, sizeof(buf),
+		   "%04x %04x %04x %04x %04x",
+		   h.sync,h.id,h.ndata,h.flags,h.csum);
+    for (i = 0; i < dlen; i++)
+	(void)snprintf(buf+strlen(buf), sizeof(buf)-strlen(buf),
+		       " %04x", dat[i]);
+
+    gpsd_report(5, "Sent Zodiac packet: %s\n",buf);
 }
 
-static long putlong(char *dm, int sign)
+static bool zodiac_speed_switch(struct gps_device_t *session, speed_t speed)
 {
-    double tmpl;
-    long rad;
+    unsigned short data[15];
 
-    tmpl = fabs(atof(dm));
-    rad = (floor(tmpl/100) + (fmod(tmpl, 100.0)/60)) * 100000000*PI/180;
-    if (sign)
-	rad = -rad;
-    return rad;
-}
-
-static void zodiac_init(struct gps_session_t *session)
-{
-    unsigned short data[22];
-    time_t t;
-    struct tm *tm;
-
-    if (session->latitude && session->longitude) {
-      t = time(NULL);
-      tm = gmtime(&t);
-
-      if (session->sn++ > 32767)
-	  session->sn = 0;
+    if (session->driver.zodiac.sn++ > 32767)
+	session->driver.zodiac.sn = 0;
       
-      memset(data, 0, sizeof(data));
-      data[0] = session->sn;		/* sequence number */
-      data[1] = (1 << 2) | (1 << 3);
-      data[2] = data[3] = data[4] = 0;
-      data[5] = tm->tm_mday; data[6] = tm->tm_mon+1; data[7]= tm->tm_year+1900; 
-      data[8] = tm->tm_hour; data[9] = tm->tm_min; data[10] = tm->tm_sec;
-      *(long *) (data + 11) = putlong(session->latitude, (session->latd == 'S') ? 1 : 0);
-      *(long *) (data + 13) = putlong(session->longitude, (session->lond == 'W') ? 1 : 0);
-      data[15] = data[16] = 0;
-      data[17] = data[18] = data[19] = data[20] = 0;
-      data[21] = zodiac_checksum(data, 21);
+    memset(data, 0, sizeof(data));
+    /* data is the part of the message starting at word 6 */
+    data[0] = session->driver.zodiac.sn;	/* sequence number */
+    data[1] = 1;			/* port 1 data valid */
+    data[2] = 1;			/* port 1 character width (8 bits) */
+    data[3] = 0;			/* port 1 stop bits (1 stopbit) */
+    data[4] = 0;			/* port 1 parity (none) */
+    data[5] = (unsigned short)(round(log((double)speed/300)/M_LN2)+1); /* port 1 speed */
+    data[14] = zodiac_checksum(data, 14);
 
-      zodiac_spew(session, 1200, data, 22);
-    }
+    zodiac_spew(session, 1330, data, 15);
+
+    return true;	/* it would be nice to error-check this */
 }
 
-static void send_rtcm(struct gps_session_t *session, 
-		      char *rtcmbuf, int rtcmbytes)
+static void send_rtcm(struct gps_device_t *session, 
+		      char *rtcmbuf, size_t rtcmbytes)
 {
     unsigned short data[34];
-    int n = 1 + (rtcmbytes/2 + rtcmbytes%2);
+    int n = 1 + (int)(rtcmbytes/2 + rtcmbytes%2);
 
-    if (session->sn++ > 32767)
-	session->sn = 0;
+    if (session->driver.zodiac.sn++ > 32767)
+	session->driver.zodiac.sn = 0;
 
     memset(data, 0, sizeof(data));
-    data[0] = session->sn;		/* sequence number */
+    data[0] = session->driver.zodiac.sn;		/* sequence number */
     memcpy(&data[1], rtcmbuf, rtcmbytes);
     data[n] = zodiac_checksum(data, n);
 
     zodiac_spew(session, 1351, data, n+1);
 }
 
-static int zodiac_send_rtcm(struct gps_session_t *session,
-			char *rtcmbuf, int rtcmbytes)
+static ssize_t zodiac_send_rtcm(struct gps_device_t *session,
+			char *rtcmbuf, size_t rtcmbytes)
 {
-    int len;
+    size_t len;
 
-    while (rtcmbytes) {
-	len = rtcmbytes>64?64:rtcmbytes;
+    while (rtcmbytes > 0) {
+	len = (size_t)(rtcmbytes>64?64:rtcmbytes);
 	send_rtcm(session, rtcmbuf, len);
 	rtcmbytes -= len;
 	rtcmbuf += len;
@@ -146,334 +133,252 @@ static int zodiac_send_rtcm(struct gps_session_t *session,
     return 1;
 }
 
-static long getlong(void *p)
+static gps_mask_t handle1000(struct gps_device_t *session)
 {
-    return *(long *) p;
-}
-
-static unsigned long getulong(void *p)
-{
-    return *(unsigned long *) p;
-}
-
-static double degtodm(double a)
-{
-    double m, t;
-    m = modf(a, &t);
-    t = floor(a) * 100 + m * 60;
-    return t;
-}
-
-static void handle1000(struct gps_session_t *session, unsigned short *p)
-{
-    sprintf(session->gNMEAdata.utc, "%04d/%02d/%dT%02d:%02d:%02dZ",
-	    p[O(19)], p[O(20)], p[O(21)], p[O(22)], p[O(23)], p[O(24)]);
-
-#if 0
-    gpsd_report(1, "date: %s\n", session->gNMEAdata.utc);
-    gpsd_report(1, "  solution invalid:\n");
-    gpsd_report(1, "    altitude: %d\n", (p[O(10)] & 1) ? 1 : 0);
-    gpsd_report(1, "    no diff gps: %d\n", (p[O(10)] & 2) ? 1 : 0);
-    gpsd_report(1, "    not enough satellites: %d\n", (p[O(10)] & 4) ? 1 : 0);
-    gpsd_report(1, "    exceed max EHPE: %d\n", (p[O(10)] & 8) ? 1 : 0);
-    gpsd_report(1, "    exceed max EVPE: %d\n", (p[O(10)] & 16) ? 1 : 0);
-    gpsd_report(1, "  solution type:\n");
-    gpsd_report(1, "    propagated: %d\n", (p[O(11)] & 1) ? 1 : 0);
-    gpsd_report(1, "    altitude: %d\n", (p[O(11)] & 2) ? 1 : 0);
-    gpsd_report(1, "    differential: %d\n", (p[O(11)] & 4) ? 1 : 0);
-    gpsd_report(1, "Number of measurements in solution: %d\n", p[O(12)]);
-    gpsd_report(1, "Lat: %f\n", 180.0 / (PI / ((double) getlong(p + O(27)) / 100000000)));
-    gpsd_report(1, "Lon: %f\n", 180.0 / (PI / ((double) getlong(p + O(29)) / 100000000)));
-    gpsd_report(1, "Alt: %f\n", (double) getlong(p + O(31)) / 100.0);
-    gpsd_report(1, "Speed: %f\n", (double) getlong(p + O(34)) / 100.0) * 1.94387;
-    gpsd_report(1, "Map datum: %d\n", p[O(39)]);
-    gpsd_report(1, "Magnetic variation: %f\n", p[O(37)] * 180 / (PI * 10000));
-    gpsd_report(1, "Course: %f\n", (p[O(36)] * 180 / (PI * 1000)));
-    gpsd_report(1, "Separation: %f\n", (p[O(33)] / 100));
-#endif
-
-    session->hours = p[O(22)]; 
-    session->minutes = p[O(23)]; 
-    session->seconds = p[O(24)];
-    session->year = p[O(21)];
-    session->month = p[O(20)];
-    session->day = p[O(19)];
-
-    session->gNMEAdata.latitude = 180.0 / (PI / ((double) getlong(p + O(27)) / 100000000));
-    session->gNMEAdata.longitude = 180.0 / (PI / ((double) getlong(p + O(29)) / 100000000));
-    session->gNMEAdata.speed = ((double) getulong(p + O(34)) / 100.0) * 1.94387;
-    session->gNMEAdata.altitude = (double) getlong(p + O(31)) / 100.0;
-    session->gNMEAdata.status = (p[O(10)] & 0x1c) ? 0 : 1;
-    session->mag_var = p[O(37)] * 180 / (PI * 10000);	/* degrees */
-    session->gNMEAdata.track = p[O(36)] * 180 / (PI * 1000);	/* degrees */
-    session->gNMEAdata.satellites_used = p[O(12)];
-
-    if (session->gNMEAdata.status)
-	session->gNMEAdata.mode = (p[O(10)] & 1) ? 2 : 3;
+    double subseconds;
+    struct tm unpacked_date;
+    /* ticks                      = getlong(6); */
+    /* sequence                   = getword(8); */
+    /* measurement_sequence       = getword(9); */
+    /*@ -boolops -predboolothers @*/
+    session->gpsdata.status       = (getword(10) & 0x1c) ? 0 : 1;
+    if (session->gpsdata.status != 0)
+	session->gpsdata.newdata.mode = (getword(10) & 1) ? MODE_2D : MODE_3D;
     else
-	session->gNMEAdata.mode = 1;
-    REFRESH(session->gNMEAdata.status_stamp);
-    REFRESH(session->gNMEAdata.mode_stamp);
+	session->gpsdata.newdata.mode = MODE_NO_FIX;
+    /*@ +boolops -predboolothers @*/
 
-    session->separation = p[O(33)] / 100;	/* meters */
+    /* solution_type                 = getword(11); */
+    session->gpsdata.satellites_used = (int)getword(12);
+    /* polar_navigation              = getword(13); */
+    /* gps_week                      = getword(14); */
+    /* gps_seconds                   = getlong(15); */
+    /* gps_nanoseconds               = getlong(17); */
+    unpacked_date.tm_mday = (int)getword(19);
+    unpacked_date.tm_mon = (int)getword(20) - 1;
+    unpacked_date.tm_year = (int)getword(21) - 1900;
+    unpacked_date.tm_hour = (int)getword(22);
+    unpacked_date.tm_min = (int)getword(23);
+    unpacked_date.tm_sec = (int)getword(24);
+    subseconds = (int)getlong(25) / 1e9;
+    /*@ -compdef */
+    session->gpsdata.newdata.time = session->gpsdata.sentence_time =
+	(double)mkgmtime(&unpacked_date) + subseconds;
+    /*@ +compdef */
+#ifdef NTPSHM_ENABLE
+    if (session->gpsdata.newdata.mode > MODE_NO_FIX)
+	(void)ntpshm_put(session, session->gpsdata.newdata.time + 1.1);
+#endif
+    /*@ -type @*/
+    session->gpsdata.newdata.latitude  = ((long)getlong(27)) * RAD_2_DEG * 1e-8;
+    session->gpsdata.newdata.longitude = ((long)getlong(29)) * RAD_2_DEG * 1e-8;
+    /*
+     * The Rockwell Jupiter TU30-D140 reports altitude as uncorrected height
+     * above WGS84 geoid.  The Zodiac binary protocol manual does not 
+     * specify whether word 31 is geodetic or WGS 84. 
+     */
+    session->gpsdata.newdata.altitude  = ((long)getlong(31)) * 1e-2;
+    /*@ +type @*/
+    session->gpsdata.separation    = ((short)getword(33)) * 1e-2;
+    session->gpsdata.newdata.altitude -= session->gpsdata.separation;
+    session->gpsdata.newdata.speed     = (int)getlong(34) * 1e-2;
+    session->gpsdata.newdata.track     = (int)getword(36) * RAD_2_DEG * 1e-3;
+    session->mag_var               = ((short)getword(37)) * RAD_2_DEG * 1e-4;
+    session->gpsdata.newdata.climb     = ((short)getword(38)) * 1e-2;
+    /* map_datum                   = getword(39); */
+    /* manual says these are 1-sigma */
+    session->gpsdata.newdata.eph       = (int)getlong(40) * 1e-2 * GPSD_CONFIDENCE;
+    session->gpsdata.newdata.epv       = (int)getlong(42) * 1e-2 * GPSD_CONFIDENCE;
+    session->gpsdata.newdata.ept       = (int)getlong(44) * 1e-2 * GPSD_CONFIDENCE;
+    session->gpsdata.newdata.eps       = (int)getword(46) * 1e-2 * GPSD_CONFIDENCE;
+    /* clock_bias                  = (int)getlong(47) * 1e-2; */
+    /* clock_bias_sd               = (int)getlong(49) * 1e-2; */
+    /* clock_drift                 = (int)getlong(51) * 1e-2; */
+    /* clock_drift_sd              = (int)getlong(53) * 1e-2; */
+
+#if 0
+    gpsd_report(1, "date: %lf\n", session->gpsdata.newdata.time);
+    gpsd_report(1, "  solution invalid:\n");
+    gpsd_report(1, "    altitude: %d\n", (getword(10) & 1) ? 1 : 0);
+    gpsd_report(1, "    no diff gps: %d\n", (getword(10) & 2) ? 1 : 0);
+    gpsd_report(1, "    not enough satellites: %d\n", (getword(10) & 4) ? 1 : 0);
+    gpsd_report(1, "    exceed max EHPE: %d\n", (getword(10) & 8) ? 1 : 0);
+    gpsd_report(1, "    exceed max EVPE: %d\n", (getword(10) & 16) ? 1 : 0);
+    gpsd_report(1, "  solution type:\n");
+    gpsd_report(1, "    propagated: %d\n", (getword(11) & 1) ? 1 : 0);
+    gpsd_report(1, "    altitude: %d\n", (getword(11) & 2) ? 1 : 0);
+    gpsd_report(1, "    differential: %d\n", (getword(11) & 4) ? 1 : 0);
+    gpsd_report(1, "Number of measurements in solution: %d\n", getword(12));
+    gpsd_report(1, "Lat: %f\n", getlong(27) * RAD_2_DEG * 1e-8);
+    gpsd_report(1, "Lon: %f\n", getlong(29) * RAD_2_DEG * 1e-8);
+    gpsd_report(1, "Alt: %f\n", (double) getlong(31) * 1e-2);
+    gpsd_report(1, "Speed: %f\n", (double) getlong(34) * 1e-2 * MPS_TO_KNOTS);
+    gpsd_report(1, "Map datum: %d\n", getword(39));
+    gpsd_report(1, "Magnetic variation: %f\n", getword(37) * RAD_2_DEG * 1e-4);
+    gpsd_report(1, "Course: %f\n", getword(36) * RAD_2_DEG * 1e-4);
+    gpsd_report(1, "Separation: %f\n", getword(33) * 1e-2);
+#endif
+
+    session->gpsdata.sentence_length = 55;
+    return TIME_SET|LATLON_SET|ALTITUDE_SET|CLIMB_SET|SPEED_SET|TRACK_SET|STATUS_SET|MODE_SET|CYCLE_START_SET; /* |HERR_SET|VERR_SET|SPEEDERR_SET */
 }
 
-static void handle1002(struct gps_session_t *session, unsigned short *p)
+static gps_mask_t handle1002(struct gps_device_t *session)
 {
-    int i, j;
+    int i, j, status, prn;
 
-    for (j = 0; j < MAXCHANNELS; j++)
-	session->gNMEAdata.used[j] = 0;
-    session->gNMEAdata.satellites_used = 0;
-    for (i = 0; i < MAXCHANNELS; i++) {
-	session->Zs[i] = p[O(16 + (3 * i))];
-	session->Zv[i] = (p[O(15 + (3 * i))] & 0xf);
+    session->gpsdata.satellites_used = 0;
+    memset(session->gpsdata.used,0,sizeof(session->gpsdata.used));
+    /* ticks                      = getlong(6); */
+    /* sequence                   = getword(8); */
+    /* measurement_sequence       = getword(9); */
+    /* gps_week                   = getword(10); */
+    /* gps_seconds                = getlong(11); */
+    /* gps_nanoseconds            = getlong(13); */
+    for (i = 0; i < ZODIAC_CHANNELS; i++) {
+	/*@ -type @*/ 
+	session->driver.zodiac.Zv[i] = status = (int)getword(15 + (3 * i));
+	session->driver.zodiac.Zs[i] = prn = (int)getword(16 + (3 * i));
+	/*@ +type @*/ 
 #if 0
-	gpsd_report(1, "Sat%02d:", i);
-	gpsd_report(1, " used:%d", (p[O(15 + (3 * i))] & 1) ? 1 : 0);
-	gpsd_report(1, " eph:%d", (p[O(15 + (3 * i))] & 2) ? 1 : 0);
-	gpsd_report(1, " val:%d", (p[O(15 + (3 * i))] & 4) ? 1 : 0);
-	gpsd_report(1, " dgps:%d", (p[O(15 + (3 * i))] & 8) ? 1 : 0);
-	gpsd_report(1, " PRN:%d", p[O(16 + (3 * i))]);
-	gpsd_report(1, " C/No:%d\n", p[O(17 + (3 * i))]);
+	gpsd_report(1, "Sat%02d:\n", i);
+	gpsd_report(1, " used:%d\n", (status & 1) ? 1 : 0);
+	gpsd_report(1, " eph:%d\n", (status & 2) ? 1 : 0);
+	gpsd_report(1, " val:%d\n", (status & 4) ? 1 : 0);
+	gpsd_report(1, " dgps:%d\n", (status & 8) ? 1 : 0);
+	gpsd_report(1, " PRN:%d\n", prn);
+	gpsd_report(1, " C/No:%d\n", getword(17 + (3 * i)));
 #endif
-	if (p[O(15 + (3 * i))] & 1)
-	    session->gNMEAdata.used[session->gNMEAdata.satellites_used++] = i;
-	for (j = 0; j < MAXCHANNELS; j++) {
-	    if (session->gNMEAdata.PRN[j] != p[O(16 + (3 * i))])
+	if (status & 1)
+	    session->gpsdata.used[session->gpsdata.satellites_used++] = prn;
+	for (j = 0; j < ZODIAC_CHANNELS; j++) {
+	    if (session->gpsdata.PRN[j] != prn)
 		continue;
-	    session->gNMEAdata.ss[j] = p[O(17 + (3 * i))];
+	    session->gpsdata.ss[j] = (int)getword(17 + (3 * i));
 	    break;
 	}
     }
-    REFRESH(session->gNMEAdata.satellite_stamp);
+    return SATELLITE_SET | USED_SET;
 }
 
-static void handle1003(struct gps_session_t *session, unsigned short *p)
+static gps_mask_t handle1003(struct gps_device_t *session)
 {
-    int j;
+    int i;
 
-    session->gNMEAdata.pdop = p[O(10)];
-    session->gNMEAdata.hdop = p[O(11)];
-    session->gNMEAdata.vdop = p[O(12)];
-    session->gNMEAdata.satellites = p[O(14)];
+    /* ticks              = getlong(6); */
+    /* sequence           = getword(8); */
+    session->gpsdata.gdop = (unsigned int)getword(9) * 1e-2;
+    session->gpsdata.pdop = (unsigned int)getword(10) * 1e-2;
+    session->gpsdata.hdop = (unsigned int)getword(11) * 1e-2;
+    session->gpsdata.vdop = (unsigned int)getword(12) * 1e-2;
+    session->gpsdata.tdop = (unsigned int)getword(13) * 1e-2;
+    session->gpsdata.satellites = (int)getword(14);
 
-    for (j = 0; j < MAXCHANNELS; j++) {
-	if (j < session->gNMEAdata.satellites) {
-	    session->gNMEAdata.PRN[j] = p[O(15 + (3 * j))];
-	    session->gNMEAdata.azimuth[j] = p[O(16 + (3 * j))] * 180 / (PI * 10000);
-	    session->gNMEAdata.elevation[j] = p[O(17 + (3 * j))] * 180 / (PI * 10000);
+    for (i = 0; i < ZODIAC_CHANNELS; i++) {
+	if (i < session->gpsdata.satellites) {
+	    session->gpsdata.PRN[i] = (int)getword(15 + (3 * i));
+	    session->gpsdata.azimuth[i] = (int)(((short)getword(16 + (3 * i))) * RAD_2_DEG * 1e-4);
+	    if (session->gpsdata.azimuth[i] < 0)
+		session->gpsdata.azimuth[i] += 360;
+	    session->gpsdata.elevation[i] = (int)(((short)getword(17 + (3 * i))) * RAD_2_DEG * 1e-4);
 #if 0
 	    gpsd_report(1, "Sat%02d:  PRN:%d az:%d el:%d\n", 
-			i, p[O(15+(3*i))], p[O(16+(3*i))], p[O(17+(3*i))]);
+			i, getword(15+(3 * i)),getword(16+(3 * i)),getword(17+(3 * i)));
 #endif
 	} else {
-	    session->gNMEAdata.PRN[j] = 0;
-	    session->gNMEAdata.azimuth[j] = 0.0;
-	    session->gNMEAdata.elevation[j] = 0.0;
+	    session->gpsdata.PRN[i] = 0;
+	    session->gpsdata.azimuth[i] = 0;
+	    session->gpsdata.elevation[i] = 0;
 	}
     }
-    REFRESH(session->gNMEAdata.fix_quality_stamp);
-    REFRESH(session->gNMEAdata.satellite_stamp);
+    return SATELLITE_SET | HDOP_SET | VDOP_SET | PDOP_SET;
 }
 
-static void handle1005(struct gps_session_t *session, unsigned short *p)
+static void handle1005(struct gps_device_t *session UNUSED)
 {
-    int i, numcorrections = p[O(12)];
+    /* ticks              = getlong(6); */
+    /* sequence           = getword(8); */
+    int numcorrections = (int)getword(12);
+#if 0
+    int i;
 
-    gpsd_report(1, "Packet: %d\n", session->sn);
-    gpsd_report(1, "Station bad: %d\n", (p[O(9)] & 1) ? 1 : 0);
-    gpsd_report(1, "User disabled: %d\n", (p[O(9)] & 2) ? 1 : 0);
-    gpsd_report(1, "Station ID: %d\n", p[O(10)]);
-    gpsd_report(1, "Age of last correction in seconds: %d\n", p[O(11)]);
-    gpsd_report(1, "Number of corrections: %d\n", p[O(12)]);
+    gpsd_report(1, "Packet: %d\n", session->driver.zodiac.sn);
+    gpsd_report(1, "Station bad: %d\n", (getword(9) & 1) ? 1 : 0);
+    gpsd_report(1, "User disabled: %d\n", (getword(9) & 2) ? 1 : 0);
+    gpsd_report(1, "Station ID: %d\n", getword(10));
+    gpsd_report(1, "Age of last correction in seconds: %d\n", getword(11));
+    gpsd_report(1, "Number of corrections: %d\n", getword(12));
     for (i = 0; i < numcorrections; i++) {
-	gpsd_report(1, "Sat%02d:", p[O(13+i)] & 0x3f);
-	gpsd_report(1, "ephemeris:%d", (p[O(13+i)] & 64) ? 1 : 0);
-	gpsd_report(1, "rtcm corrections:%d", (p[O(13+i)] & 128) ? 1 : 0);
-	gpsd_report(1, "rtcm udre:%d", (p[O(13+i)] & 256) ? 1 : 0);
-	gpsd_report(1, "sat health:%d", (p[O(13+i)] & 512) ? 1 : 0);
-	gpsd_report(1, "rtcm sat health:%d", (p[O(13+i)] & 1024) ? 1 : 0);
-	gpsd_report(1, "corrections state:%d", (p[O(13+i)] & 2048) ? 1 : 0);
-	gpsd_report(1, "iode mismatch:%d", (p[O(13+i)] & 4096) ? 1 : 0);
+	gpsd_report(1, "Sat%02d:\n", getword(13+i) & 0x3f);
+	gpsd_report(1, "ephemeris:%d\n", (getword(13+i) & 64) ? 1 : 0);
+	gpsd_report(1, "rtcm corrections:%d\n", (getword(13+i) & 128) ? 1 : 0);
+	gpsd_report(1, "rtcm udre:%d\n", (getword(13+i) & 256) ? 1 : 0);
+	gpsd_report(1, "sat health:%d\n", (getword(13+i) & 512) ? 1 : 0);
+	gpsd_report(1, "rtcm sat health:%d\n", (getword(13+i) & 1024) ? 1 : 0);
+	gpsd_report(1, "corrections state:%d\n", (getword(13+i) & 2048) ? 1 : 0);
+	gpsd_report(1, "iode mismatch:%d\n", (getword(13+i) & 4096) ? 1 : 0);
     }
+#endif
+    if (session->gpsdata.fix.mode == MODE_NO_FIX)
+	session->gpsdata.status = STATUS_NO_FIX;
+    else if (numcorrections == 0)
+	session->gpsdata.status = STATUS_FIX;
+    else
+	session->gpsdata.status = STATUS_DGPS_FIX;
 }
 
-static void analyze(struct gps_session_t *session, 
-		    struct header *h, unsigned short *p)
+static void handle1108(struct gps_device_t *session)
 {
-    char buf[BUFSIZE], *bufp, *bufp2;
-    int i = 0, j = 0, nmea = 0;
-
-    if (p[h->ndata] == zodiac_checksum(p, h->ndata)) {
-	gpsd_report(5, "id %d\n", h->id);
-	switch (h->id) {
-	case 1000:
-	    handle1000(session, p);
-	    bufp = buf;
-	    if (session->gNMEAdata.mode > 1) {
-		sprintf(bufp,
-			"$GPGGA,%02d%02d%02d,%f,%c,%f,%c,%d,%02d,%.2f,%.1f,%c,%f,%c,%s,%s*",
-		   session->hours, session->minutes, session->seconds,
-			degtodm(fabs(session->gNMEAdata.latitude)),
-			((session->gNMEAdata.latitude > 0) ? 'N' : 'S'),
-			degtodm(fabs(session->gNMEAdata.longitude)),
-			((session->gNMEAdata.longitude > 0) ? 'E' : 'W'),
-		    session->gNMEAdata.mode, session->gNMEAdata.satellites_used, session->gNMEAdata.hdop,
-			session->gNMEAdata.altitude, 'M', session->separation, 'M', "", "");
-		nmea_add_checksum(bufp + 1);
-		bufp = bufp + strlen(bufp);
-	    }
-	    sprintf(bufp,
-		    "$GPRMC,%02d%02d%02d,%c,%f,%c,%f,%c,%f,%f,%02d%02d%02d,%02f,%c*",
-		    session->hours, session->minutes, session->seconds,
-		    session->gNMEAdata.status ? 'A' : 'V', degtodm(fabs(session->gNMEAdata.latitude)),
-		    ((session->gNMEAdata.latitude > 0) ? 'N' : 'S'),
-		    degtodm(fabs(session->gNMEAdata.longitude)),
-		((session->gNMEAdata.longitude > 0) ? 'E' : 'W'), session->gNMEAdata.speed,
-		    session->gNMEAdata.track, session->day, session->month,
-		    (session->year % 100), session->mag_var,
-		    (session->mag_var > 0) ? 'E' : 'W');
-	    nmea_add_checksum(bufp + 1);
-	    nmea = 1000;
-	    break;
-	case 1002:
-	    handle1002(session, p);
-	    bufp2 = bufp = buf;
-	    sprintf(bufp, "$GPGSA,%c,%d,", 'A', session->gNMEAdata.mode);
-	    j = 0;
-	    for (i = 0; i < MAXCHANNELS; i++) {
-		if (session->gNMEAdata.used[i]) {
-		    bufp = bufp + strlen(bufp);
-		    sprintf(bufp, "%02d,", session->gNMEAdata.PRN[i]);
-		    j++;
-		}
-	    }
-	    for (i = j; i < MAXCHANNELS; i++) {
-		bufp = bufp + strlen(bufp);
-		sprintf(bufp, ",");
-	    }
-	    bufp = bufp + strlen(bufp);
-	    sprintf(bufp, "%.2f,%.2f,%.2f*", session->gNMEAdata.pdop, session->gNMEAdata.hdop,
-		    session->gNMEAdata.vdop);
-	    nmea_add_checksum(bufp2 + 1);
-	    bufp2 = bufp = bufp + strlen(bufp);
-	    sprintf(bufp, "$PRWIZCH");
-	    bufp = bufp + strlen(bufp);
-	    for (i = 0; i < 12; i++) {
-		sprintf(bufp, ",%02d,%X", session->Zs[i], session->Zv[i]);
-		bufp = bufp + strlen(bufp);
-	    }
-	    sprintf(bufp, "*");
-	    bufp = bufp + strlen(bufp);
-	    nmea_add_checksum(bufp2 + 1);
-	    nmea = 1002;
-	    break;
-	case 1003:
-	    handle1003(session, p);
-	    bufp2 = bufp = buf;
-	    j = (session->gNMEAdata.satellites / 4) + (((session->gNMEAdata.satellites % 4) > 0) ? 1 : 0);
-	    while (i < 12) {
-		if (i % 4 == 0)
-		    sprintf(bufp, "$GPGSV,%d,%d,%02d", j, (i / 4) + 1, session->gNMEAdata.satellites);
-		bufp += strlen(bufp);
-		if (i <= session->gNMEAdata.satellites && session->gNMEAdata.elevation[i])
-		    sprintf(bufp, ",%02d,%02d,%03d,%02d", session->gNMEAdata.PRN[i],
-			    session->gNMEAdata.elevation[i], session->gNMEAdata.azimuth[i], session->gNMEAdata.ss[i]);
-		else
-		    sprintf(bufp, ",%02d,00,000,%02d,", session->gNMEAdata.PRN[i],
-			    session->gNMEAdata.ss[i]);
-		bufp += strlen(bufp);
-		if (i % 4 == 3) {
-		    sprintf(bufp, "*");
-		    nmea_add_checksum(bufp2 + 1);
-		    bufp += strlen(bufp);
-		    bufp2 = bufp;
-		}
-		i++;
-	    }
-	    nmea = 1003;
-	    break;	
-	case 1005:
-	    handle1005(session, p);
-	    break;	
-	}
-    }
-    if (nmea > 0) {
-	gpsd_report(4, "%s", buf);
-	if (session->gNMEAdata.raw_hook)
-	    session->gNMEAdata.raw_hook(buf);
-    }
+    /* ticks              = getlong(6); */
+    /* sequence           = getword(8); */
+    /* utc_week_seconds   = getlong(14); */
+    /* leap_nanoseconds   = getlong(17); */
+    if ((int)(getword(19) & 3) == 3)
+	session->context->leap_seconds = (int)getword(16);
+#if 0
+    gpsd_report(1, "Leap seconds: %d.%09d\n", getword(16), getlong(17));
+    gpsd_report(1, "UTC validity: %d\n", getword(19) & 3);
+#endif
 }
 
-static int putword(unsigned short *p, unsigned char c, unsigned int n)
+static gps_mask_t zodiac_analyze(struct gps_device_t *session)
 {
-    *(((unsigned char *) p) + n) = c;
-    return (n == 0);
-}
+    char buf[BUFSIZ];
+    int i;
+    unsigned int id = (unsigned int)((session->outbuffer[3]<<8) | session->outbuffer[2]);
 
-static void zodiac_handle_input(struct gps_session_t *session)
-{
-    unsigned char c;
+    if (session->packet_type != ZODIAC_PACKET) {
+	gpsd_report(2, "zodiac_analyze packet type %d\n",session->packet_type);
+	return 0;
+    }
 
-    if (read(session->gNMEAdata.gps_fd, &c, 1) == 1)
-    {
-	static int state = ZODIAC_HUNT_FF;
-	static struct header h;
-	static unsigned int byte, words;
-	static unsigned short *data;
+    buf[0] = '\0';
+    for (i = 0; i < (int)session->outbuflen; i++)
+	(void)snprintf(buf+strlen(buf), sizeof(buf)-strlen(buf),
+		       "%02x", (unsigned int)session->outbuffer[i]);
+    (void)strcat(buf, "\n");
+    gpsd_report(5, "Raw Zodiac packet type %d length %d: %s\n",id,session->outbuflen,buf);
 
-	switch (state) {
-	case ZODIAC_HUNT_FF:
-	    if (c == 0xff)
-		state = ZODIAC_HUNT_81;
-	    if (c == 'E')
-		state = ZODIAC_HUNT_A;
-	    break;
-	case ZODIAC_HUNT_A:
-	    /* A better be right after E */
-	    if ((c == 'A') && (session->gNMEAdata.gps_fd != -1))
-		write(session->gNMEAdata.gps_fd, "EARTHA\r\n", 8);
-	    state = ZODIAC_HUNT_FF;
-	    break;
-	case ZODIAC_HUNT_81:
-	    if (c == 0x81)
-		state = ZODIAC_HUNT_ID;
-	    h.sync = 0x81ff;
-	    byte = 0;
-	    break;
-	case ZODIAC_HUNT_ID:
-	    if (!(byte = putword(&(h.id), c, byte)))
-		state = ZODIAC_HUNT_WC;
-	    break;
-	case ZODIAC_HUNT_WC:
-	    if (!(byte = putword(&(h.ndata), c, byte)))
-		state = ZODIAC_HUNT_FLAGS;
-	    break;
-	case ZODIAC_HUNT_FLAGS:
-	    if (!(byte = putword(&(h.flags), c, byte)))
-		state = ZODIAC_HUNT_CS;
-	    break;
-	case ZODIAC_HUNT_CS:
-	    if (!(byte = putword(&(h.csum), c, byte))) {
-		if (h.csum == zodiac_checksum((unsigned short *) &h, 4)) {
-		    state = ZODIAC_HUNT_DATA;
-		    data = (unsigned short *) malloc((h.ndata + 1) * 2);
-		    words = 0;
-		} else
-		    state = ZODIAC_HUNT_FF;
-	    }
-	    break;
-	case ZODIAC_HUNT_DATA:
-	    if (!(byte = putword(data + words, c, byte)))
-		words++;
-	    if (words == (unsigned int)h.ndata + 1) {
-		analyze(session, &h, data);
-		free(data);
-		state = ZODIAC_HUNT_FF;
-	    }
-	    break;
-	}
+    if (session->outbuflen < 10)
+	return 0;
+
+    (void)snprintf(session->gpsdata.tag,sizeof(session->gpsdata.tag),"%u",id);
+
+    switch (id) {
+    case 1000:
+	return handle1000(session);
+    case 1002:
+	return handle1002(session);
+    case 1003:
+	return handle1003(session);
+    case 1005:
+	handle1005(session);
+	return 0;	
+    case 1108:
+	handle1108(session);
+	return 0;
+    default:
+	return 0;
     }
 }
 
@@ -482,16 +387,20 @@ static void zodiac_handle_input(struct gps_session_t *session)
 /* this is everything we export */
 struct gps_type_t zodiac_binary =
 {
-    '\0',		/* cannot be explicitly selected */
-    "Zodiac binary",	/* full name of type */
-    NULL,		/* only switched to by some other driver */
-    zodiac_init,	/* initialize the device */
-    zodiac_handle_input,/* read and parse message packets */
-    zodiac_send_rtcm,	/* send DGPS correction */
-    NULL,		/* caller needs to supply a close hook */
-    9600,		/* 4800 won't work */
-    1,			/* 1 stop bit */
-    1,			/* updates every second */
+    .typename       = "Zodiac binary",	/* full name of type */
+    .trigger        = NULL,		/* no trigger */
+    .channels       = 12,		/* consumer-grade GPS */
+    .probe          = NULL,		/* no probe */
+    .initializer    = NULL,		/* no initialization */
+    .get_packet     = packet_get,	/* use the generic packet getter */
+    .parse_packet   = zodiac_analyze,	/* parse message packets */
+    .rtcm_writer    = zodiac_send_rtcm,	/* send DGPS correction */
+    .speed_switcher = zodiac_speed_switch,/* we can change baud rate */
+    .mode_switcher  = NULL,		/* no mode switcher */
+    .rate_switcher  = NULL,		/* no sample-rate switcher */
+    .cycle_chars    = -1,		/* not relevant, no rate switch */
+    .wrapup         = NULL,		/* caller might supply a close hook */
+    .cycle          = 1,		/* updates every second */
 };
 
 #endif /* ZODIAC_ENABLE */

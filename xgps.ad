@@ -4,7 +4,11 @@
 *altitude*labelString:   Altitude 
 *speed*labelString:      Speed    
 *track*labelString:      Course   
-*fix_status*labelString: Status   
+*epe*labelString:        EPE   
+*eph*labelString:        EPH   
+*epv*labelString:        EPV
+*climb*labelString:      Climb
+*status*labelString: Status   
 *quit*labelString:       Quit     
 *speedunits:             mph
 *altunits:               feet
