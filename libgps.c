@@ -1,14 +1,23 @@
+/* $Id$ */
 /* libgps.c -- client interface library for the gpsd daemon */
+#include <sys/time.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <sys/time.h>
-#include <pthread.h>
+#include <stdarg.h>
+#ifndef S_SPLINT_S
+#include <pthread.h>	/* pacifies OpenBSD's compiler */
+#endif
 #include <math.h>
 
+#include "gpsd_config.h"
 #include "gpsd.h"
+
+#ifdef HAVE_SETLOCALE
+#include <locale.h>
+#endif
 
 #ifdef S_SPLINT_S
 extern char *strtok_r(char *, const char *, char **);
@@ -30,7 +39,7 @@ extern char *strtok_r(char *, const char *, char **);
     double fdsec, fsec, fdeg, fmin;
 
     if ( f < 0 || f > 360 ) {
-	strcpy( str, "nan");
+	(void)strlcpy( str, "nan", 40);
 	return str;
     }
 
@@ -64,8 +73,8 @@ extern char *strtok_r(char *, const char *, char **);
 /* 
  * check the environment to determine proper GPS units
  *
- * clients should only call this if no user preference on the command line or
- * Xresources
+ * clients should only call this if no user preference is specified on 
+ * the command line or via X resources.
  *
  * return imperial    - Use miles/feet
  *        nautical    - Use knots/feet
@@ -94,7 +103,10 @@ enum unit gpsd_units(void)
 {
 	char *envu = NULL;
 
- 	if ((envu = getenv("GPSD_UNITS")) != NULL && *envu != '\0') {
+#ifdef HAVE_SETLOCALE
+	(void)setlocale(LC_NUMERIC, "C");
+#endif
+  	if ((envu = getenv("GPSD_UNITS")) != NULL && *envu != '\0') {
 		if (0 == strcasecmp(envu, "imperial")) {
 			return imperial;
 		}
@@ -129,7 +141,7 @@ struct gps_data_t *gps_open(const char *host, const char *port)
     if (!gpsdata)
 	return NULL;
     if (!host)
-	host = "localhost";
+	host = "127.0.0.1";
     if (!port)
 	port = DEFAULT_GPSD_PORT;
 
@@ -181,10 +193,11 @@ static void gps_unpack(char *buf, struct gps_data_t *gpsdata)
 
     for (ns = buf; ns; ns = strstr(ns+1, "GPSD")) {
 	if (/*@i1@*/strncmp(ns, "GPSD", 4) == 0) {
-	    for (sp = ns + 5; ; sp = tp) {
+	    /* the following should execute each time we have a good next sp */
+	    for (sp = ns + 5; *sp != '\0'; sp = tp+1) {
 		tp = sp + strcspn(sp, ",\r\n");
-		if (*tp == '\0') break;
-		*tp = '\0';
+		if (*tp == '\0') tp--;
+		else *tp = '\0';
 
 		switch (*sp) {
 		case 'A':
@@ -221,14 +234,18 @@ static void gps_unpack(char *buf, struct gps_data_t *gpsdata)
 		    }
 		    break;
 		case 'E':
-		    if (sp[2] == '?') {
-			   gpsdata->epe = NAN;
-			   gpsdata->fix.eph = NAN;
-			   gpsdata->fix.epv = NAN;
-		    } else {
-		        (void)sscanf(sp, "E=%lf %lf %lf", 
-			   &gpsdata->epe,&gpsdata->fix.eph,&gpsdata->fix.epv);
-		        gpsdata->set |= HERR_SET| VERR_SET | PERR_SET;
+		    gpsdata->epe = gpsdata->fix.eph = gpsdata->fix.epv = NAN;
+		    /* epe should always be present if eph or epv is */
+		    if (sp[2] != '?') {
+			char epe[20], eph[20], epv[20];
+		        (void)sscanf(sp, "E=%s %s %s", epe, eph, epv);
+#define DEFAULT(val) (val[0] == '?') ? NAN : atof(val)
+			    /*@ +floatdouble @*/
+			    gpsdata->epe = DEFAULT(epe);
+			    gpsdata->fix.eph = DEFAULT(eph);
+			    gpsdata->fix.epv = DEFAULT(epv);
+			    /*@ -floatdouble @*/
+#undef DEFAULT
 		    }
 		    break;
 		case 'F':
@@ -245,11 +262,11 @@ static void gps_unpack(char *buf, struct gps_data_t *gpsdata)
 		    break;
 		case 'I':
 		    /*@ -mustfreeonly */
-		    if (sp[2] == '?') 
+		    if (gpsdata->gps_id)
+			free(gpsdata->gps_id);
+		    if (sp[2] == '?')
 			gpsdata->gps_id = NULL;
 		    else {
-			if (gpsdata->gps_id)
-			    free(gpsdata->gps_id);
 			gpsdata->gps_id = strdup(sp+2);
 			gpsdata->set |= DEVICEID_SET;
 		    }
@@ -270,11 +287,11 @@ static void gps_unpack(char *buf, struct gps_data_t *gpsdata)
 			gpsdata->devicelist = (char **)calloc(
 			    (size_t)gpsdata->ndevices,
 			    sizeof(char **));
-			/*@ -nullstate @*/
-			gpsdata->devicelist[i=0] = strtok_r(sp+2, " \r\n", &ns);
+			/*@ -nullstate -mustfreefresh @*/
+			gpsdata->devicelist[i=0] = strdup(strtok_r(sp+1, " \r\n", &ns));
 			while ((sp = strtok_r(NULL, " \r\n",  &ns)))
 			    gpsdata->devicelist[++i] = strdup(sp);
-			/*@ +nullstate @*/
+			/*@ +nullstate +mustfreefresh @*/
 			/*@ +nullderef @*/
 			gpsdata->set |= DEVICELIST_SET;
 		    }
@@ -296,21 +313,26 @@ static void gps_unpack(char *buf, struct gps_data_t *gpsdata)
 		case 'O':
 		    if (sp[2] == '?') {
 			gpsdata->set = MODE_SET | STATUS_SET;
+			gpsdata->status = STATUS_NO_FIX;
 			gps_clear_fix(&gpsdata->fix);
 		    } else {
 			struct gps_fix_t nf;
 			char tag[MAXTAGLEN+1], alt[20];
 			char eph[20], epv[20], track[20],speed[20], climb[20];
-			char epd[20], eps[20], epc[20];
+			char epd[20], eps[20], epc[20], mode[2];
+			char timestr[20], ept[20], lat[20], lon[20];
 			int st = sscanf(sp+2, 
-			       "%8s %lf %lf %lf %lf %s %s %s %s %s %s %s %s %s",
-				tag, &nf.time, &nf.ept, 
-				&nf.latitude, &nf.longitude,
+			       "%8s %19s %19s %19s %19s %19s %19s %19s %19s %19s %19s %19s %19s %19s %1s",
+				tag, timestr, ept, lat, lon,
 			        alt, eph, epv, track, speed, climb,
-			        epd, eps, epc);
-			if (st == 14) {
+			        epd, eps, epc, mode);
+			if (st >= 14) {
 #define DEFAULT(val) (val[0] == '?') ? NAN : atof(val)
 			    /*@ +floatdouble @*/
+			    nf.time = DEFAULT(timestr);
+			    nf.latitude = DEFAULT(lat);
+			    nf.longitude = DEFAULT(lon);
+			    nf.ept = DEFAULT(ept);
 			    nf.altitude = DEFAULT(alt);
 			    nf.eph = DEFAULT(eph);
 			    nf.epv = DEFAULT(epv);
@@ -322,8 +344,11 @@ static void gps_unpack(char *buf, struct gps_data_t *gpsdata)
 			    nf.epc = DEFAULT(epc);
 			    /*@ -floatdouble @*/
 #undef DEFAULT
-			    nf.mode = (alt[0] == '?') ? MODE_2D : MODE_3D;
-			    if (nf.mode == MODE_3D)
+			    if (st >= 15)
+				nf.mode = (mode[0] == '?') ? MODE_NOT_SEEN : atoi(mode);
+			    else
+				nf.mode = (alt[0] == '?') ? MODE_2D : MODE_3D;
+			    if (alt[0] != '?')
 				gpsdata->set |= ALTITUDE_SET | CLIMB_SET;
 			    if (isnan(nf.eph)==0)
 				gpsdata->set |= HERR_SET;
@@ -335,10 +360,11 @@ static void gps_unpack(char *buf, struct gps_data_t *gpsdata)
 				gpsdata->set |= SPEEDERR_SET;
 			    if (isnan(nf.epc)==0)
 				gpsdata->set |= CLIMBERR_SET;
-			    nf.pitch = nf.roll = nf.dip = NAN;
 			    gpsdata->fix = nf;
-			    (void)strcpy(gpsdata->tag, tag);
-			    gpsdata->set = TIME_SET|TIMERR_SET|LATLON_SET|MODE_SET;
+			    (void)strlcpy(gpsdata->tag, tag, MAXTAGLEN+1);
+			    gpsdata->set |= TIME_SET|TIMERR_SET|LATLON_SET|MODE_SET;
+			    gpsdata->status = STATUS_FIX;
+			    gpsdata->set |= STATUS_SET;
 			}
 		    }
 		    break;
@@ -398,6 +424,8 @@ static void gps_unpack(char *buf, struct gps_data_t *gpsdata)
 		        gpsdata->fix.speed = NAN;
 		    } else {
 		        (void)sscanf(sp, "V=%lf", &gpsdata->fix.speed);
+			/* V reply is in kt, fix.speed is in metres/sec */
+			gpsdata->fix.speed = gpsdata->fix.speed / MPS_TO_KNOTS;
 		        gpsdata->set |= SPEED_SET;
 		    }
 		    break;
@@ -417,9 +445,9 @@ static void gps_unpack(char *buf, struct gps_data_t *gpsdata)
 			int PRN[MAXCHANNELS];
 			int elevation[MAXCHANNELS], azimuth[MAXCHANNELS];
 			int ss[MAXCHANNELS], used[MAXCHANNELS];
-			char tag[21], timestamp[21];
+			char tag[MAXTAGLEN+1], timestamp[21];
 
-			(void)sscanf(sp, "Y=%20s %20s %d ", 
+			(void)sscanf(sp, "Y=%8s %20s %d ", 
 			       tag, timestamp, &gpsdata->satellites);
 			(void)strncpy(gpsdata->tag, tag, MAXTAGLEN);
 			if (timestamp[0] != '?') {
@@ -429,12 +457,16 @@ static void gps_unpack(char *buf, struct gps_data_t *gpsdata)
 			for (j = 0; j < gpsdata->satellites; j++) {
 			    PRN[j]=elevation[j]=azimuth[j]=ss[j]=used[j]=0;
 			}
-			for (j = 0; j < gpsdata->satellites; j++) {
-			    sp = strchr(sp, ':') + 1;
-			    (void)sscanf(sp, "%d %d %d %d %d", &i1, &i2, &i3, &i4, &i5);
-			    PRN[j] = i1;
-			    elevation[j] = i2; azimuth[j] = i3;
-			    ss[j] = i4; used[j] = i5;
+			for (j = 0, gpsdata->satellites_used = 0; j < gpsdata->satellites; j++) {
+			    if ((sp != NULL) && ((sp = strchr(sp, ':')) != NULL)) {
+				sp++;
+				(void)sscanf(sp, "%d %d %d %d %d", &i1, &i2, &i3, &i4, &i5);
+				PRN[j] = i1;
+				elevation[j] = i2; azimuth[j] = i3;
+				ss[j] = i4; used[j] = i5;
+				if (i5 == 1)
+				    gpsdata->satellites_used++;
+			    }
 			}
 			/*@ -compdef @*/
 			memcpy(gpsdata->PRN, PRN, sizeof(PRN));
@@ -450,8 +482,10 @@ static void gps_unpack(char *buf, struct gps_data_t *gpsdata)
 		    gpsdata->profiling = (sp[2] == '1');
 		    break;
 		case '$':
-		    /*@ +matchanyintegral @*/
-		    (void)sscanf(sp, "$=%s %u %lf %lf %lf %lf %lf %lf", 
+		    if (gpsdata->profiling != true)
+			break;
+		    /*@ +matchanyintegral -formatcode @*/
+		    (void)sscanf(sp, "$=%8s %zd %lf %lf %lf %lf %lf %lf", 
 			   gpsdata->tag,
 			   &gpsdata->sentence_length,
 			   &gpsdata->fix.time, 
@@ -460,7 +494,7 @@ static void gps_unpack(char *buf, struct gps_data_t *gpsdata)
 			   &gpsdata->d_decode_time, 
 			   &gpsdata->poll_time, 
 			   &gpsdata->emit_time);
-		    /*@ -matchanyintegral @*/
+		    /*@ -matchanyintegral +formatcode @*/
 		    break;
 		}
 	    }
@@ -506,14 +540,23 @@ int gps_poll(struct gps_data_t *gpsdata)
     return 0;
 }
 
-int gps_query(struct gps_data_t *gpsdata, const char *requests)
+int gps_query(struct gps_data_t *gpsdata, const char *fmt, ... )
 /* query a gpsd instance for new data */
 {
-    if (write(gpsdata->gps_fd, requests, strlen(requests)) <= 0)
+    char buf[BUFSIZ];
+    va_list ap;
+
+    va_start(ap, fmt);
+    (void)vsnprintf(buf, sizeof(buf)-2, fmt, ap);
+    va_end(ap);
+    if (buf[strlen(buf)-1] != '\n')
+	(void)strlcat(buf, "\n", BUFSIZ);
+    if (write(gpsdata->gps_fd, buf, strlen(buf)) <= 0)
 	return -1;
     return gps_poll(gpsdata);
 }
 
+#ifdef HAVE_LIBPTHREAD
 static void *poll_gpsd(void *args) 
 /* helper for the thread launcher */
 {
@@ -523,8 +566,10 @@ static void *poll_gpsd(void *args)
 
     /* set thread parameters */
     /*@ -compdef @*/
+    /*@ -unrecog (splint has no pthread declarations as yet) @*/
     (void)pthread_setcancelstate(PTHREAD_CANCEL_ENABLE,&oldstate);
     (void)pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,&oldtype); /* we want to be canceled also when blocked on gps_poll() */
+    /*@ +unrecog @*/
     /*@ +compdef @*/
     gpsdata = (struct gps_data_t *) args;
     do {
@@ -548,7 +593,9 @@ int gps_set_callback(struct gps_data_t *gpsdata,
     gpsdata->thread_hook = callback;
 
     /* start the thread which will read data from gpsd */
+    /*@ -unrecog (splint has no pthread declarations as yet */
     return pthread_create(handler,NULL,poll_gpsd,(void*)gpsdata);
+    /*@ +unrecog @*/
 }
 
 int gps_del_callback(struct gps_data_t *gpsdata, pthread_t *handler)
@@ -561,13 +608,14 @@ int gps_del_callback(struct gps_data_t *gpsdata, pthread_t *handler)
 	(void)gps_query(gpsdata,"w-\n");	/* disable watcher mode */
     return res;
 }
+#endif /* HAVE_LIBPTHREAD */
 
 #ifdef TESTMAIN
 /*
  * A simple command-line exerciser for the library.
  * Not really useful for anything but debugging.
  */
-void data_dump(struct gps_data_t *collect, time_t now)
+static void data_dump(struct gps_data_t *collect, time_t now)
 {
     char *status_values[] = {"NO_FIX", "FIX", "DGPS_FIX"};
     char *mode_values[] = {"", "NO_FIX", "MODE_2D", "MODE_3D"};
@@ -615,24 +663,24 @@ void data_dump(struct gps_data_t *collect, time_t now)
 	
 }
 
-static void dumpline(struct gps_data_t *ud UNUSED, char *buf)
+static void dumpline(struct gps_data_t *ud UNUSED, char *buf,
+		     size_t ulen UNUSED, int level UNUSED)
 {
     puts(buf);
 }
 
 #include <getopt.h>
 
-main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
     struct gps_data_t *collect;
-    char buf[BUFSIZ], *device = NULL;
-    int option;
+    char buf[BUFSIZ];
 
     collect = gps_open(NULL, 0);
     gps_set_raw_hook(collect, dumpline);
     if (optind < argc) {
-	strcpy(buf, argv[optind]);
-	strcat(buf,"\n");
+	strlcpy(buf, argv[optind], BUFSIZ);
+	strlcat(buf,"\n", BUFSIZ);
 	gps_query(collect, buf);
 	data_dump(collect, time(NULL));
     } else {
@@ -655,6 +703,7 @@ main(int argc, char *argv[])
     }
 
     (void)gps_close(collect);
+    return 0;
 }
 
 #endif /* TESTMAIN */

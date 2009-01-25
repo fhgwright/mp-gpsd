@@ -1,6 +1,8 @@
+/* $Id$ */
 /* GPS speedometer as a wrapper around an Athena widget Tachometer
  * - Derrick J Brashear <shadow@dementia.org>
  */
+#include <sys/types.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -9,10 +11,11 @@
 #include <X11/Shell.h>
 #include <X11/Xaw/Label.h>
 #include <X11/Xaw/Paned.h>
+#include <Xm/Xm.h>
 #include <Xm/XmStrDefs.h>
 #include <Tachometer.h>
 
-#include "config.h"
+#include "gpsd_config.h"
 #include "gps.h"
 
 #include "xgpsspeed.icon"
@@ -35,7 +38,12 @@ static Widget toplevel;
 static void update_display(struct gps_data_t *gpsdata, 
 			   char *buf UNUSED, size_t len UNUSED, int level UNUSED)
 {
-    (void)TachometerSetValue(tacho, (int)rint(gpsdata->fix.speed*speedfactor));
+    int temp_int = (int)rint(gpsdata->fix.speed * speedfactor);
+
+    if (temp_int < 0) temp_int = 0;
+    else if (temp_int > 100) temp_int = 100;
+
+    (void)TachometerSetValue(tacho, temp_int);
 }
 
 static void handle_input(XtPointer client_data UNUSED,
@@ -87,15 +95,15 @@ int main(int argc, char **argv)
     if (strcmp(speedunits, "kph")==0) 
 	speedfactor = MPS_TO_KPH;
     else if (strcmp(speedunits, "knots")==0)
-	speedfactor = 1/MPS_TO_KNOTS;
+	speedfactor = MPS_TO_KNOTS;
 
-    while ((option = getopt(argc, argv, "hv")) != -1) {
+    while ((option = getopt(argc, argv, "hV")) != -1) {
 	switch (option) {
-	case 'v':
+	case 'V':
 	    (void)printf("xgpsspeed %s\n", VERSION);
 	    exit(0);
 	case 'h': default:
-	    (void)fputs("usage: gps [-h] [-v] [-rv] [-nc] [-needlecolor] [-speedunits {mph,kph,knots}] [server[:port]]\n", stderr);
+	    (void)fputs("usage: gps [-h] [-V] [-rv] [-nc] [-needlecolor] [-speedunits {mph,kph,knots}] [server[:port]]\n", stderr);
 	    exit(1);
 	}
     }
@@ -139,10 +147,13 @@ int main(int argc, char **argv)
     (void)XtCreateManagedWidget("title", labelWidgetClass, base, args, 1);
 
     /**** Label widget ****/
-    if (speedfactor == KNOTS_TO_MPH)
+    if (speedfactor == MPS_TO_MPH)
         (void)XtSetArg(args[0], XtNlabel, "Miles per Hour");
-    else
+    else if (speedfactor == MPS_TO_KPH)
         (void)XtSetArg(args[0], XtNlabel, "Km per Hour");
+    else 
+        (void)XtSetArg(args[0], XtNlabel, "Knots");
+
     /*@ +immediatetrans +usedef +observertrans +statictrans @*/
     (void)XtCreateManagedWidget("name", labelWidgetClass, base, args, 1);
     
@@ -165,16 +176,20 @@ int main(int argc, char **argv)
     gps_set_raw_hook(gpsdata, update_display);
 
     if (device) {
-	char *channelcmd = (char *)malloc(strlen(device)+3);
+	char *channelcmd;
+	size_t l;
+	l = strlen(device)+4;
 
-	if (channelcmd) {
-	    /*@i1@*/(void)strcpy(channelcmd, "F=");
-	    (void)strcpy(channelcmd+2, device);
+	if ((channelcmd = (char *)malloc(l)) != NULL){
+	    /*@ -compdef @*/
+	    (void)strlcpy(channelcmd, "F=", l);
+	    (void)strlcpy(channelcmd+2, device, l);
 	    (void)gps_query(gpsdata, channelcmd);
 	    (void)free(channelcmd);
+	    /*@ +compdef @*/
 	}
     }
-	
+
     (void)gps_query(gpsdata, "w+x\n");
 
     (void)XtAppMainLoop(app);

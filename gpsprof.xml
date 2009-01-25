@@ -97,7 +97,7 @@ plain text rather than a gnuplot script.)</para>
 </varlistentry>
 </variablelist>
 
-<para>The instrumented time plots conveys the following information:</para>
+<para>The instrumented time plot conveys the following information:</para>
 
 <variablelist>
 <varlistentry>
@@ -146,8 +146,8 @@ multiples of the cycle time, above which reports are discarded.</para>
 is 100.</para>
 
 <para>The -s option sets the baud rate.  Note, this will only work if
-the chipset accepts a speed-change command (SiRF-II supports this
-feature).</para>
+the chipset accepts a speed-change command (SiRFstarII and SiRFstarIII
+support this feature).</para>
 
 <para>The -t option sets a text string to be included in the plot
 title.</para>
@@ -165,9 +165,12 @@ Python interpreter's decode time. A C client would be faster.</para>
 <refsect1 id='see_also'><title>SEE ALSO</title>
 <para>
 <citerefentry><refentrytitle>gpsd</refentrytitle><manvolnum>8</manvolnum></citerefentry>,
-<citerefentry><refentrytitle>xgps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>libgps</refentrytitle><manvolnum>3</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>libgpsd</refentrytitle><manvolnum>3</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gpsfake</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gpsctl</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gpscat</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>gnuplot</refentrytitle><manvolnum>1</manvolnum></citerefentry>.
 </para>
 </refsect1>

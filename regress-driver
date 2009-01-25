@@ -1,0 +1,75 @@
+#!/bin/sh
+#
+# The regression-test driver script.  This used to be explicit in the
+# makefile before we regrouped the regression tests by stable and unstable 
+# drivers.
+#
+PATH=.:$PATH
+export PATH
+
+mode=regress
+while getopts trbvo:n opt
+do
+    case $opt in
+	t) mode=regress ;;	# Run regression tests
+	r) mode=superraw ;;	# Run superraw regressions (r=2 mode)
+	b) mode=build ;;	# Rebuild regression check files
+	v) mode=view ;;		# View result of generating a check file
+	o) opts="$OPTARG" ;;	# Pass options to gpsfake
+	n) do=echo ;;		# Just echo commands, don't do them
+    esac
+done
+shift $(($OPTIND - 1))
+
+case $mode in
+    regress)
+        echo "Testing the daemon..."
+        errors=0; total=0; notfound=0;
+        for f in $*; do
+            dir=`dirname $f`
+	    if [ -r $f.chk ]
+	    then
+		$do gpsfake -s 38400 -1 -b -p $opts ${f} | grep -v "^GPSD,X" >$dir/test.chk;
+		if $do diff -ub ${f}.chk $dir/test.chk; then :; else
+		    errors=`expr $errors + 1`;
+		fi;
+	    else
+		echo "*** No check log $f.chk exists"
+		notfound=`expr $notfound + 1`;
+	    fi
+	    total=`expr $total + 1`;
+        done; 
+	$do rm -f $dir/test.chk;
+        if test $errors -gt 0; then
+            echo "Regression test FAILED: $errors errors in $total tests total  ($notfound not found).";
+            exit 1;
+        else
+            echo "Regression test successful: no errors in $total tests ($notfound not found).";
+            exit 0;
+        fi
+        ;;
+    superraw)
+        echo "Testing super-raw mode..."
+        for f in $*; do
+            dir=`dirname $f`
+            $do gpsfake -s 38400 -1 -b -p -r "r=2" $opts ${f} \
+            | ./striplog -1 >$dir/test1.chk;
+            $do ./striplog <$${f} >$dir/test2.chk;
+            $do cmp $dir/test[12].chk;
+        done; rm $dir/test[12].chk
+        ;;
+    build)
+	echo "Rebuilding regressions..."
+        for f in $*; do
+            $do gpsfake -s 38400 -1 -b -p $opts ${f} | grep -v "^GPSD,X" >${f}.chk;
+        done
+        exit 0
+        ;;
+    view)
+        echo "Viewing..."
+        for f in $*; do
+            $do gpsfake -s 38400 -1 -b -p $opts ${f}
+        done
+        exit 0
+        ;;
+esac

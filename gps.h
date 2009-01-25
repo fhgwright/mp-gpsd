@@ -1,3 +1,4 @@
+/* $Id$ */
 /* gps.h -- interface of the libgps library */
 
 #ifndef gps_h
@@ -7,9 +8,10 @@
 extern "C" {
 #endif
 
-#include <stdbool.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <stdbool.h>
+#include <inttypes.h>	/* stdint.h would be smaller but not all have it */ 
 #include <limits.h>
 #include <time.h>
 #include <signal.h>
@@ -18,8 +20,9 @@ extern "C" {
 #endif
 
 #define MAXTAGLEN	8	/* maximum length of sentence tag name */
-#define MAXCHANNELS	14	/* maximum GPS channels (*not* satellites!) */
+#define MAXCHANNELS	20	/* maximum GPS channels (*not* satellites!) */
 #define SIRF_CHANNELS	12	/* max channels allowed in SiRF format */
+#define GPS_PRNMAX	32	/* above this number are SBAS satellites */
 
 /* 
  * The structure describing an uncertainty volume in kinematic space.
@@ -66,9 +69,6 @@ struct gps_fix_t {
     double eps;		/* Speed uncertainty, meters/sec */
     double climb;       /* Vertical speed, meters/sec */
     double epc;		/* Vertical speed uncertainty */
-    double pitch;       /* Pitch angle in degrees */
-    double roll;        /* Roll angle in degrees */
-    double dip;         /* Dip angle in degrees */
 };
 
 /*  
@@ -90,12 +90,14 @@ struct gps_fix_t {
 /* RTCM104 doesn't specify this, so give it the largest reasonable value */
 #define MAXHEALTH	(RTCM_WORDS_MAX-2)	
 
+#ifndef S_SPLINT_S 
 /*
  * A nominally 30-bit word (24 bits of data, 6 bits of parity)
  * used both in the GPS downlink protocol described in IS-GPS-200
  * and in the format for DGPS corrections used in RTCM-104.
  */
-typedef /*@unsignedintegraltype@*/ unsigned int isgps30bits_t;
+typedef /*@unsignedintegraltype@*/ uint32_t isgps30bits_t;
+#endif /* S_SPLINT_S */
 
 struct rtcm_t {
     /* header contents */
@@ -188,6 +190,7 @@ struct gps_data_t {
 #define HERR_SET	0x00008000u
 #define VERR_SET	0x00010000u
 #define PERR_SET	0x00020000u
+#define ERR_SET		(HERR_SET | VERR_SET | PERR_SET)
 #define SATELLITE_SET	0x00040000u
 #define PSEUDORANGE_SET	0x00080000u
 #define USED_SET	0x00100000u
@@ -212,7 +215,6 @@ struct gps_data_t {
 				 */
 
     struct gps_fix_t	fix;		/* accumulated PVT data */
-    struct gps_fix_t	newdata;	/* PVT data from last packet */
 
     double separation;		/* Geoidal separation, MSL - WGS84 (Meters) */
 
@@ -235,7 +237,7 @@ struct gps_data_t {
     int PRN[MAXCHANNELS];	/* PRNs of satellite */
     int elevation[MAXCHANNELS];	/* elevation of satellite */
     int azimuth[MAXCHANNELS];	/* azimuth */
-    int ss[MAXCHANNELS];	/* signal strength */
+    int ss[MAXCHANNELS];	/* signal-to-noise ratio (dB) */
 
 #if 0	/* not yet used or filled in */
     /* measurement data */
@@ -252,7 +254,7 @@ struct gps_data_t {
 #define SAT_FIX_USED	0x40		/* used for position fix */
 #endif
 
-    /* compass status */
+    /* compass status -- TrueNorth (and any similar) devices only */
     char headingStatus;
     char pitchStatus;
     char rollStatus;
@@ -293,7 +295,7 @@ struct gps_data_t {
 
 extern struct gps_data_t *gps_open(const char *host, const char *port);
 int gps_close(struct gps_data_t *);
-int gps_query(struct gps_data_t *gpsdata, const char *requests);
+int gps_query(struct gps_data_t *gpsdata, const char *fmt, ... );
 int gps_poll(struct gps_data_t *gpsdata);
 void gps_set_raw_hook(struct gps_data_t *gpsdata, void (*hook)(struct gps_data_t *sentence, char *buf, size_t len, int level));
 int gps_set_callback(struct gps_data_t *gpsdata, void (*callback)(struct gps_data_t *sentence, char *buf, size_t len, int level), pthread_t *handler);
@@ -308,11 +310,13 @@ extern void gps_clear_fix(/*@ out @*/struct gps_fix_t *);
 extern void gps_merge_fix(/*@ out @*/struct gps_fix_t *, 
 			  gps_mask_t,
 			  /*@ in @*/struct gps_fix_t *);
+extern unsigned int gps_valid_fields(/*@ in @*/struct gps_fix_t *);
+extern char *gps_show_transfer(int);
 
 extern time_t mkgmtime(register struct tm *);
 extern double timestamp(void);
 extern double iso8601_to_unix(char *);
-extern /*@observer@*/char *unix_to_iso8601(double t, /*@ out @*/char[], int len);
+extern /*@observer@*/char *unix_to_iso8601(double t, /*@ out @*/char[], size_t len);
 extern double gpstime_to_unix(int, double);
 extern void unix_to_gpstime(double, /*@out@*/int *, /*@out@*/double *);
 extern double earth_distance(double, double, double, double);
@@ -326,7 +330,7 @@ extern double wgs84_separation(double, double);
 #define KNOTS_TO_MPS	0.51444444	/* Knots to meters per second */
 #define MPS_TO_KPH	3.6		/* Meters per second to klicks/hr */
 #define MPS_TO_MPH	2.2369363	/* Meters/second to miles per hour */
-#define MPS_TO_KNOTS	1.9437		/* Meters per second to knots */
+#define MPS_TO_KNOTS	1.9438445	/* Meters per second to knots */
 /* miles and knots are both the international standard versions of the units */
 
 /* angle conversion multipliers */

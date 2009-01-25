@@ -46,7 +46,7 @@ logic that different from the decoder in the
 <application>gpsd</application> SiRF driver, so behaviors that show up
 in both are unlikely to be due to logic bugs in either.</para>
 
-<para><application>xgps</application> accepts an -h option that
+<para><application>sirfmon</application> accepts an -h option that
 displays a usage message, or a -v option to dump the package
 version and exit.</para>
 
@@ -121,7 +121,7 @@ set distance may vary with software versions.</quote></para>
 software, which often snaps the reported position to the nearest road
 within some uncertainty radius.  You probably want to turn static
 navigation off for pedestrian use, as it is likely to report speed
-zero and position changing in lsrge jumps.</para>
+zero and position changing in large jumps.</para>
 </listitem>
 </varlistentry>
 <varlistentry>
@@ -189,12 +189,13 @@ seconds, kill the program and restart.</para>
 <refsect1 id='see_also'><title>SEE ALSO</title>
 <para>
 <citerefentry><refentrytitle>gpsd</refentrytitle><manvolnum>8</manvolnum></citerefentry>,
-<citerefentry><refentrytitle>xgps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>libgps</refentrytitle><manvolnum>3</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>libgpsd</refentrytitle><manvolnum>3</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>gpsprof</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>gpsfake</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
-<citerefentry><refentrytitle>gnuplot</refentrytitle><manvolnum>1</manvolnum></citerefentry>.
+<citerefentry><refentrytitle>gpsctl</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gpscat</refentrytitle><manvolnum>1</manvolnum></citerefentry>.
 </para>
 </refsect1>
 

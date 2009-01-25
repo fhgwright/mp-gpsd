@@ -1,3 +1,4 @@
+/* $Id$ */
 /*
  * Tachometer Widget Implementation
  *
@@ -5,19 +6,13 @@
  * Revised by Shinji Sumimoto, 1989/9 (xtachos)
  * Modifications : ilham@mit.edu   (July 10 '90)
  * Cleaned up and simplified by Eric S. Raymond, December 2004.
- *
- * Permission to use, copy, modify and distribute without charge this software,
- * documentation, images, etc. is granted, provided that this comment and the
- * author's name is retained.  The author assumes no responsibility for lost
- * sleep as a consequence of use of this software.
- *
- * Send any comments, bug reports, etc. to shutoh@isl.yamaha.JUNET
  */
+#include <sys/types.h>
 #include <X11/IntrinsicP.h>
 #include <X11/StringDefs.h>
 #include <TachometerP.h>
 #include <math.h>
-#include "config.h"	/* must define UNUSED */
+#include "gpsd_config.h"	/* must define UNUSED */
 
 #define D2R  0.0174532925199432957692369076848861271 /* radians = pi/180 */
 

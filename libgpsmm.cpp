@@ -1,11 +1,15 @@
+/* $Id$ */
 /*
  * Copyright (C) 2005 Alfredo Pironti
- * See the file COPYING for license conditions
+ *
+ * This software is distributed under a BSD-style license. See the
+ * file "COPYING" for more information.
+ *
  */
 #include "libgpsmm.h"
 
 struct gps_data_t* gpsmm::open(void) {
-	return open("localHost",DEFAULT_GPSD_PORT);
+	return open("127.0.0.1",DEFAULT_GPSD_PORT);
 }
 
 struct gps_data_t* gpsmm::open(const char *host, const char *port) {

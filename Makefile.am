@@ -1,4 +1,5 @@
 # Automake description for gpsd
+# $Id$
 
 #SUBDIRS = contrib
 
@@ -14,14 +15,27 @@ XMLTO = xmlto
 if HAVE_DBUS
 INCLUDES = $(DBUS_CFLAGS) $(DBUS_GLIB_CFLAGS) -DDBUS_API_SUBJECT_TO_CHANGE=1
 DBUSPROGS = gpxlogger
-DBUSPAGES = gpxlogger.1
-gpxlogger_LDADD = $(DBUS_GLIB_LIBS)
+gpxlogger_LDADD = $(DBUS_GLIB_LIBS) libgps.la  -lm
 endif
 
-bin_PROGRAMS = $(DBUSPROGS) $(MOTIF_PROGS) sirfmon rtcmdecode gpspipe gpsflash cgps
-dist_bin_SCRIPTS = gpsprof gpsfake 
+if HAVE_RTCM104
+RTCM104PROGS = rtcmdecode
+RTCM104PAGES = rtcmdecode.1
+endif
+
+
+if HAVE_NCURSES
+CURSESPROGS = cgps sirfmon
+endif
+bin_PROGRAMS = $(DBUSPROGS) $(MOTIF_PROGS) $(RTCM104PROGS) $(CURSESPROGS) gpsctl gpspipe gpsflash cgpxlogger
 sbin_PROGRAMS = gpsd
-check_PROGRAMS = bits_test gpsmm_test packet_test
+check_PROGRAMS = bits_test gpsmm_test packet_test mkgmtime_test
+if HAVE_PYTHON
+dist_bin_SCRIPTS = gpsprof gpsfake gpscat
+python_PYTHON = gps.py gpsfake.py
+nodist_python_PYTHON = gpspacket.so
+PYTHONPAGES = gpsprof.1 gpsfake.1 gpscat.1
+endif
 
 #
 # Build xgps
@@ -49,19 +63,28 @@ cgps_SOURCES = cgps.c
 cgps_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) -lncurses libgps.la -lm $(LIBPTHREAD)
 
 #
+# Build cgpxlogger
+#
+cgpxlogger_SOURCES = cgpxlogger.c
+cgpxlogger_LDADD = $(LIBC) $(LIBNSL) $(LIBSOCKET) libgps.la -lm $(LIBPTHREAD)
+
+#
 # Build gpsd
 #
-gpsd_SOURCES = \
-	gpsd_dbus.h \
-	gpsd_dbus.c \
-	gpsd.c
+gpsd_c_sources = gpsd_dbus.c gpsd.c
+gpsd_SOURCES = $(gpsd_c_sources) gpsd_dbus.h
 gpsd_LDADD = $(DBUS_LIBS) $(LIBM) libgps.la -lm $(LIBPTHREAD)
+
+#
+# Build gpsctl
+#
+gpsctl_SOURCES = gpsctl.c
+gpsctl_LDADD = $(LIBM) libgps.la -lm $(LIBPTHREAD)
 
 #
 # Build gpspipe
 #
-gpspipe_SOURCES = \
-	gpspipe.c
+gpspipe_SOURCES = gpspipe.c
 gpspipe_LDADD = $(DBUS_LIBS) $(LIBM) libgps.la -lm
 
 #
@@ -74,7 +97,7 @@ sirfmon_LDADD = $(LIBM) -lncurses libgps.la -lm $(LIBPTHREAD)
 # Build rtcmdecode
 #
 rtcmdecode_SOURCES = rtcmdecode.c
-rtcmdecode_LDADD = $(LIBM) -lncurses libgps.la -lm $(LIBPTHREAD)
+rtcmdecode_LDADD = $(LIBM) libgps.la -lm $(LIBPTHREAD)
 
 #
 # Build gpsflash
@@ -85,42 +108,80 @@ gpsflash_LDADD = $(LIBM) libgps.la -lm
 #
 # Build shared libraries
 #
-libgps_la_LDFLAGS = -version-number 15:0:0
+libgps_la_LDFLAGS = -version-number 17:0:0
 lib_LTLIBRARIES = libgps.la
 
-libgps_c_sources = \
+libgpsd_c_sources = \
 	netlib.c \
 	nmea_parse.c \
 	serial.c \
-	drivers.c \
-	zodiac.c \
-	garmin.c \
-	tsip.c \
-	evermore.c \
-	italk.c \
 	libgpsd_core.c \
+	subframe.c \
 	ntpshm.c \
 	libgps.c \
 	packet.c \
 	gpsutils.c \
 	geoid.c \
+	dgnss.c \
 	dgpsip.c \
+	ntrip.c \
 	sirf.c \
 	report.c \
 	isgps.c \
 	rtcm.c \
 	srecord.c \
+	bsd-base64.c \
+	strl.c \
+	hex.c \
+	drivers.c \
+	zodiac.c \
+	ubx.c \
+	garmin.c \
+	garmin_txt.c \
+	tsip.c \
+	evermore.c \
+	italk.c \
+	navcom.c
+
+libgpsd_h_sources = \
+	italk.h \
+	bsd-base64.h \
+	timebase.h \
 	bits.h \
-	truenorth.c \
-	timebase.h
+	packet_names.h \
+	rtcm.h \
+	gpsd.h
 
-BUILT_SOURCES = packet_names.h
+BUILT_SOURCES = packet_names.h gpsd.h
 packet_names.h: packet_states.h
-	sed -e '/^ *\([A-Z][A-Z0-9_]*\),/s//   "\1",/' <packet_states.h >packet_names.h
+	sed -e '/^ *\([A-Z][A-Z0-9_]*\),/s//   "\1",/' -e '/_states/s//_names/' < `test -f 'packet_states.h' || echo '$(srcdir)/'`packet_states.h > packet_names.h
 
-libgps_la_SOURCES = $(libgps_c_sources) libgpsmm.cpp packet_states.h
+gpsd.h: gpsd.h-head gpsd.h-tail gpsd_config.h
+	cp gpsd.h-head gpsd.h
+	grep VERSION  gpsd_config.h >>gpsd.h
+	grep ENABLE gpsd_config.h >>gpsd.h
+	cat gpsd.h-tail >>gpsd.h
+
+libgps_la_SOURCES = $(libgpsd_c_sources) $(libgpsd_h_sources) \
+				rtcm.h libgpsmm.cpp packet_states.h
 nodist_libgps_la_SOURCES = packet_names.h
 libgps_la_LIBADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(LIBPTHREAD)
+
+#
+# Build Python binding
+#
+# install may require --root depending on what you're doing.
+# python setup.py install --root=$DESTIR --prefix=$PREFIX
+if HAVE_PYTHON
+PYEXTENSIONS = gpspacket.so
+noinst_SCRIPTS = gpspacket.so setup.py
+
+gpspacket.so: gpspacket.c libgps.la
+	(pwd="`pwd`"; cd $(srcdir) && $(PYTHON) setup.py build_ext --build-lib "$$pwd" --build-temp "$$pwd/build" --include-dirs "$$pwd")
+endif
+# Clean up after Python
+clean-local:
+	rm -rf build
 
 #
 # Build gpsmm_test
@@ -141,86 +202,103 @@ packet_test_SOURCES = packet_test.c
 packet_test_LDADD = $(LIBC) libgps.la -lm
 
 #
+# Build packets tester
+#
+mkgmtime_test_SOURCES = mkgmtime_test.c
+mkgmtime_test_LDADD = $(LIBC) libgps.la -lm
+
+if HAVE_XSLT_PROCESSOR
+#
 # Create Manpages
 #
 man_MANS = \
 	gpsd.8 \
+	gps.1 \
 	xgps.1 \
+	xgpsspeed.1 \
+	cgps.1 \
+	cgpxlogger.1 \
 	libgps.3 \
 	libgpsmm.3 \
 	libgpsd.3 \
-	gpsprof.1 \
-	gpsfake.1 \
 	sirfmon.1 \
-	$(DBUSPAGES) \
+	$(RTCM104PAGES) \
+	$(PYTHONPAGES) \
+	gpsctl.1 \
 	gpspipe.1 \
-	rtcmdecode.1 \
 	gpsflash.1 \
 	rtcm-104.5 \
 	srec.5
 
-gpsd.8: gpsd.xml
-	-$(XMLTO) man gpsd.xml
+.xml.1:
+	$(MANGENERATOR) $(MANFLAGS) $(MANTARGET) $<
 
-xgps.1 xgpsspeed.1: xgps.xml
-	-$(XMLTO) man xgps.xml
+.xml.3:
+	$(MANGENERATOR) $(MANFLAGS) $(MANTARGET) $<
+
+.xml.5:
+	$(MANGENERATOR) $(MANFLAGS) $(MANTARGET) $<
+
+.xml.8:
+	$(MANGENERATOR) $(MANFLAGS) $(MANTARGET) $<
+
+gpsd.8: gpsd.xml
+
+gps.1 xgps.1 xgpsspeed.1 cgps.1 cgpxlogger.1: gps.xml
 
 libgps.3: libgps.xml
-	-$(XMLTO) man libgps.xml
 
 libgpsmm.3: libgpsmm.xml
-	-$(XMLTO) man libgpsmm.xml
 
 libgpsd.3: libgpsd.xml
-	-$(XMLTO) man libgpsd.xml
+
+gpsctl.1: gpsctl.xml
+
+gpscat.1: gpsctl.xml
 
 gpsprof.1: gpsprof.xml
-	-$(XMLTO) man gpsprof.xml
 
 gpsfake.1: gpsfake.xml
-	-$(XMLTO) man gpsfake.xml
 
 sirfmon.1: sirfmon.xml
-	-$(XMLTO) man sirfmon.xml
-
-gpxlogger.1: gpxlogger.xml
-	-$(XMLTO) man gpxlogger.xml
 
 gpspipe.1: gpspipe.xml
-	-$(XMLTO) man gpspipe.xml
 
 rtcmdecode.1: rtcmdecode.xml
-	-$(XMLTO) man rtcmdecode.xml
 
 rtcm-104.5: rtcm-104.xml
-	-$(XMLTO) man rtcm-104.xml
 
 srec.5: srec.xml
-	-$(XMLTO) man srec.xml
 
 gpsflash.1: gpsflash.xml
-	-$(XMLTO) man gpsflash.xml
 
-include_HEADERS = gps.h gpsd.h libgpsmm.h 
+endif
+
+noinst_HEADERS = ubx.h
+nodist_include_HEADERS = gpsd.h
+include_HEADERS = gps.h libgpsmm.h
 
 EXTRA_DIST = \
 	autogen.sh \
 	README \
 	INSTALL \
 	COPYING \
-	HACKING \
 	TODO \
 	AUTHORS \
 	dgpsip-servers \
+	floattest.c \
+	gpsd.php \
 	gpsd.xml \
-	xgps.xml \
+	gpsd.h-head \
+	gpsd.h-tail \
+	gps.xml \
 	libgpsd.xml \
 	libgps.xml \
 	libgpsmm.xml \
 	gpsprof.xml \
 	gpsfake.xml \
+	gpsctl.xml \
 	sirfmon.xml \
-	gpxlogger.xml \
 	gpspipe.xml \
 	rtcmdecode.xml \
 	rtcm-104.xml \
@@ -231,93 +309,158 @@ EXTRA_DIST = \
 	xgpsspeed.ad \
 	gpsd.spec.in \
 	gpsd.spec \
-	gps.py \
-	gpsfake.py \
 	gpsd.hotplug \
 	gpsd.usermap \
 	valgrind-audit \
 	valgrind-suppressions \
+	gpspacket.c \
 	driver_proto.c \
 	logextract \
 	striplog \
-	invert-bitfields.pl
+	setup.py \
+	packet_states.h \
+	libgps.pc.in \
+	libgpsd.pc.in
 
-CLEANFILES = packet_names.h
+CLEANFILES = $(BUILT_SOURCES) floattest *.core $(PYEXTENSIONS)
+
+pkgconfig_DATA = libgps.pc libgpsd.pc
+pkgconfigdir = $(libdir)/pkgconfig
 
 # This is not distributed
 libgps: libgps.c .libs/libgps.a
-	$(CC) -o libgps -lm -DTESTMAIN -g libgps.c .libs/libgps.a
+	$(CC) $(CFLAGS) -o libgps -lm -DTESTMAIN $(LIBPTHREAD) -g libgps.c .libs/libgps.a
 
 # Report splint warnings
+SPLINTOPTS = -I/usr/include/dbus-1.0/
 splint:
 	@echo "Running splint on daemon and libraries..."
-	-splint -redef $(gpsd_SOURCES) $(libgps_c_sources)
+	@echo "Expect 'gpsd.c:230:39: Line expects to suppress 1 error, found 0 errors'"
+	-splint $(SPLINTOPTS) -redef $(gpsd_c_sources) $(libgpsd_c_sources)
 	@echo "Running splint on xgps..."
-	-splint -exportlocal $(xgps_SOURCES)
+	-splint $(SPLINTOPTS) -exportlocal $(xgps_SOURCES)
 	@echo "Running splint on cgps..."
-	-splint -exportlocal $(cgps_SOURCES)
+	-splint $(SPLINTOPTS) -exportlocal $(cgps_SOURCES)
 	@echo "Running splint on xgpsspeed..."
-	-splint -exportlocal $(xgpsspeed_c_sources)
+	-splint $(SPLINTOPTS) -exportlocal $(xgpsspeed_c_sources)
+	@echo "Running splint on gpsctl..."
+	-splint $(SPLINTOPTS) $(gpsctl_SOURCES)
 	@echo "Running splint on sirfmon..."
-	-splint $(sirfmon_SOURCES)
+	-splint $(SPLINTOPTS) $(sirfmon_SOURCES)
 	@echo "Running splint on gpspipe..."
-	-splint $(gpspipe_SOURCES)
+	-splint $(SPLINTOPTS) $(gpspipe_SOURCES)
 	@echo "Running splint on rtcmdecode..."
-	-splint -exportlocal rtcmdecode.c
+	-splint $(SPLINTOPTS) -exportlocal rtcmdecode.c
 	@echo "Running splint on gpsflash..."
-	-splint $(gpsflash_SOURCES)
+	-splint $(SPLINTOPTS) $(gpsflash_SOURCES)
 	@echo "Running splint on bits_test test harness..."
-	-splint $(bits_test_SOURCES)
+	-splint $(SPLINTOPTS) $(bits_test_SOURCES)
 	@echo "Running splint on packet_test test harness..."
-	-splint $(packet_test_SOURCES)
+	-splint $(SPLINTOPTS) $(packet_test_SOURCES)
+
+# Bogon-checking the Python tools
+pychecker:
+	for f in gps.py gpsfake.py; do pychecker $$f; done
+
+version:
+	@echo $(VERSION)
 
 #
 # Regression tests begin here
 #
+# Note that the *-makeregress targets re-create the *.log.chk source
+# files from the *.log source files.
+#
+# These require gcc4; use of the math coprocessor's on-board trig functions
+# apparently increases the accuracy of computation in a way that affects
+# the low-order digits of the track field in the O response.
 
 # Regression-test the daemon
-# This requires gcc4; the use of the math coprocessor's on-board trig functions
-# apparently increases the accuracy of computation in a way that
-# that affects the low-order digits of the track field in the O response.
-gps-regress: gpsd
-	@echo "Testing the daemon..."
-	@for f in test/*.log; do gpsfake -b -p $${f} | grep -v "^GPSD,X" >test/test.chk; diff -ub $${f}.chk test/test.chk; done; rm test/test.chk
+gps-regress: gpsd 
+	$(srcdir)/regress-driver -t $(srcdir)/test/stable/*.log
 
 # Test that super-raw mode works. Compare each logfile against itself 
 # dumped through the daemon running in R=2 mode.  (This test is not
 # included in the normal regressions.)
 raw-regress:
-	@echo "Testing super-raw mode..."
-	@for f in test/*.log; do gpsfake -b -p -r "r=2" $${f} | striplog -1 >test/test1.chk; striplog <$${f} >test/test2.chk; cmp test/test[12].chk; done; rm test/test[12].chk
+	$(srcdir)/regress-driver -r  $(srcdir)/test/stable/*.log
 
 # Build the regression tests for the daemon.
 gps-makeregress: gpsd
-	@for f in test/*.log; do gpsfake -b -p $${f} | grep -v "^GPSD,X" >$${f}.chk; done
+	$(srcdir)/regress-driver -b $(srcdir)/test/stable/*.log
 
 # Regression-test the RTCM decoder.
 rtcm-regress: rtcmdecode
 	@echo "Testing RTCM decoding..."
-	@for f in test/*.rtcm; do rtcmdecode <$${f} >test/test.chk; diff -ub $${f}.chk test/test.chk; done; rm test/test.chk
+	@mkdir -p test
+	@for f in $(srcdir)/test/*.rtcm; do \
+		echo "Testing $${f}..."; \
+		$(srcdir)/rtcmdecode <$${f} >test/test.chk; \
+		diff -ub $${f}.chk test/test.chk; \
+	done; \
+	rm test/test.chk
 
 # Rebuild the RTCM regression tests.
 rtcm-makeregress: rtcmdecode
-	@for f in test/*.rtcm; do rtcmdecode <$${f} >$${f}.chk; done
+	@for f in $(srcdir)/test/*.rtcm; do \
+		$(srcdir)/rtcmdecode < $${f} > $${f}.chk; \
+	done
 
 # Regression-test the packet getter.
 packet-regress: packet_test
 	@echo "Testing detection of invalid packets..."
-	@packet_test | diff -u test/packet.test.chk -
+	@$(srcdir)/packet_test | diff -u $(srcdir)/test/packet.test.chk -
 
 # Rebuild the packet-getter regression test
 packet-makeregress: packet_test
-	packet_test >test/packet.test.chk
+	@mkdir -p test
+	$(srcdir)/packet_test >test/packet.test.chk
 
 # Test RTCM encoding using passthrough mode.
 undump-regress: rtcmdecode
 	@echo "Testing RTCM encoding..."
-	@rtcmdecode -p <test/undump.sample >/tmp/undump.test
-	@diff -u test/undump.sample /tmp/undump.test
-	@rm /tmp/undump.test
+	@mkdir -p test
+	@$(srcdir)/rtcmdecode -p < $(srcdir)/test/undump.sample > test/undump.test
+	@diff -u $(srcdir)/test/undump.sample test/undump.test
+	@rm test/undump.test
 
-testregress: gps-regress rtcm-regress packet-regress undump-regress
+# Regression-test the calendar functions
+time_regress: mkgmtime_test
+	mkgmtime_test
+
+# Do all normal regression tests
+testregress: gps-regress rtcm-regress packet-regress undump-regress time_regress
 	@echo "Regressions complete."
+
+#
+# Productions for testing unstable drivers.
+#
+
+unstable-regress: gpsd 
+	./regress-driver -t $(srcdir)/test/unstable/*.log
+
+unstable-makeregress: gpsd
+	./regress-driver -b $(srcdir)/test/unstable/*.log
+
+
+# Release machinery begins here
+#
+# This is how to ship a release to Berlios incomoing.
+# It requires developer access verified via ssh.
+#
+upload-ftp:
+	sha1 gpsd-$(VERSION).tar.gz >gpsd.sum
+	lftp -c "mput gpsd-$(VERSION).tar.gz gpsd.sum" ftp://ftp.berlios.de/incoming
+
+#
+# This is how to tag a release for the SVN repository.
+# It requires developer access verified via ssh.
+#
+REPO=http://svn.berlios.de/svnroot/repos/gpsd
+svn-tag:
+	svn copy $(REPO)/trunk $(REPO)/tags/release-$(VERSION) \
+		-m "Tagged for external release $(VERSION)"
+#
+# Ship a release, providing all regression tests pass.
+#
+ship: testregress dist upload-ftp svn-tag

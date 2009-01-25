@@ -23,15 +23,15 @@
       <!-- arg choice='opt'>-R
       <replaceable>rtcm-listener-port</replaceable></arg -->
       <arg choice='opt'>-S <replaceable>listener-port</replaceable></arg>
-      <arg choice='opt'>-d <replaceable>DGPSIP-server</replaceable></arg>
+      <arg choice='opt'>-b </arg>
       <arg choice='opt'>-n </arg>      
       <arg choice='opt'>-N </arg>      
       <arg choice='opt'>-h </arg>
       <arg choice='opt'>-P <replaceable>pidfile</replaceable></arg>
       <arg choice='opt'>-D <replaceable>debuglevel</replaceable></arg>
-      <arg choice='opt'>-v </arg>
+      <arg choice='opt'>-V </arg>
       <arg rep='repeat'>
-           <group><replaceable>GPS-devicename</replaceable></group>
+           <group><replaceable>source-name</replaceable></group>
       </arg>
 </cmdsynopsis>
 </refsynopsisdiv>
@@ -53,27 +53,27 @@ protocol for it.</para>
 that speaks either the standard textual NMEA 0183 protocol, or the
 binary Rockwell protocol used by EarthMate and some other GPSes, the
 TSIP binary protocol used by Trimble GPSes, or the binary SiRF
-protocol used by SiRf-II and SiRF-Star chipsets, or the Garmin binary
-protocol used by the USB version of the Garmin 18 and other Garmin USB
-GPSes, or the binary protocol used by Evermore chipsets, or the
-extended NMEA used by iTrax. <application>gpsd</application>
-effectively hides the differences among these. It also knows about and
-uses commands that tune the GPS for lower latency, decrease bandwidth
-usage, or increased accuracy on the San Jose Navigation FV18, the Sony
-CXD2951, the uBlox, and the Motorola OnCore GT+.  It can read heading
-and attitude information from the True North Technologies Revolution
-2X Digital compass.</para>
+protocol used by SiRFstar chipsets, or the Garmin binary protocol used
+by the USB version of the Garmin 18 and other Garmin USB GPSes, or the
+binary protocol used by Evermore chipsets, or the extended NMEA used
+by iTrax. <application>gpsd</application> effectively hides the
+differences among these. It also knows about and uses commands that
+tune the GPS for lower latency, decreased bandwidth usage, or
+increased accuracy on the San Jose Navigation FV18, the Sony CXD2951,
+the uBlox, and the Motorola OnCore GT+.  It can read heading and
+attitude information from the True North Technologies Revolution 2X
+Digital compass.</para>
 
 <para><application>gpsd</application> can use differential-GPS
-corrections from a DGPS radio or over the net, from a ground station running a
-DGPSIP server that reports RTCM-S104 data; this will improve user
-error by roughly a factor of four.  When <application>gpsd</application>
-opens a serial device emitting RTCM-104, it automatically recognizes
-this and uses the device as a correction source for all connected GPSes.
-<!-- If no server is specified, <application>gpsd</application> will 
-hunt for one.-->
-See <xref linkend='accuracy'/> and <xref
-linkend='files'/> for discussion.</para>
+corrections from a DGPS radio or over the net, from a ground station
+running a DGPSIP server or a Ntrip broadcaster that reports RTCM-S104
+data; this will improve user error by roughly a factor of four.  When
+<application>gpsd</application> opens a serial device emitting
+RTCM-104, it automatically recognizes this and uses the device as a
+correction source for all connected GPSes.  <!-- If no server is
+specified, <application>gpsd</application> will hunt for one.--> See
+<xref linkend='accuracy'/> and <xref linkend='files'/> for
+discussion.</para>
 
 <!-- para><application>gpsd</application> may itself serve DGPSIP data
 from an attached RTCM-104 source to other instances of
@@ -113,12 +113,19 @@ clients.</para></listitem>
 </varlistentry>
 <varlistentry>
 <term>-d</term>
-<listitem>
-<para>Query a specific differential-GPS (DGPSIP) server.  If a suffix of the
-server name begins with ":" it is interpreted as a port number,
-overriding the default IANA-assigned port of 2101. <!-- If this
-option is not given, <application>gpsd</application> will hunt 
-for a DGPSIP server. --></para>
+<listitem><para>This is a deprecated option which takes a differential-GPS 
+source as argument.  See the description of argument interpretation
+below.</para></listitem>
+</varlistentry>
+<varlistentry>
+<term>-b</term>
+<listitem><para>Broken-device-safety, otherwise known as read-only mode. Some
+popular bluetooth and USB receivers lock up or become totally inaccessible when
+probed or reconfigured. This switch prevents gpsd from writing to a receiver.
+This means that gpsd cannot configure the receiver for optimal performance,
+but it also means that gpsd cannot break the receiver. A better solution
+would be for bluetooth to not be so fragile. A platform independent method
+to identify serial-over-bluetooth devices would also be nice.</para>
 </listitem>
 </varlistentry>
 <varlistentry>
@@ -153,16 +160,39 @@ Its meaning may change in future versions.</para>
 <listitem>
 <para>Set debug level. At debug levels 2 and above,
 <application>gpsd</application> reports incoming sentence and actions
-to standard error.</para>
+to standard error if <application>gpsd</application> is in the foreground
+(-N) or to syslog if in the background.</para>
 </listitem>
 </varlistentry>
 <varlistentry>
-<term>-v</term>
+<term>-V</term>
 <listitem>
 <para>Dump version and exit.</para>
 </listitem>
 </varlistentry>
 </variablelist>
+
+<para>Arguments are interpreted as the names of data sources.  
+Normally, a data source is the name of a local serial device from
+which the daemon may expect GPS data.</para>
+
+<para>A data source name may also be a URL pointing to a specific
+differential-GPS service (DGPSIP server or Ntrip broadcaster).If the
+URL starts with "ntrip://" Ntrip will be used; if the URL starts with
+"dgpsip://", DGPSIP will be used.  <application>Gpsd</application>
+also defaults to DGPSIP if no protocol is defined.  For Ntrip services
+that require authentication, a prefix of the form "username:password@"
+can be added before the name of the Ntrip broadcaster.  If a suffix of
+the service name begins with ":" it is interpreted as a port number,
+overriding the default IANA-assigned port of 2101.  For Ntrip service
+you also need to specify which stream to use; the stream is given in
+the form "/streamname". So, an example DGPSIP URL could be
+"dgpsip://dgpsip.example.com" and a Ntrip URL could be
+"ntrip://foo:bar@ntrip.example.com:80/example-stream". <!-- If this
+option is not given, <application>gpsd</application> will hunt for a
+DGPSIP server. --></para>
+
+
 
 <para>Internally, the daemon maintains a device list holding the
 pathnames of GPSes known to the daemon. Initially, this list is the
@@ -182,7 +212,7 @@ other than F, K, W=0 or R=0).</para>
 <para>The request protocol for <application>gpsd</application> clients
 is very simple.  Each request normally consists of a single ASCII
 character followed by a newline.  Case of the request character is
-ignored, Each request returns a line of response text ended by a
+ignored.  Each request returns a line of response text ended by a
 CR/LF.  Requests and responses are as follows, with %f standing for a
 decimal float numeral and %d for decimal integer numeral:</para>
 
@@ -208,6 +238,10 @@ if more than one client is attached to the channel.</para></listitem>
 <varlistentry>
 <term>c</term>
 <listitem>
+<para>C with no following = asks the daemon to return the cycle time
+of the attached GPS, if any.  If there is no attached device it will
+return "C=?".</para>
+
 <para>If the driver has the capability to change sampling rate the
 command "C=%f" does so, setting a new cycle time in seconds. The "C="
 form is rejected if more than one client is attached to the
@@ -225,8 +259,8 @@ note that relatively few GPSes have the ability to set sub-second
 cycle times; consult your hardware protocol description to make sure
 this works.</para>
  
-<para>This command will return '?' at start of session, before the
-first full packet has been received from the GPS, because its type is
+<para>This command will return "C=?" at start of session, before the
+first full packet has been received from the GPS, because the GPS type is
 not yet known. To set up conditions for a real answer, issue it after
 some command that reads position/velocity/time information from the
 device.</para></listitem>
@@ -248,7 +282,7 @@ part will vary and may be absent.</para></listitem>
 level).  Note: many GPSes do not supply these numbers.  When the
 GPS does not supply them, <application>gpsd</application> computes
 them from satellite DOP using fixed figures for expected non-DGPS 
-and DGPS range errors in meters.  A value of zero for any of these
+and DGPS range errors in meters.  A value of '?' for any of these
 numbers should be taken to mean that component of DOP is not available.
 See also the 'q' command.</para>
 </listitem>
@@ -299,12 +333,41 @@ identifying the kind of information the attached device returns.</para>
 </listitem>
 </varlistentry>
 
+<!--
+<varlistentry>
+<term>h</term>
+<listitem>
+<para>Heading, "H=%f" in degrees from true north.  Only available from
+True North Technologies or comparable digital compass devices (c.f. 't')</para>
+</listitem>
+</varlistentry>
+-->
+
 <varlistentry>
 <term>i</term>
 <listitem><para>Returns a text string identifying the GPS.  The string
 may contain spaces and is terminated by CR-LF.  This command will
 return '?' at start of session, before the first full packet has been
 received from the GPS, because its type is not yet known.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>j</term>
+<listitem>
+<para>Get or set buffering policy; this only matters for NMEA devices
+which report fix data in several separate sentences during the poll
+cycle (and in particular it <emphasis>doesn't</emphasis> matter for
+SiRF chips).  The default (j=0) is to clear all fix data at the start
+of each poll cycle, so until the sentence that reports a given piece
+of data arrives queries will report ?.  Setting j=1 will disable this,
+retaining data from the previous cycle.  This is a per-user-channel
+bit, not a per-device one.  The j=0 setting is hyper-correct and never
+displays stale data, but may produce a jittery display; the j=1 setting
+allows stale data but smooths the display.</para>
+
+<para>(At protocol level below 3, there was no J command.  Note, this
+command is experimental and its semantics are subject to change.)</para> 
+</listitem>
 </varlistentry>
 
 <varlistentry>
@@ -384,7 +447,9 @@ fractional part of up to .01sec precision.</para></listitem>
 
 <varlistentry>
 <term>altitude</term>
-<listitem><para>Altitude as in the A report (%f, meters).</para></listitem>
+<listitem><para>Altitude as in the A report (%f, meters).  If the mode
+field is not 3 this is an estimate and should be treated as
+unreliable.</para></listitem>
 </varlistentry>
 
 <varlistentry>
@@ -424,14 +489,21 @@ of the O command reported this field in knots.</para></listitem>
 <varlistentry>
 <term>estimated error in speed over ground</term>
 <listitem><para>Error estimate for speed (%f, meters/sec, 95% 
-confidence). Note: older versions of the O command reported this field in
-knots.</para></listitem>
+confidence). Note: older experimental versions of the O command 
+reported this field in knots.</para></listitem>
 </varlistentry>
 
 <varlistentry>
-<term>climb/sink</term>
+<term>estimated error in climb/sink</term>
 <listitem><para>Estimated error for climb/sink 
 (%f, meters/sec, 95% confidence).</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>mode</term>
+<listitem><para>The NMEA mode (%d, ?=no mode value yet seen, 
+1=no fix, 2=2D, 3=3D). (This field was not reported at protocol
+levels 2 and lower.)</para></listitem>
 </varlistentry>
 
 </variablelist>
@@ -501,7 +573,7 @@ support super-raw mode.</para>
 <varlistentry>
 <term>u</term>
 <listitem><para>Current rate of climb as "U=%f" in meters per second.
-Some GPSes (non-Sirf-II based) do not report this, in that case 
+Some GPSes (not SiRF-based) do not report this, in that case 
 <application>gpsd</application> computes it using the altitude from
 the last fix (if available).</para></listitem>
 </varlistentry>
@@ -513,7 +585,7 @@ the last fix (if available).</para></listitem>
 
 <varlistentry>
 <term>w</term>
-<listitem><para>Sets or toggles 'watcher' mode (see the descroiption
+<listitem><para>Sets or toggles 'watcher' mode (see the description
 below). Return "W=0" or "W=1".The command 'w' immediately followed by
 the digit '1' or the plus sign '+' sets watcher mode.  The command 'w'
 followed by the digit '0' or the minus sign '-' clears watcher mode.
@@ -548,6 +620,13 @@ fix. Each number is followed by one space.</para>
 
 <varlistentry>
 <term>z</term> <listitem><para>The Z command returns daemon profiling
+information of interest to <application>gpsd</application>
+developers. The format of this string is subject to change without
+notice.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term>$</term> <listitem><para>The $ command returns daemon profiling
 information of interest to <application>gpsd</application>
 developers. The format of this string is subject to change without
 notice.</para></listitem>
@@ -592,7 +671,14 @@ client each time the GPS gets either a fix update or a satellite
 picture, but rather than being raw NMEA the line is a gpsd 'o' or 'y'
 response.  Additionally, watching clients get notifications in the
 form X=0 or X=%f when the online/offline status of the GPS
-changes.</para>
+changes, and an I response giving the device type when the 
+user is assigned a device.</para>
+
+<para>Clients should be prepared for the possibility that additional
+fields (such as heading or roll/pitch/yaw) may be added to the O
+command, and not treat the occurrence of extra fields as an error.
+The protocol number will be incremented if and when such fields
+are added.</para>
 
 <para>Sending SIGHUP to a running <application>gpsd</application>
 forces it to close all GPSes and all client connections.  It will then
@@ -694,7 +780,13 @@ of every clock second on the carrier-detect lines of some serial
 GPSes; this pulse can be used to update NTP at much higher accuracy
 than message time provides.  You can determine whether your GPS emits
 this pulse by running at -D 5 and watching for carrier-detect state
-change messages in the logfile.</para>
+change messages in the logfile. On OpenBSD <application>gpsd</application>
+makes use of the nmea(4) line discipline and the tty(4) timestamping
+facilities to export PPS time via the sensors framework. OpenBSD's ntpd
+uses these sensors to adjust the hardware clock and frequency. To make
+use of this feature, <application>gpsd</application> must be started
+as root so it can activate the timestamping and line discipline; after
+attempting to set up PPS, it will relinquish root privileges.</para>
 
 <para>When <application>gpsd</application> receives a sentence with a
 timestamp, it packages the received timestamp with current local time
@@ -753,7 +845,7 @@ remote           refid      st t when poll reach  delay    offset  jitter
 <para>When the value under "reach" remains zero, check that gpsd is
 running; and some application is connected to it or the '-n' option was
 used.  Make sure the receiver is locked on to at least one satellite,
-and the receiver is in SiRF-II, Garmin binary or NMEA/PPS mode.  Plain
+and the receiver is in SiRF binary, Garmin binary or NMEA/PPS mode.  Plain
 NMEA will also drive ntpd, but the accuracy as bad as one second.  When
 the SHM(0) line does not appear at all, check the system logs for error
 messages from ntpd.</para>
@@ -782,10 +874,10 @@ will not attempt to document this interface here.  Read the
 <para><application>gpsd</application> must start up as root in order
 to open the NTPD shared-memory segment, open its logfile, and create
 its local control socket.  Before doing any processing of GPS data, it
-tries to drop root privileges by setting its UID to "nobody" and its
-group ID to the group of the initial GPS passed on the command line
-&mdash; or, if that device doesn't exist, to the group of
-<filename>/dev/ttyS0</filename>.</para>
+tries to drop root privileges by setting its UID to "nobody" (or another
+userid as set by configure) and its group ID to the group of the initial
+GPS passed on the command line &mdash; or, if that device doesn't exist,
+to the group of <filename>/dev/ttyS0</filename>.</para>
 
 <para>Privilege-dropping is a hedge against the possibility that
 carefully crafted data, either presented from a client socket or from
@@ -830,7 +922,7 @@ which often do not give clients any way to query the values of control
 settings in order to be able to restore them later.</para>
 
 <para>If your GPS uses a SiRF chipset at firmware level 231, and it is
-after 1 Jan 2006, reported UTC time may be off by the difference
+after 31 May 2007, reported UTC time may be off by the difference
 between 13 seconds and whatever leap-second correction is currently
 applicable, from startup until complete subframe information is
 received (normally about six seconds).  Firmware levels 232 and up
@@ -894,31 +986,35 @@ website</ulink> links to several documents that collect publicly
 disclosed information about the protocol.</para>
 
 <para><application>gpsd</application> parses the following NMEA
-sentences: RMC, GGA, GSA, GSV, ZDA.  It recognizes these with
-either the normal GP talker-ID prefix, or with the II prefix emitted
-by Seahawk Autohelm marine navigation systems, or with the IN prefix
-emitted by some Garmin units.  It recognizes one vendor extension,
-PGRME.  Note that <application>gpsd</application> returns pure decimal
+sentences: RMC, GGA, GLL, GSA, GSV, VTG, ZDA.  It recognizes these
+with either the normal GP talker-ID prefix, or with the II prefix
+emitted by Seahawk Autohelm marine navigation systems, or with the IN
+prefix emitted by some Garmin units.  It recognizes one vendor
+extension, the PGRME emitted by some Garmin GPS models.</para>
+
+<para>Note that <application>gpsd</application> returns pure decimal
 degrees, not the hybrid degree/minute format described in the NMEA
 standard.</para>
 
 </refsect1>
 <refsect1 id='see_also'><title>SEE ALSO</title>
 <para>
-<citerefentry><refentrytitle>xgps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>libgps</refentrytitle><manvolnum>3</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>libgpsd</refentrytitle><manvolnum>3</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>gpsprof</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>gpsfake</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gpsctl</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gpscat</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>rtcm-104</refentrytitle><manvolnum>5</manvolnum></citerefentry>.
 </para>
 </refsect1>
 
 <refsect1 id='maintainer'><title>AUTHORS</title> 
 
-<para>Remco Treffcorn, Derrick Brashear, Russ Nelson, Eric S. Raymond.
-This manual page by Eric S. Raymond <email>esr@thyrsus.com</email>.
-There is a project page <ulink
+<para>Remco Treffcorn, Derrick Brashear, Russ Nelson, Eric S. Raymond,
+Chris Kuethe.  This manual page by Eric S. Raymond
+<email>esr@thyrsus.com</email>.  There is a project site at <ulink
 url="http://gpsd.berlios.de/">here</ulink>.</para>
 </refsect1>
 

@@ -19,6 +19,7 @@
       <arg choice='opt'>-d</arg>
       <arg choice='opt'>-e</arg>
       <arg choice='opt'>-v <replaceable>debuglevel</replaceable></arg>
+      <arg choice='opt'>-V</arg>
 </cmdsynopsis>
 </refsynopsisdiv>
 
@@ -32,7 +33,7 @@ written to standard output.</para>
 
 <para>You can use this tool with
 <citerefentry><refentrytitle>nc</refentrytitle><manvolnum>1</manvolnum></citerefentry>
-to examine RTCM feeds from DGPSIP servers.</para>
+to examine RTCM feeds from DGPSIP servers or Ntrip broadcasters.</para>
 
 <para>The decoder dump format is described in
 <citerefentry><refentrytitle>rtcm</refentrytitle><manvolnum>5</manvolnum></citerefentry>;
@@ -51,6 +52,9 @@ on standard output. This is the default behavior.</para>
 the format of
 <citerefentry><refentrytitle>rtcm-104</refentrytitle><manvolnum>5</manvolnum></citerefentry>
 to standard output.</para>
+
+<para>The -V option directs the program to emit its version number,
+then exit.</para>
 
 <para>The -v option sets a verbosity level.  It is mainly of interest
 to developers.</para>
@@ -85,7 +89,7 @@ code.</para>
 <refsect1 id='see_also'><title>SEE ALSO</title>
 <para>
 <citerefentry><refentrytitle>gpsd</refentrytitle><manvolnum>8</manvolnum></citerefentry>,
-<citerefentry><refentrytitle>xgps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>libgps</refentrytitle><manvolnum>3</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>libgpsd</refentrytitle><manvolnum>3</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>gpsprof</refentrytitle><manvolnum>1</manvolnum></citerefentry>,

@@ -2,28 +2,22 @@
 #
 # Upload gpsd docs
 #
-webdir=esr@shell.berlios.de:/home/groups/gpsd/htdocs
-makeversion=`sed <../Makefile -n -e '/^VERSION *= *\(.*\)/s//\1/p'`
+webdir=shell.berlios.de:/home/groups/gpsd/htdocs
+cgidir=shell.berlios.de:/home/groups/gpsd/cgi-bin
 
-version=${1:-$makeversion}
-echo "Uploading version $version of gpsd web documents"
+make html CHANGES	# Ensure all derived HTML is up to date.
 
-sed -e "/@VERSION@/s//${version}/" -e "/@DATE@/s//`date '+%B %d, %Y'`/" <index.html.in >index.html
+if [ $1 ]
+then
+    for f in $*; do scp $f $webdir/$f; done
+else
+    (cd performance; xmlto xhtml-nochunks performance.xml)
+    scp start-kismet *.html *.png *.pdf *.gif *.css *.js *.txt \
+	performance/{*.html,*.txt,*.png} \
+	../TODO CHANGES \
+	$webdir
+    scp gps_report.cgi $cgidir
+fi
 
-xmlto xhtml-nochunks ../gpsd.xml
-xmlto xhtml-nochunks ../xgps.xml
-xmlto xhtml-nochunks ../libgps.xml
-xmlto xhtml-nochunks ../libgpsmm.xml
-xmlto xhtml-nochunks ../libgpsd.xml
-xmlto xhtml-nochunks ../gpsprof.xml
-xmlto xhtml-nochunks ../gpsfake.xml
-xmlto xhtml-nochunks ../sirfmon.xml
-xmlto xhtml-nochunks ../rtcmdecode.xml
-xmlto xhtml-nochunks ../gpxlogger.xml
-xmlto xhtml-nochunks ../gpspipe.xml
-xmlto xhtml-nochunks ../gpsflash.xml
-xmlto xhtml-nochunks ../rtcm-104.xml
-xmlto xhtml-nochunks ../srec.xml
-xmlto xhtml-nochunks replacing-nmea.xml
-(cd performance; xmlto xhtml-nochunks performance.xml)
-scp start-kismet *.html *.png *.pdf *.gif performance/{*.html,*.txt,*.png} *.css *.js *.txt *.ebuild $webdir
+# To refresh the vendor-docs directory just do this:
+# scp -r vendor-docs $webdir/vendor-docs

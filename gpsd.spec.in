@@ -1,13 +1,14 @@
+%define pkgconfig_version 0.12
+
 Name: gpsd
-Summary: service daemon for mediating access to a GPS
+Summary: Service daemon for mediating access to a GPS
 Version: @VERSION@
 Release: 1
 License: BSD
 Group: System Environment/Daemons
-Provides: gpsd
 URL: http://developer.berlios.de/projects/gpsd/
 Source0: %{name}-%{version}.tar.gz
-BuildRequires: ncurses-devel gcc4
+BuildRequires: ncurses-devel gcc libxslt python
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
 #Destinations: mailto:gpsd-announce@lists.berlios.de, mailto:gpsd-users@lists.berlios.de, mailto:gpsd-dev@lists.berlios.de
 
@@ -30,8 +31,9 @@ clients asking for location information, and copes gracefully when the
 GPS is unplugged and replugged.
 
 %package -n gpsd-devel
-Summary: Client libraries in C and Python for talking to a running gpsd or GPS.
+Summary: Client libraries in C and Python for talking to a running gpsd or GPS
 Group: Development/Libraries
+BuildRequires: pkgconfig >= %{pkgconfig_version}
 Requires: gpsd
 
 %description -n gpsd-devel
@@ -40,9 +42,13 @@ that manage access to a GPS for applications; also Python modules.
 You will need to have gpsd installed for it to work.
 
 %package -n gpsd-clients
-Summary: Clients for gpsd with an X interface.
+Summary: Clients for gpsd with an X interface
 Group: Applications/System
-BuildRequires: openmotif-devel
+BuildRequires: lesstif-devel
+#############################################################################
+#  libXaw-devel was repackaged for FC6; on FC<6 this package is not required #
+#############################################################################
+BuildRequires: libXaw-devel
 
 %description -n gpsd-clients
 xgps is a simple test client for gpsd with an X interface. It displays
@@ -60,10 +66,16 @@ can run on a serial terminal or terminal emulator.
 %setup -q
 
 %build
-#CC=gcc4 ./autogen.sh
-%configure
-# Requires gcc4 to compile the RTCM104 support correctly.
-CC=gcc4 make -e CFLAGS=-D_GNU_SOURCE %{?_smp_mflags}
+###########################################################################
+#                                                                         #
+#  Append configure options to the ./autogen.sh script command line       #
+#  Examples:                                                              #
+#      ./autogen.sh --disable-earthmate                                   #
+#      ./autogen.sh --disable-reconfigure                                 #
+#                                                                         #
+###########################################################################
+./autogen.sh LDFLAGS=-s
+make %{?_smp_mflags}
 
 %install
 [ "$RPM_BUILD_ROOT" -a "$RPM_BUILD_ROOT" != / ] && rm -rf "$RPM_BUILD_ROOT"
@@ -74,12 +86,6 @@ cp xgps.ad "$RPM_BUILD_ROOT"%{_libdir}/X11/app-defaults/xgps
 cp xgpsspeed.ad "$RPM_BUILD_ROOT"%{_libdir}/X11/app-defaults/xgpsspeed
 mkdir -p "$RPM_BUILD_ROOT"%{_sysconfdir}/hotplug/usb
 cp gpsd.hotplug gpsd.usermap "$RPM_BUILD_ROOT"%{_sysconfdir}/hotplug/usb/
-# additional gpsd-devel files
-mkdir -p "$RPM_BUILD_ROOT"%{_datadir}/gpsd
-#cp dgpsip-servers "$RPM_BUILD_ROOT"%{_datadir}/gpsd/
-PYVERSION=`python -c "import sys; print sys.version[:3]"`
-mkdir -p "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-packages
-cp gps.py gpsfake.py "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-packages
 
 %clean
 [ "$RPM_BUILD_ROOT" -a "$RPM_BUILD_ROOT" != / ] && rm -rf "$RPM_BUILD_ROOT"
@@ -90,10 +96,15 @@ cp gps.py gpsfake.py "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-package
 %postun -n gpsd
 /sbin/ldconfig
 
+# /usr/lib/python* has to be wired in below because the autoconf-generated 
+# Python installation production drops Python stuff in /usr/lib even on a
+# 64-bit system, where ${_libdir} will expand to /usr/lib64.
+
 %files
 %defattr(-,root,root,-)
 %doc README INSTALL COPYING
 %attr(755, root, root) %{_sbindir}/gpsd
+%attr(755, root, root) %{_bindir}/gpsctl
 %attr(755, root, root) %{_bindir}/gpsprof
 %attr(755, root, root) %{_bindir}/sirfmon
 %{_libdir}/libgps.la
@@ -102,21 +113,25 @@ cp gps.py gpsfake.py "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-package
 %{_mandir}/man8/gpsd.8*
 %{_mandir}/man1/gpsprof.1*
 %{_mandir}/man1/sirfmon.1*
+%{_mandir}/man1/gpsctl.1*
 %{_sysconfdir}/hotplug/usb/gpsd.hotplug
 %{_sysconfdir}/hotplug/usb/gpsd.usermap
+%attr(755, root, root) /usr/lib/python*/site-packages/gps.py*
 #%{_datadir}/gpsd/dgpsip-servers
-%{_libdir}/python*/site-packages/gps.py*
 
 %files -n gpsd-devel
 %defattr(-,root,root,-)
-%doc README INSTALL COPYING HACKING TODO
+%doc README INSTALL COPYING TODO
+%attr(755, root, root) %{_bindir}/gpscat
 %attr(755, root, root) %{_bindir}/gpsfake
 %attr(755, root, root) %{_bindir}/rtcmdecode
 %attr(755, root, root) %{_bindir}/gpsflash
-%{_libdir}/python*/site-packages/gpsfake.py*
+/usr/lib/python*/site-packages/gpsfake.py*
+/usr/lib/python*/site-packages/gpspacket.so*
 %{_includedir}/gps.h
 %{_includedir}/libgpsmm.h
 %{_includedir}/gpsd.h
+%{_mandir}/man1/gpscat.1*
 %{_mandir}/man1/gpsfake.1*
 %{_mandir}/man1/rtcmdecode.1*
 %{_mandir}/man1/gpsflash.1*
@@ -125,6 +140,7 @@ cp gps.py gpsfake.py "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-package
 %{_mandir}/man3/libgpsd.3*
 %{_mandir}/man5/rtcm-104.5*
 %{_mandir}/man5/srec.5*
+%{_libdir}/pkgconfig/*
 
 %files -n gpsd-clients
 %defattr(-,root,root,-)
@@ -132,16 +148,73 @@ cp gps.py gpsfake.py "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-package
 %attr(755, root, root) %{_bindir}/xgpsspeed
 %attr(755, root, root) %{_bindir}/cgps
 %attr(755, root, root) %{_bindir}/gpspipe
-#%attr(755, root, root) %{_bindir}/gpxlogger
+%attr(755, root, root) %{_bindir}/cgpxlogger
+%{_mandir}/man1/gps.1*
+%{_mandir}/man1/cgps.1*
+%{_mandir}/man1/cgpxlogger.1*
 %{_mandir}/man1/xgps.1*
+%{_mandir}/man1/xgpsspeed.1*
 %{_mandir}/man1/gpspipe.1*
-#%{_mandir}/man1/gpxlogger.1*
 %{_libdir}/X11/app-defaults/xgps
 %{_libdir}/X11/app-defaults/xgpsspeed
 
 %changelog
-* Wed Sep 14 2005 Eric S. Raymond <esr@snark.thyrsus.com> - @VERSION@-1
-- Prevent core dump on -d option.  The .log option is no longer required for
+* Tue Jan 1 2008 Eric S. Raymond <esr@snark.thyrsus.com> - 2.36
+- Urgent fix to leap-day calculation affecting dates from today to
+  28 Feb on generic NMEA GPSes, Zodiacs, and SirFs emitting message 0x62.
+  Integrated Garmin Simple Text Protocol driver from Peter Slansky.
+  Minor fixes in error modeling and a better NaN guard stabilize the
+  Trimble regression tests.  Remove the wired-in NTP time offset from the 
+  NMEA driver, this could only have worked by accident and should be
+  set in ntpd.conf. Integrated Ashtech driver from Chris Kuethe.
+
+* Mon Dec 10 2007 Eric S. Raymond <esr@snark.thyrsus.com> - 2.35-1
+- Navcom driver merged. Removed -d -f and -p options of gpsd; these 
+  have been undocumented for a while.  Make gpsd play well with pkgconfig.
+  Incorrect computation of VDOP when GPSes didn't supply it has been fixed.
+  The xgps code has been revamped and now has a much nicer interface.
+  Add -b (no-configuration) option as a sadly clumsy workaround for some
+  problems with Bluetooth receivers.  Added tests for Haicom-305N and Pharos 
+  360; separated out the tests for the unstable Trimble drivers.
+  32-vs-64-bit problems in the regression tests have been solved.
+
+* Thu Dec 14 2006 Eric S. Raymond <esr@snark.thyrsus.com> - 2.34-1
+- Fix for byte-swapping of Zodiac control messages on big-endian hardware.  
+  Disable iTalk by default and note that it needs to be tested.  Command line
+  arguments can now be DGPSIP or NTRIP URLs; -d is deprecated. Added udev
+  rules.  Address excessive processor and memory utilization on SBCs; it's
+  now possible to configure compile-time limits on the number of devices
+  and client sessions.  Eliminate use of fuser(1) in gpsfake.  Get gpsd
+  working with EarthMates again, this had been broken since 2.15.  Massive 
+  string safety audit and OpenBSD port by Chris Kuethe.  J command added.
+  The gpsctl and gpscat tools and the gpsd.phps script were added.  Switched 
+  to lesstif from openmotif.  Better autodetection of DLE-led packet 
+  protocols (notably TSIP and Garmin binary) and of SiRFStar I and III
+  devices.  Fixed buggy parsing and generation of PGRME. 
+
+* Fri Jun  9 2006 Eric S. Raymond <esr@snark.thyrsus.com> - 2.33-1
+- Fix bad unit conversion in V output.  Clean up some man-page messes.
+  Fixed buggy libgps parsing of multiple responses.  It's now possible
+  to lock gpsd to a fixed speed at compile time for embedded use.  Added
+  NTRIP support, thanks to Ville Nuorvala.  O command now ships an
+  explicit mode field.
+
+* Sun Mar 12 2006 Eric S. Raymond <esr@snark.thyrsus.com> - 2.32-1
+- Cleanup of the xgps layout, and minor memory-leak fixes for xgps.  Fix
+  to cope with Antares uBlox by Andreas Stricker.  Minor fix to libgps
+  cgpxlogger.  Merge cgpxlogger and gpxlogger documentation onto
+  the xgps(1) manual page and rename it gps(1).
+
+* Fri Feb 17 2006 Eric S. Raymond <esr@snark.thyrsus.com> - 2.31-1
+- Now builds and runs under Cygwin.  Correct the speed units in
+  synthetic NMEA.  Slightly better time handling under NMEA.  Daemon
+  now builds with all but NMEA disabled.  Update the leap-second
+  offset. cgpxlogger introduced.  Upgrade gpxlogger to DBUS 0.60
+  conformance.  Jason von Nieda's patch may fix the chronic TSIP
+  driver problems.
+
+* Wed Sep 14 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.30-1
+- Prevent core dump on -d option.  The .log extension is no longer required for
   test loads.  cgps and xgps now have configurable latitude/longitude formats 
   via the -l option.  Introduced new 'g' command that allows clients to
   specify whether they want GPS or RTCM104 information.
@@ -299,9 +372,9 @@ cp gps.py gpsfake.py "$RPM_BUILD_ROOT"%{_libdir}/python${PYVERSION}/site-package
   handling of units options in xgps and xgpsspeed.  Bumped library
   major version, since seen_sentences is now exposed and drivers have
   more capabilities.  Stricter NMEA buffer validation.  Withdrew the
-  change that always passed up a timestamp; on SiRF-IIs, the year part
-  is garbage when the PVT fields are garbage.  Can now recognize
-  SiRF-II GPSes.  Experimental baud-switching support for Zodiac.
+  change that always passed up a timestamp; on SiRF receivers, the year
+  part is garbage when the PVT fields are garbage.  Can now recognize
+  SiRF GPSes.  Experimental baud-switching support for Zodiac.
 
 * Tue Feb 15 2005 Eric S. Raymond <esr@snark.thyrsus.com> - 2.12-1
 - Fixed core-dump bug in processing of the GLL variant that does not

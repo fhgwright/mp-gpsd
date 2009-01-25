@@ -30,7 +30,7 @@ C:
 <funcprototype>
 <funcdef>int <function>gps_query</function></funcdef>
     <paramdef>struct gps_data_t *<parameter>gpsdata</parameter></paramdef>
-    <paramdef>char *<parameter>requests</parameter></paramdef>
+    <paramdef>char *<parameter>fmt</parameter>...</paramdef>
 </funcprototype>
 <funcprototype>
 <funcdef>void <function>gps_set_raw_hook</function></funcdef>
@@ -67,7 +67,7 @@ Python:
 
 import gps
 
-session = gps.gps(host="localhost", port="2947")
+session = gps.gps(host="127.0.0.1", port="2947")
 
 session.set_raw_hook(raw_hook)
 
@@ -94,44 +94,47 @@ to which the GPS is attached. This page describes the high-level
 interface that is safe for multiple applications to use simultaneously; it
 is probably the one you want.  The low-level interface is documented
 at
-<citerefentry><refentrytitle>libgps</refentrytitle><manvolnum>3</manvolnum></citerefentry>.</para>
+<citerefentry><refentrytitle>libgpsd</refentrytitle><manvolnum>3</manvolnum></citerefentry>.</para>
 
-<para>Calling <function>gpsd_open()</function> initializes a GPS-data
+<para>Calling <function>gps_open()</function> initializes a GPS-data
 structure to hold the data collected by the GPS, and returns a socket
 attached to
 <citerefentry><refentrytitle>gpsd</refentrytitle><manvolnum>1</manvolnum></citerefentry>. 
-<function>gpsd_open()</function> returns NULL on errors.  errno is
+<function>gps_open()</function> returns NULL on errors.  errno is
 set depending on the error returned from the the socket layer; see
 <filename>gps.h</filename> for values and explanations.</para>
 
-<para><function>gpsd_close()</function> ends the session.</para>
+<para><function>gps_close()</function> ends the session.</para>
 
-<para><function>gpsd_poll()</function> accepts a response, or sequence
+<para><function>gps_poll()</function> accepts a response, or sequence
 of responses, from the daemon and interprets it as though it were a
 query response (the return value is as for a query).
-<function>gpsd_poll()</function> returns the validity mask of the
+<function>gps_poll()</function> returns the validity mask of the
 received structure.  This function does a blocking read waiting for
 data from the daemon; it returns 0 for success, or -1 on a Unix-level
 read error. </para>
 
-<para><function>gpsd_query()</function> writes a command to the
+<para><function>gps_query()</function> writes a command to the
 daemon, accepts a one-line response, and updates parts of the GPS-data
 structure that correspond to data changed since the last call.  The
-second argument must be a string containing letters from the command
+second argument must be a format string containing letters from the command
 set documented at
 <citerefentry><refentrytitle>gpsd</refentrytitle><manvolnum>1</manvolnum></citerefentry>.
+It may have % elements as for 
+<citerefentry><refentrytitle>sprintf</refentrytitle><manvolnum>3</manvolnum></citerefentry>,
+which will be filled in from any following arguments.
 This function returns a 0 on success, or a -1 if there was a
 Unix-level read error.</para>
 
 <para><function>gps_set_raw_hook()</function> takes a function you
 specify and run it (synchronously) on the raw data pulled by a
-<function>gpsd_query()</function> or <function>gpsd_poll()</function>
+<function>gps_query()</function> or <function>gps_poll()</function>
 call.  The arguments passed to this hook will be a pointer to a
 structure containing parsed data, and a buffer containining the
 raw <application>gpsd</application> response.</para>
 
 <para><function>gps_set_callback()</function> takes a function you
-specify and run it asynchronously each time new data arrives from
+specify and runs it asynchronously each time new data arrives from
 <application>gpsd</application>, using POSIX threads.  For example,
 you can call gps_set_callback(gpsdata, my_function, handler) once in
 your program, and from there on your gpsdata structure will be parsed
@@ -143,7 +146,7 @@ mechanisms to avoid race conditions.</para>
 
 <para><function>gps_del_callback()</function> deregisters the callback
 function previously set with <function>gps_set_callback()</function>.
-After the invocation of this funcion no operation will be done when
+After the invocation of this function no operation will be done when
 new data arrives.</para>
 
 <para>Consult <filename>gps.h</filename> to learn more about the data members 
@@ -178,7 +181,7 @@ is garbage-collected.</para>
 
 <para>The following is an excerpted and simplified version of the
 libgps interface code from
-<citerefentry><refentrytitle>xgps</refentrytitle><manvolnum>1</manvolnum></citerefentry>.
+<citerefentry><refentrytitle>gps</refentrytitle><manvolnum>1</manvolnum></citerefentry>.
 The function <function>handle_input()</function> is a trivial pies of
 code that calls gps_poll(gpsdata).
 </para>
@@ -204,7 +207,7 @@ code that calls gps_poll(gpsdata).
 <refsect1 id='see_also'><title>SEE ALSO</title>
 <para>
 <citerefentry><refentrytitle>gpsd</refentrytitle><manvolnum>8</manvolnum></citerefentry>,
-<citerefentry><refentrytitle>xgps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>libgps</refentrytitle><manvolnum>3</manvolnum></citerefentry>.
 <citerefentry><refentrytitle>libgpsmm</refentrytitle><manvolnum>3</manvolnum></citerefentry>.
 </para>
@@ -213,7 +216,7 @@ code that calls gps_poll(gpsdata).
 <refsect1 id='author'><title>AUTHOR</title>
 <para>Eric S. Raymond &lt;esr@thyrsus.com&gt;, Thread-callback methods
 in the C binding added by Alfredo Pironti
-&lt;alfredio@users.sourceforge.net&gt;.</para>
+&lt;alfredo@users.sourceforge.net&gt;.</para>
 </refsect1>
 </refentry>
 

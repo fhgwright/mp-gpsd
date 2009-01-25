@@ -22,16 +22,38 @@
     <a href="xgps-sample.html">Screenshots</a><br/>
     <a href="index.html#recipes">Recipes</a><br/>
     <a href="index.html#others">Other GPSDs</a><br/>
-    <a href="hardware.html">Hardware References</a><br/>
+    <a href="hardware.html">Hardware</a><br/>
+    <a href="for-vendors.html">For GPS Vendors</a><br/>
+    <a href="wishlist.html">Wish List</a><br/>
+    <a href="hall-of-shame.html">Hall of Shame</a><br/>
+    <a href="hacking.html">Hacker's Guide</a><br/>
+    References<br/>
     <a href="history.html">History</a><br/>
+
+    <div>&nbsp;</div>
 
     <a href='http://www.catb.org/hacker-emblem/'><img
     src='http://www.catb.org/hacker-emblem/glider.png'
     alt='hacker emblem' /></a><br />
 
+    <hr/>
+    <script type="text/javascript"><!--
+    google_ad_client = "pub-1458586455084261";
+    google_ad_width = 160;
+    google_ad_height = 600;
+    google_ad_format = "160x600_as";
+    google_ad_type = "text";
+    google_ad_channel = "";
+    //--></script>
+    <script type="text/javascript"
+      src="http://pagead2.googlesyndication.com/pagead/show_ads.js">
+    </script>
+    <hr/>
+
     <a href="http://validator.w3.org/check/referer"><img
           src="http://www.w3.org/Icons/valid-xhtml10"
           alt="Valid XHTML 1.0!" height="31" width="88" /></a>
+
 </div>
 <div id="Content">
 
@@ -72,15 +94,27 @@ Specification</a></dt>
 <dd>This is the official specification for interpreting radio
 transmission from GPS satellites. You do not need to read this 
 unless you are trying to make sense of the raw 50BPS subframe 
-data.  Be warned: this specification is complex and nasty.</dd>
+data.  Be warned: though this specification is not evil, it 
+is complex and nasty.</dd>
+
+<dt><a href='sps_performance_standard.pdf'>Standard Positioning Service
+Performance Specification</a></dt>
+<dd>This document defines the levels of performance the U.S. Government makes
+available to civil users through the GPS Standard Positioning Service (SPS).
+The original document is
+<a href='http://www.navcen.uscg.gov/gps/geninfo/2001SPSPerformanceStandardFINAL.pdf'>here</a>.</dd>
+
+<dt><a href='waas_specification.pdf'>WAAS System Specification</a></dt>
+<dd>This is the official specification for the FAA's Wide Area
+Augmentation System. The original document is 
+<a href='http://gps.faa.gov/Library/Data/waas/2892bC2a.pdf'>here</a>.</dd>
 
 <dt><a
 href='https://ssl29.pair.com/dmarkle/puborder.php?show=3'>RTCM Recommended
 Standards for Differential GNSS</a></dt> 
 <dd>This is the official RTCM SC-104 standard. The distribution terms
-are evil, and probably as with NMEA 0183 enforced by rabid lawyers. At
-least one of the GPSD project members has purchased an official copy,
-so we do have full details of the message format.</dd>
+are evil. At least one of the GPSD project members has purchased an
+official copy, so we do have full details of the message format.</dd>
 
 <dt><a
 href='http://www.itu.int/rec/recommendation.asp?type=items&amp;lang=e&amp;parent=r-rec-m.823-2-199710-i'>ITU-R M.823-2</a></dt> 
@@ -88,10 +122,39 @@ href='http://www.itu.int/rec/recommendation.asp?type=items&amp;lang=e&amp;parent
 rtcm-104, the specification used for broadcasting differential-gps 
 corrections. Unfortunately, its distribution terms are also evil.</dd>
 
+<dt><a href='galileo_OS_SIS_ICD.pdf'>Galileo Open Service SIS ICD</a></dt>
+<dd>This is draft 0 of the Galileo Open Service Signal In Space Interface
+Control Document. The offical standard could possibly be requested
+<a href='http://www.galileoju.com/page2.cfm'>here</a>, though at the time
+of this writing, the download form was broken.</dd>
+
 <dt><a href='http://igs.ifag.de/index_ntrip.htm'>Ntrip home page</a></dt>
-<dd>NTRIP is a protocol for shipping DGPS corrections that uses HTTP 
-as a transport layer. We don't support this yet, and may never.  The
-distribution terms for the NTRIP standard are evil.</dd>
+<dd>NTRIP is a protocol for shipping DGPS corrections that uses HTTP
+as a transport layer. The distribution terms for the NTRIP standard
+are evil, but a stripped down version of the document is freely
+available on the home page. Version 1.0 of the standard is poorly
+written, confusing and leaves too much open to the interpretation of
+the implementor. With the help of examples in the official standard
+(missing in the online version) and the C and Perl reference
+implementations, it is however possible to develop a working Ntrip
+client.</dd>
+
+<dt><a href='http://www.topografix.com/gpx.asp'>GPX Exchange Format</a></dt>
+<dd>GPX (the GPS Exchange Format) is a light-weight XML data format
+for the interchange of GPS data (waypoints, routes, and tracks)
+between applications and Web services on the Internet.</dd>
+</dl>
+
+<dt><a href='NAVSTAR_Global_Positioning_and_Surveying.pdf'>NAVSTAR
+Global Positioning and Surveying</a></dt>
+<dd>US Army Corps of Engineers, Engineer Manual 1110-1-1003 "provides
+technical specifications and procedural guidance for surveying and
+mapping with the NAVSTAR Global Positioning System (GPS). ... Procedural
+and quality control standards are defined to establish... uniformity
+in the use of GPS..." This document offers significant insight into
+error modelling; anyone who dares to ask "so how accurate is my GPS?"
+should be gently encouraged to study this manual.
+</dd>
 </dl>
 
 <h1>Vendor protocols</h1>
@@ -100,78 +163,209 @@ distribution terms for the NTRIP standard are evil.</dd>
 NMEA extensions or their own more tightly-designed reporting formats.
 This is a collection of descriptions of them.  Many of these have
 already been used in the implementation of <code>gpsd</code>; others
-may be used in the future.  Some are theoretically evil, but in
-practice the vendors don't care.</p>
+may be used in the future.</p>
+
+<p>If you have access to a GPS vendor manual we don't already carry,
+please send it to us.  If it's live on the web, mailing the URL will
+be sufficient.  The names in this <a href='checksums'>SHA1 checksums
+file</a> should be a good clue which ones we already have.</p>
+
+<p>Good manuals generate customer interest and loyalty. Judging by the
+legal notices in them, either (a) many GPS vendors are run by people
+who think that making their documentation hard to get and illegal to
+redistribute doesn't damage their sales prospects, or (b) many GPS
+vendors unthinkingly slap in a boilerplate notice that makes them look
+like they are run by the aforementioned sort of idiot. We are blithely
+ignoring all this nonsense here.  If you are a a GPS vendor
+representative, be advised that if you so request, we will (a) remove
+your manuals, and then (b) laugh at and publicly mock you
+for having been so stupid as to demand that we remove them.</p>
+
+<h2>SiRF and SiRF variants</h2>
 
 <dl>
-<dt><a href='sirf_binary.pdf'>SiRF Binary Protocol Reference Manual</a></dt>
+<dt><a href='vendor-docs/sirf/sirf_binary.pdf'>SiRF Binary Protocol Reference Manual</a> (revision 1.6, April 2005)</dt>
 <dd>The binary protocol for the chip used by over 80% of consumer-grade
 GPSes in 2005.</dd>
 
-<dt><a href='sirf_protocol.pdf'>SiRF GPS Protocol Reference Manual</a></dt>
+<dt><a href='vendor-docs/sirf/sirf_protocol.pdf'>SiRF GPS Protocol Reference Manual</a> (revision 1.30)</dt>
 <dd>This what SiRF gives OEMs as a reference for SiRF's NMEA 0183
 extensions. Notably, it describes the commands for switching to SiRF
 binary mode.</dd>
 
-<dt><a href='uBlox.pdf'>u-blox extension to SiRF binary protocol</a></dt>
-<dd>uBlox was an OEM-enhanced firmware variant of the SiRF-I chip.
-<code>gpsd</code> supports it.  It's obsolete.</dd>
-
 <dt><a
 href='http://www.linkwave.co.uk/assets/GPS.G2-X-01003-E1.pdf'>TIM GPS
-Receiver Maco-Component(offsite link)</a></dt>
+Receiver Macro-Component (offsite link)</a> (version E1, April 2003)</dt>
 <dd> Describes the SiRFstarII chipset used by uBlox and some others.
 <code>gpsd</code> supports it. While obsolete, this file documents certain
 aspects of the protocol that SiRF has removed from current versions of the
 protocol documentation.</dd>
 
+<dt><a href='vendor-docs/sirf/uBlox.pdf'>u-blox extension to SiRF binary protocol</a> (March 2002)</dt>
+<dd>u-blox was an OEM-enhanced firmware variant of the SiRF-1 chip.
+<code>gpsd</code> supports it.  It's been rendered obsolete by the SiRF 2
+and 3 chips.</dd>
+</dl>
+
+<p>For completeness, we carry copies of many ancient manuals for
+various SiRF-based units <a href='vendor-docs/sirf/'>here</a>.  Some of
+these document things SiRF no longer describes in its reference.</p>
+
+<h2>Garmin</h2>
+
+<dl>
 <dt><a
-href='http://www.garmin.com/manuals/GPS17N_GPS16_17NSeriesTechnicalSpecification.pdf'>
-GPS 16/17 Series Technical Specification (offsite link)</a></dt>
-<dd>A manual for the 16 and 17 series of Garmin serial GPSes.  These
-don't use Garmin binary protocol, but rather an enhanced
-NMEA. <code>gpsd</code> supports it.</dd>
+href='http://www.garmin.com/manuals/470_GPS16_17TechnicalSpecification.pdf'>
+GPS 16/17 Series Technical Specification (offsite link)</a> (Revision C, October 2005)</dt>
+<dd>Describes the extended NMEA, with GARMIN proprietary sentences PGRMB, PGRME, PGRMF, PGRMM, PGRMT, and PGRMV (and optional GPALM sentence), emitted by the 
+Garmin GPS16 and 17. For programming purposes, effectively identical to their
+earlier reference on the Garmin 15H and 15L.</dd>
 
-<dt><a href='zodiac.pdf'>Zodiac Serial Data Interface Specification</a></dt>
-<dd>Describes the binary protocol used by Rockwell Zodiac chipsets.
-Supported by <code>gpsd</code>.  Now obsolete.</dd>
-
-<dt><a href='garmin-binary.pdf'>GARMIN GPS Interface Specification</a></dt> 
-<dd>The binary protocol used by Garmin USB GPSes. Supported by
+<dt><a href="vendor-docs/garmin/IntfSpec.pdf">GARMIN GPS Interface
+Specification</a> (May 2006)</dt> <dd>The binary protocol used by
+Garmin USB GPSes. We also have the <a
+href="vendor-docs/garmin/garmin-binary.pdf">December 1999</a> version
+here; comparing them may be useful.  Supported by
 <code>gpsd</code>.</dd>
 
-<dt><a href='cxd2951-commands.pdf'>CXD2951 Communication Command Specification</a></dt>
+<dt><a href='vendor-docs/garmin/garmin_simpletext.txt'>Garmin Simple Text Protocol</a></dt>
+<dd>Some digital cameras are alleged to use this very simple textual
+report format.</dd>
+</dl>
+
+<h2>Trimble</h2>
+
+<dl>
+<dt><a href="vendor-docs/trimble/tsip-reference.pdf">TSIP reference</a>
+(Revision C, 1999)<dt> 
+<dd>Describes the TSIP binary
+protocol. Supported by <code>gpsd</code>.</dd>
+</dl>
+
+<p>For completeness, we also carry the manuals for the Trimble
+<a href="vendor-docs/trimble/trimble-ace2.pdf">Ace 2</a>,
+<a href='vendor-docs/trimble/trimble-copernicus.pdf'>Copernicus</a>,
+<a href='vendor-docs/trimble/trimble-lassen-iq.pdf'>Lassen IQ</a>,
+<a href='vendor-docs/trimble/trimble-lassen-pt.pdf'>Lassen PT</a>,
+<a href='vendor-docs/trimble/trimble-lassen-sq.pdf'>Lassen SQ</a>,
+<a href='vendor-docs/trimble/trimble-lassen-pt.pdf'>Lassen PT</a>,
+and
+<a href='vendor-docs/trimble/trimble-lassen-iq.pdf'>SVeeEight</a>
+GPS units.  Some of these are more recent than the TSIP Reference and
+may document programming information that the does not.</p>
+
+<h2>Other Current GPSes</h2>
+
+<dl>
+<dt><a href='vendor-docs/cxd2951-commands.pdf'>CXD2951 Communication Command Specification</a> (Version 1.7, 2004)</dt>
 <dd>Describes the extension command set supported by the Sony GPS
 CXD2951 chipset. Supported by <code>gpsd</code>.</dd>
 
-<dt><a href='fastrax.pdf'>NMEA Protocol Specification for iTrax02
-Evaluation Kit</a></dt> <dd>Describes the NMEA extensions for the
-iTrax chipset used by Fastrax GPSes, including the commands to switch
-to binary iTalk mode. Not yet supported by <code>gpsd</code> but work
-is in progress.</dd>
+<dt><a href='vendor-docs/fastrax-1.31.pdf'>NMEA Protocol Specification for iTrax02
+Evaluation Kit</a> (Rev 1.31, June 2003)</dt> 
+<dd>Describes the NMEA extensions for the
+iTrax chipset used by Fastrax GPSes. Supported by <code>gpsd</code>.</dd>
 
-<dt><a href='iTalk.pdf'>iTALK protocol specification</a></dt>
+<dt><a href='vendor-docs/iTalk.pdf'>iTALK protocol specification</a>
+(Rev 1.5, March 2002)</dt>
 <dd>Describes the binary protocol for the iTrax chipset used by
-Fastrax GPSes. Not yet supported by <code>gpsd</code> but work is in
-progress.</dd>
+Fastrax GPSes. This document version 2; version 3, which is not
+actually backward compatible, is documented at the <a
+href='http://isuite.fastrax.fi/sdk/341/index.html'>iSuite
+developer website</a>, Neither iTrax2 is not supported by
+<code>gpsd</code>, iTrax3 is somewhat functional.</dd>
 
-<dt><a href='fv-18_manual.pdf'>FV18 user manual</a></dt>
+<dt><a href='vendor-docs/fv-18_manual.pdf'>FV18 user manual</a> (October 2002)</dt>
 <dd>Describes NMEA extensions supported by the San Jose Navigation
 FV-18 GPS chipset. Supported by <code>gpsd</code>.</dd>
 
-<dt><a href='GPS-210-Manual-E.pdf'>Holux GM-210 GPS Receiver User's
-Guide</a></dt>
+<dt><a href='vendor-docs/fv25_man.pdf'>FV25 user manual</a> (January 2005)</dt>
+<dd>Describes UBX binary protocol and NMEA extensions supported by the
+San Jose Navigation FV-25 (uBlox ANTARIS) GPS chipset. UBX is now supported
+by <code>gpsd</code>.</dd>
+
+<dt><a href='vendor-docs/GPS-210-Manual-E.pdf'>Holux GM-210 GPS Receiver User's
+Guide</a> (May 2003)</dt>
 <dd>Describes NMEA as emitted by the Holux GM210.  This is a very
 generic NMEA GPS.   Supported by <code>gpsd</code>.</dd>
 
-<dt><a href='EverMoreBinC.pdf.gz'>GM-X205 GPS Receiver Module User's
-Guide</a></dt> <dd>Describes the binary protocol emitted by EverMore
-GM-X205 GPS chipset. Not yet supported by <code>gpsd</code> but work
-is in progress.</dd>
+<dt><a href='vendor-docs/Emt_GPS_User_Protocol_Rev_D.pdf'>GM-X205 GPS Receiver
+Module User's Guide</a> (Issue D, August 2003)</dt> 
+<dd>Describes the binary protocol emitted
+by EverMore GM-X205 GPS chipset. Supported by <code>gpsd</code>.</dd>
 
-<dt><a href='garmin_simpletext.txt'>Garmin Simple Text Protocol</a></dt>
-<dd>Some digital cameras are alleged to use this very simple textual
-report format.  Not yet supported by <code>gpsd</code>.</dd>
+<dt><a href='vendor-docs/jupiter/'>NavMan Jupiter</a> (2005)</dt>
+<dd>Jupiters emit a variant of the obsolete Zodiac binary protocol.
+Probably supported by <code>gpsd</code>, though we have not been able
+to test with one of these yet.</dd>
+
+<dt><a href='vendor-docs/crescent-sdx-3.pdf'>Crescent Integrator's Manual</a> (November 2005)</dt>
+<dd>Reference for the Hemisphere GPS from CSI Wireless.  Has both an NMEA mode 
+and a binary protocol. We have not been able to test with one of these, but the
+manual suggests <code>gpsd</code> should handle the NMEA mode just fine.</dd>
+
+<dt><a href='vendor-docs/thales-reference.pdf'>Thales A12/B12/C12 Reference Manual</a> (Revision D, 2005)</dt>
+<dd>Reference for a line of Thales GPS modules appearently designed
+for embedded vehicle and cargo tracking.  Uses a very extended dialect
+of NMEA they call the <quote>standard Ashtech command set</quote>.  We
+have not been able to test with one of these, but the manual suggests
+<code>gpsd</code> should handle the NMEA mode just fine.</dd>
+
+<dt><a href='vendor-docs/truenorth-reference.pdf'>True North Revolution Compass Technical 
+Reference</a> (Revision B, August 2003)</dt>
+<dd>Interface spec for a digital magnetic compass that reports in NMEA.  <code>gpsd</code> had support for this in versions up to 2.33; whether it keeps
+that status in later releases wiill depend on whether we can get test hardware.</dd>
+
+<dt><a href='vendor-docs/WD-G-ZX4120.pdf'>WD-G-ZX4120 User's Manual</a> (Version 1.0)</dt>
+<dt><a href='vendor-docs/ZX4125Manual.pdf'>WD-G-ZX4125 User's Manual</a></dt>
+<dd>These files document a couple of modules based on NemeriX chips, and the
+NMEA extensions used. <code>gpsd</code> should just work in NMEA mode.</dd>
+
+<dt><a href='vendor-docs/EB-230-Data-Sheet-V1.2.pdf'>EB-230 User's Manual</a> (Version 1.2)</dt>
+<dd>This file documents one elusive Mediatek GPS module, and the proprietary
+NMEA extensions used. <code>gpsd</code> should just work in NMEA mode.</dd>
+
+<dt><a href='vendor-docs/LS-Binary-Message-Protocol-v1.5.pdf'>LocSense Binary Message Protocol</a> (Version 1.5)</dt>
+<dd>This file documents the LocSense binary message protocol. This protocol
+is currently unsupported. <code>gpsd</code> should just work in NMEA mode
+with LocSense based receivers.</dd>
+
+<dt><a href='http://www.tecsys.de/fileadmin/user_upload/pdf/gh79_1an_intant.pdf'> Specifications for GPS Receiver GH-79L4-N</a></dt>
+
+<dd>Technical manual for the Furuno Electric GH-79L4-N.  Probably
+representative for any other GPS using Furuno's chipset, which is
+however not identified.
+</dl>
+
+<h2>Obsolete products</h2>
+
+<dl>
+<dt><a href='vendor-docs/zodiac.pdf'>Zodiac Serial Data Interface Specification</a> (Revision 11, September 1996)</dt>
+<dd>Describes the binary protocol used by Rockwell/Conexant Zodiac chipsets.
+Supported by <code>gpsd</code>.  Now obsolete; SiRF ate their lunch.</dd>
+
+<dt><a href='vendor-docs/axiom/'>Axiom Sandpiper II Documentation</a> (August 2000)</dt> 
+
+<dd>We have archived the most complete available documentation on the Axiom
+Sandpiper II OEM module (discontinued, vendor has gone out of
+business). Supported by <code>gpsd</code>.</dd>
+
+<dt><a href='vendor-docs/motorola'>Motorola Oncore Eval Kit
+documents</a> (Revision 3.2, June 1998)</dt>
+<dd>Describes Motorola's (apparently discontinued)
+OnCore GPS product. Supported by <code>gpsd</code> in NMEA mode
+only.</dd>
+</dl>
+
+<h2>Curiosities</h2>
+
+<dl>
+<dt><a
+href='vendor-docs/Missile-Applications-Condensed-Measurements.pdf'>Missile
+Applications Condensed Measurements</a></dt> <dd>An application note
+on a GPS protocol extension designed for real-time telemetry from
+ballistic missiles in flight. The complete spec is 
+<a href="vendor-docs/rccstd_264-04_macm.pdf">here</a>.</dd>
 </dl>
 
 <h1>Other</h1>
@@ -182,10 +376,59 @@ report format.  Not yet supported by <code>gpsd</code>.</dd>
 coordinates reported by many vendor binary protocols to ordinary
 geodetic coordinates.</dd>
 
+<dt><a href='http://www.mx-marine.com/downloads/publications/Worldwide_Beacon_DGPS_Status.pdf'>Worldwide Beacon DGPS Status</a></dt>
+<dd>This paper dates from 1999 and some of the information in it is therefore
+probably out of date.  Nevertheless, it's the best public documentation on the
+history and architecture of the worldwide DGPS beacon system we've found.</dd>
+
 <dt><a href="http://williams.best.vwh.net/avform.htm">Aviation Formulary</a></dt>
 <dd>Compendium of formulas related to geodetic navigation, with examples.</dd>
 </dl>
 
+</div>
+<div style="text-align: center;">
+<div style="text-align: left; margin: 1em auto; width: 50%;">
+<span>Search for more information here:</span>
+
+<!-- SiteSearch Google -->
+<form method="get" action="http://www.google.com/custom" target="_top">
+<table border="0" bgcolor="#ffffff">
+<tr><td nowrap="nowrap" valign="top" align="left" height="32">
+<a href="http://www.google.com/">
+<img src="http://www.google.com/logos/Logo_25wht.gif" border="0" alt="Google" align="middle"></img></a>
+</td>
+<td nowrap="nowrap">
+<input type="hidden" name="domains" value="gpsd.berlios.de"></input>
+<input type="text" name="q" size="31" maxlength="255" value=""></input>
+<input type="submit" name="sa" value="Search"></input>
+</td></tr>
+<tr>
+<td>&nbsp;</td>
+<td nowrap="nowrap">
+<table>
+<tr>
+<td>
+<input type="radio" name="sitesearch" value="" checked="checked"></input>
+<font size="-1" color="#000000">Web</font>
+</td>
+<td>
+<input type="radio" name="sitesearch" value="gpsd.berlios.de"></input>
+<font size="-1" color="#000000">gpsd.berlios.de</font>
+</td>
+</tr>
+</table>
+<input type="hidden" name="client" value="pub-1458586455084261"></input>
+<input type="hidden" name="forid" value="1"></input>
+<input type="hidden" name="ie" value="ISO-8859-1"></input>
+<input type="hidden" name="oe" value="ISO-8859-1"></input>
+<input type="hidden" name="flav" value="0000"></input>
+<input type="hidden" name="sig" value="BCQudoNGuH3P6MJe"></input>
+<input type="hidden" name="cof" value="GALT:#008000;GL:1;DIV:#336699;VLC:663399;AH:center;BGC:FFFFFF;LBGC:336699;ALC:0000FF;LC:0000FF;T:000000;GFNT:0000FF;GIMP:0000FF;FORID:1"></input>
+<input type="hidden" name="hl" value="en"></input>
+</td></tr></table>
+</form>
+<!-- SiteSearch Google -->
+</div>
 </div>
 <hr/>
 <script language="JavaScript" src="datestamp.js" type='text/javascript'></script>
@@ -194,6 +437,6 @@ geodetic coordinates.</dd>
 
 <!--
 Local Variables:
-compile-command: "(scp references.html esr@shell.berlios.de:/home/groups/gpsd/htdocs)"
+compile-command: "(scp references.html shell.berlios.de:/home/groups/gpsd/htdocs)"
 End:
 -->

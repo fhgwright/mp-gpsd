@@ -1,21 +1,31 @@
+/* $Id$ */
+#include <sys/types.h>
+#include <sys/ioctl.h>
+#include <sys/time.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
 #include <stdio.h>
 #include <math.h>
-#include <sys/time.h>
 #include <stdarg.h>
 
+#include "gpsd_config.h"
 #include "gpsd.h"
 
 extern struct gps_type_t zodiac_binary;
+extern struct gps_type_t ubx_binary;
 
-#if defined(NMEA_ENABLE) || defined(SIRFII_ENABLL) || defined(EVERMORE_ENABLE)  || defined(ITALK_ENABLE) 
+ssize_t generic_get(struct gps_device_t *session)
+{
+    return packet_get(session->gpsdata.gps_fd, &session->packet);
+}
+
+#if defined(NMEA_ENABLE) || defined(SIRF_ENABLE) || defined(EVERMORE_ENABLE)  || defined(ITRAX_ENABLE)  || defined(NAVCOM_ENABLE)
 ssize_t pass_rtcm(struct gps_device_t *session, char *buf, size_t rtcmbytes)
 /* most GPSes take their RTCM corrections straight up */
 {
-    return write(session->gpsdata.gps_fd, buf, rtcmbytes);
+    return gpsd_write(session, buf, rtcmbytes);
 }
 #endif
 
@@ -28,26 +38,54 @@ ssize_t pass_rtcm(struct gps_device_t *session, char *buf, size_t rtcmbytes)
 
 gps_mask_t nmea_parse_input(struct gps_device_t *session)
 {
-    if (session->packet_type == SIRF_PACKET) {
-	gpsd_report(2, "SiRF packet seen when NMEA expected.\n");
-#ifdef SIRFII_ENABLE
-	return sirf_parse(session, session->outbuffer, session->outbuflen);
+    if (session->packet.type == COMMENT_PACKET) {
+	return 0;
+    } else if (session->packet.type == SIRF_PACKET) {
+	gpsd_report(LOG_WARN, "SiRF packet seen when NMEA expected.\n");
+#ifdef SIRF_ENABLE
+	(void)gpsd_switch_driver(session, "SiRF binary");
+	return sirf_parse(session, session->packet.outbuffer, session->packet.outbuflen);
 #else
 	return 0;
-#endif /* SIRFII_ENABLE */
-    } else if (session->packet_type == EVERMORE_PACKET) {
-	gpsd_report(2, "EverMore packet seen when NMEA expected.\n");
+#endif /* SIRF_ENABLE */
+    } else if (session->packet.type == EVERMORE_PACKET) {
+	gpsd_report(LOG_WARN, "EverMore packet seen when NMEA expected.\n");
 #ifdef EVERMORE_ENABLE
-	/* we might never see a $PEMT, have this as a backstop */
 	(void)gpsd_switch_driver(session, "EverMore binary");
-	return evermore_parse(session, session->outbuffer, session->outbuflen);
+	return evermore_parse(session, session->packet.outbuffer, session->packet.outbuflen);
 #else
 	return 0;
 #endif /* EVERMORE_ENABLE */
-    } else if (session->packet_type == NMEA_PACKET) {
+    } else if (session->packet.type == NAVCOM_PACKET) {
+  gpsd_report(LOG_WARN, "Navcom packet seen when NMEA expected.\n");
+#ifdef NAVCOM_ENABLE
+	(void)gpsd_switch_driver(session, "Navcom binary");
+	return navcom_parse(session, session->packet.outbuffer, session->packet.outbuflen);
+#else
+	return 0;
+#endif /* NAVCOM_ENABLE */
+} else if (session->packet.type == GARMIN_PACKET) {
+	gpsd_report(LOG_WARN, "Garmin packet seen when NMEA expected.\n");
+#ifdef GARMIN_ENABLE
+	/* we might never see a trigger, have this as a backstop */
+	(void)gpsd_switch_driver(session, "Garmin Serial binary");
+	return garmin_ser_parse(session);
+#else
+	return 0;
+#endif /* GARMIN_ENABLE */
+    } else if (session->packet.type == NMEA_PACKET) {
 	gps_mask_t st = 0;
-	gpsd_report(2, "<= GPS: %s", session->outbuffer);
-	if ((st=nmea_parse((char *)session->outbuffer, session))==0) {
+#ifdef GARMINTXT_ENABLE
+	if (session->packet.outbuflen >= 56) {
+		if ((char) *session->packet.outbuffer == '@') {
+		/* Garmin Simple Text packet received; it starts with '@' is terminated with \r\n and has length 57 bytes */
+			(void)gpsd_switch_driver(session, "Garmin Simple Text");
+			return garmintxt_parse(session);
+		}
+	}
+#endif /* GARMINTXT_ENABLE */
+	gpsd_report(LOG_IO, "<= GPS: %s", session->packet.outbuffer);
+	if ((st=nmea_parse((char *)session->packet.outbuffer, session))==0) {
 #ifdef NON_NMEA_ENABLE
 	    struct gps_type_t **dp;
 
@@ -55,197 +93,404 @@ gps_mask_t nmea_parse_input(struct gps_device_t *session)
 	    for (dp = gpsd_drivers; *dp; dp++) {
 		char	*trigger = (*dp)->trigger;
 
-		if (trigger!=NULL && strncmp((char *)session->outbuffer, trigger, strlen(trigger))==0 && isatty(session->gpsdata.gps_fd)!=0) {
-		    gpsd_report(1, "found %s.\n", trigger);
-		    (void)gpsd_switch_driver(session, (*dp)->typename);
+		if (trigger!=NULL && strncmp((char *)session->packet.outbuffer, trigger, strlen(trigger))==0 && isatty(session->gpsdata.gps_fd)!=0) {
+		    gpsd_report(LOG_PROG, "found %s.\n", trigger);
+		    (void)gpsd_switch_driver(session, (*dp)->type_name);
 		    return 1;
 		}
 	    }
 #endif /* NON_NMEA_ENABLE */
-	    gpsd_report(1, "unknown sentence: \"%s\"\n", session->outbuffer);
+	    gpsd_report(LOG_WARN, "unknown sentence: \"%s\"\n", session->packet.outbuffer);
 	}
+#ifdef NMEADISC
+	if (session->ldisc == 0) {
+	    uid_t old;
+	    int ldisc = NMEADISC;
+
+#ifdef TIOCSTSTAMP
+	    struct tstamps tstamps;
+#ifdef PPS_ON_CTS
+	    tstamps.ts_set |= TIOCM_CTS;
+#else /*!PPS_ON_CTS */
+	    tstamps.ts_set |= TIOCM_CAR;
+#endif /* PPS_ON_CTS */
+	    tstamps.ts_clr = 0;
+
+	    old = geteuid();
+	    if (seteuid(0) == -1)
+		gpsd_report(LOG_WARN, "can't seteuid(0) - %s", strerror(errno));
+	    else
+		gpsd_report(LOG_WARN, "seteuid(0) to enable timestamping\n");
+	    if (ioctl(session->gpsdata.gps_fd, TIOCSTSTAMP, &tstamps) < 0)
+		gpsd_report(LOG_WARN, "can't set kernel timestamping: %s\n",
+		    strerror(errno));
+	    else
+		gpsd_report(LOG_WARN, "activated kernel timestamping\n");
+#endif /* TIOCSTSTAMP */
+	    if (ioctl(session->gpsdata.gps_fd, TIOCSETD, &ldisc) == -1)
+		gpsd_report(LOG_WARN, "can't set nmea discipline: %s\n",
+		    strerror(errno));
+	    else
+		gpsd_report(LOG_WARN, "activated nmea discipline\n");
+	/* this is a flag that shows if we've tried the setup */
+	session->ldisc = NMEADISC;
+
+	if (old){
+	    gpsd_report(LOG_WARN, "giving up euid 0\n");
+	    (void)seteuid(old);
+	}
+	gpsd_report(LOG_WARN, "running with effective user ID %d\n", geteuid());
+	}
+#endif /*NMEADISC */
 #ifdef NTPSHM_ENABLE
-	if ((st & TIME_SET) != 0)
-	    /* this magic number is derived from observation */
-	    (void)ntpshm_put(session, session->gpsdata.fix.time + 0.675);
+	/* this magic number is derived from observation */
+	if (session->context->enable_ntpshm &&
+	    (st & TIME_SET) != 0 &&
+	    (session->gpsdata.fix.time!=session->last_fixtime)) {
+	    (void)ntpshm_put(session, session->gpsdata.fix.time);
+	    session->last_fixtime = session->gpsdata.fix.time;
+	}
 #endif /* NTPSHM_ENABLE */
 	return st;
     } else
 	return 0;
 }
 
-static void nmea_initializer(struct gps_device_t *session)
+static void nmea_probe_subtype(struct gps_device_t *session, unsigned int seq)
 {
-#ifdef NMEA_ENABLE
     /*
-     * Tell an FV18 to send GSAs so we'll know if 3D is accurate.
-     * Suppress GLL and VTG.  Enable ZDA so dates will be accurate for replay.
+     * The reason for splitting these probes up by packet sequence
+     * number, interleaving them with the first few packet receives,
+     * is because many generic-NMEA devices get confused if you send
+     * too much at them in one go.
+     *
+     * A fast response to an early probe will change drivers so the
+     * later ones won't be sent at all.  Thus, for best overall
+     * performance, order these to probe for the most popular types
+     * soonest.
+     *
+     * Note: don't make the trigger strings identical to the probe,
+     * because some NMEA devices (notably SiRFs) will just echo
+     * unknown strings right back at you. A useful dodge is to append
+     * a comma to the trigger, because that won't be in the response
+     * unless there is actual following data.
      */
-#define FV18_PROBE	"$PFEC,GPint,GSA01,DTM00,ZDA01,RMC01,GLL00,VTG00,GSV05"
-    (void)nmea_send(session->gpsdata.gps_fd, FV18_PROBE);
-    /* Sony CXD2951 chips: +GGA, -GLL, +GSA, +GSV, +RMC, -VTG, +ZDA, -PSGSA */
-    (void)nmea_send(session->gpsdata.gps_fd, "@NC10151010");
-    /* enable GPZDA on a Motorola Oncore GT+ */
-    (void)nmea_send(session->gpsdata.gps_fd, "$PMOTG,ZDA,1");
-    /* probe for Garmin serial GPS */
-    (void)nmea_send(session->gpsdata.gps_fd, "$PGRMCE");
+    switch (seq) {
+#ifdef SIRF_ENABLE
+    case 0:
+	/*
+	 * We used to try to probe for SiRF by issuing "$PSRF105,1"
+	 * and expecting "$Ack Input105.".  But it turns out this
+	 * only works for SiRF-IIs; SiRF-I and SiRF-III don't respond.
+	 * Thus the only reliable probe is to try to flip the SiRF into
+	 * binary mode, cluing in the library to revert it on close.
+	 */
+	(void)nmea_send(session->gpsdata.gps_fd,
+			"$PSRF100,0,%d,%d,%d,0",
+			session->gpsdata.baudrate,
+			9-session->gpsdata.stopbits,
+			session->gpsdata.stopbits);
+	session->back_to_nmea = true;
+	break;
+#endif /* SIRF_ENABLE */
+#ifdef NMEA_ENABLE
+    case 1:
+	/* probe for Garmin serial GPS -- expect $PGRMC followed by data*/
+	(void)nmea_send(session->gpsdata.gps_fd, "$PGRMCE");
+	break;
+    case 2:
+	/* probe for the FV-18 -- expect $PFEC,GPint followed by data */
+	(void)nmea_send(session->gpsdata.gps_fd, "$PFEC,GPint");
+	break;
 #endif /* NMEA_ENABLE */
-#ifdef SIRFII_ENABLE
-    /* probe for SiRF-II */
-    (void)nmea_send(session->gpsdata.gps_fd, "$PSRF105,1");
-#endif /* SIRFII_ENABLE */
-#ifdef ITRAX_ENABLE
-    /* probe for iTrax, looking for "OK" */
-    (void)nmea_send(session->gpsdata.gps_fd, "$PFST");
-#endif /* ITRAX_ENABLE */
 #ifdef EVERMORE_ENABLE
-    /* probe for EverMore by trying to read the LogConfig */
-    (void)gpsd_write(session, "\x10\x02\x06\x8d\x00\x01\x00\x8e\x10\x03", 10);
+    case 3:
+	/* Enable checksum and GGA(1s), GLL(0s), GSA(1s), GSV(1s), RMC(1s), VTG(0s), PEMT101(1s) */
+	/* EverMore will reply with: \x10\x02\x04\x38\x8E\xC6\x10\x03 */
+	(void)gpsd_write(session,
+	    "\x10\x02\x12\x8E\x7F\x01\x01\x00\x01\x01\x01\x00\x01\x00\x00\x00\x00\x00\x00\x13\x10\x03", 22);
+	break;
 #endif /* EVERMORE_ENABLE */
+#ifdef ITRAX_ENABLE
+    case 4:
+	/* probe for iTrax, looking for "$PFST,OK" */
+	(void)nmea_send(session->gpsdata.gps_fd, "$PFST");
+	break;
+#endif /* ITRAX_ENABLE */
+#ifdef GPSCLOCK_ENABLE
+    case 5:
+	/* probe for Furuno Electric GH-79L4-N (GPSClock) */
+	(void)nmea_send(session->gpsdata.gps_fd, "$PFEC,GPsrq");
+	break;
+#endif /* GPSCLOCK_ENABLE */
+#ifdef ASHTECH_ENABLE
+    case 6:
+	/* probe for Ashtech -- expect $PASHR */
+	(void)nmea_send(session->gpsdata.gps_fd, "$PASHQ,RID");
+	break;
+#endif /* ASHTECH_ENABLE */
+    default:
+	break;
+    }
 }
 
 static struct gps_type_t nmea = {
-    .typename       = "Generic NMEA",	/* full name of type */
-    .trigger        = NULL,		/* it's the default */
+    .type_name      = "Generic NMEA",	/* full name of type */
+    .trigger	    = NULL,		/* it's the default */
     .channels       = 12,		/* consumer-grade GPS */
-    .probe          = NULL,		/* no probe */
-    .initializer    = nmea_initializer,	/* probe for special types */
-    .get_packet     = packet_get,		/* use generic packet getter */
+    .probe_wakeup   = NULL,		/* no wakeup to be done before hunt */
+    .probe_detect   = NULL,		/* no probe */
+    .probe_subtype  = nmea_probe_subtype, /* probe for special types */
+#ifdef ALLOW_RECONFIGURE
+    .configurator   = NULL,		/* enable what we need */
+#endif /* ALLOW_RECONFIGURE */
+    .get_packet     = generic_get,	/* use generic packet getter */
     .parse_packet   = nmea_parse_input,	/* how to interpret a packet */
     .rtcm_writer    = pass_rtcm,	/* write RTCM data straight */
     .speed_switcher = NULL,		/* no speed switcher */
     .mode_switcher  = NULL,		/* no mode switcher */
     .rate_switcher  = NULL,		/* no sample-rate switcher */
     .cycle_chars    = -1,		/* not relevant, no rate switch */
-    .wrapup         = NULL,		/* no wrapup */
-    .cycle          = 1,		/* updates every second */
+#ifdef ALLOW_RECONFIGURE
+    .revert	    = NULL,		/* no setting-reversion method */
+#endif /* ALLOW_RECONFIGURE */
+    .wrapup	    = NULL,		/* no wrapup */
+    .cycle	    = 1,		/* updates every second */
 };
 
-static void garmin_initializer(struct gps_device_t *session)
+#if defined(GARMIN_ENABLE) && defined(NMEA_ENABLE)
+/**************************************************************************
+ *
+ * Garmin NMEA
+ *
+ **************************************************************************/
+
+#ifdef ALLOW_RECONFIGURE
+static void garmin_nmea_configurator(struct gps_device_t *session, unsigned int seq)
 {
-#ifdef NMEA_ENABLE
-    /* reset some config, AutoFix, WGS84, PPS */
-    (void)nmea_send(session->gpsdata.gps_fd, "$PGRMC,A,,100,,,,,,A,,1,2,4,30");
-    /* once a sec, no averaging, NMEA 2.3, WAAS */
-    (void)nmea_send(session->gpsdata.gps_fd, "$PGRMC1,1,1,2,,,,2,W,N");
-    /* get some more config info */
-    (void)nmea_send(session->gpsdata.gps_fd, "$PGRMC1E");
-    /* turn off all output */
-    (void)nmea_send(session->gpsdata.gps_fd, "$PGRMO,,2");
-    /* enable GPGGA, GPGSA, GPGSV, GPRMC on Garmin serial GPS */
-    (void)nmea_send(session->gpsdata.gps_fd, "$PGRMO,GPGGA,1");
-    (void)nmea_send(session->gpsdata.gps_fd, "$PGRMO,GPGSA,1");
-    (void)nmea_send(session->gpsdata.gps_fd, "$PGRMO,GPGSV,1");
-    (void)nmea_send(session->gpsdata.gps_fd, "$PGRMO,GPRMC,1");
-#endif /* NMEA_ENABLE */
+    /*
+     * Receivers like the Garmin GPS-10 don't handle having having a lot of
+     * probes shoved at them very well.
+     */
+    switch (seq) {
+    case 0:
+	/* reset some config, AutoFix, WGS84, PPS 
+	 * Set the PPS pulse length to 40ms which leaves the Garmin 18-5hz 
+         * with a 160ms low state.
+         * NOTE: new PPS only takes effect after next power cycle
+         */
+	(void)nmea_send(session->gpsdata.gps_fd, "$PGRMC,A,,100,,,,,,A,,1,2,1,30");
+	break;
+    case 1:
+	/* once a sec, no averaging, NMEA 2.3, WAAS */
+	(void)nmea_send(session->gpsdata.gps_fd, "$PGRMC1,1,1,1,,,,2,W,N");
+	break;
+    case 2:
+	/* get some more config info */
+	(void)nmea_send(session->gpsdata.gps_fd, "$PGRMC1E");
+	break;
+    case 3:
+	/* turn off all output except GGA */
+	(void)nmea_send(session->gpsdata.gps_fd, "$PGRMO,,2");
+	(void)nmea_send(session->gpsdata.gps_fd, "$PGRMO,GPGGA,1");
+	break;
+    case 4:
+	/* enable GPGGA, GPGSA, GPGSV, GPRMC on Garmin serial GPS */
+	(void)nmea_send(session->gpsdata.gps_fd, "$PGRMO,GPGSA,1");
+	break;
+    case 5:
+	(void)nmea_send(session->gpsdata.gps_fd, "$PGRMO,GPGSV,1");
+	break;
+    case 6:
+	(void)nmea_send(session->gpsdata.gps_fd, "$PGRMO,GPRMC,1");
+	break;
+    case 7:
+	(void)nmea_send(session->gpsdata.gps_fd, "$PGRMO,PGRME,1");
+	break;
+    }
 }
+#endif /* ALLOW_RECONFIGURE */
 
 static struct gps_type_t garmin = {
-    .typename       = "Garmin Serial",	/* full name of type */
-    .trigger        = "$PGRMC",		/* Garmin private */
-    .channels       = 12,		/* consumer-grade GPS */
-    .probe          = NULL,		/* no probe */
-    .initializer    = garmin_initializer,/* probe for special types */
-    .get_packet     = packet_get,	/* use generic packet getter */
+    .type_name      = "Garmin Serial",	/* full name of type */
+    .trigger	    = "$PGRMC,",	/* Garmin private */
+    .channels       = 12,		/* not used by this driver */
+    .probe_wakeup   = NULL,		/* no wakeup to be done before hunt */
+    .probe_detect   = NULL,		/* no probe */
+    .probe_subtype  = NULL,		/* no further querying */
+#ifdef ALLOW_RECONFIGURE
+    .configurator   = garmin_nmea_configurator,/* enable what we need */
+#endif /*ALLOW_RECONFIGURE */
+    .get_packet     = generic_get,	/* use generic packet getter */
     .parse_packet   = nmea_parse_input,	/* how to interpret a packet */
     .rtcm_writer    = NULL,		/* some do, some don't, skip for now */
     .speed_switcher = NULL,		/* no speed switcher */
     .mode_switcher  = NULL,		/* no mode switcher */
     .rate_switcher  = NULL,		/* no sample-rate switcher */
     .cycle_chars    = -1,		/* not relevant, no rate switch */
-    .wrapup         = NULL,		/* no wrapup */
-    .cycle          = 1,		/* updates every second */
+#ifdef ALLOW_RECONFIGURE
+    .revert	    = NULL,		/* no setting-reversion method */
+#endif /*ALLOW_RECONFIGURE */
+    .wrapup	    = NULL,		/* no wrapup */
+    .cycle	    = 1,		/* updates every second */
 };
+#endif /* GARMIN_ENABLE && NMEA_ENABLE */
 
-#if FV18_ENABLE
+#ifdef ASHTECH_ENABLE
 /**************************************************************************
  *
- * FV18 -- uses 2 stop bits, needs to be told to send GSAs
+ * Ashtech (then Thales, now Magellan Professional) Receivers
  *
  **************************************************************************/
 
-static struct gps_type_t fv18 = {
-    .typename       = "San Jose Navigation FV18",	/* full name of type */
-    .trigger        = FV18_PROBE,	/* FV18s should echo the probe */
-    .channels       = 12,		/* consumer-grade GPS */
-    .probe          = NULL,		/* mo probe */
-    .initializer    = NULL,		/* to be sent unconditionally */
-    .get_packet     = packet_get,	/* how to get a packet */
+#ifdef ALLOW_RECONFIGURE
+static void ashtech_configure(struct gps_device_t *session, unsigned int seq)
+{
+    if (seq == 0){
+	/* turn WAAS on. can't hurt... */
+	(void)nmea_send(session->gpsdata.gps_fd, "$PASHS,WAS,ON");
+	/* reset to known output state */
+	(void)nmea_send(session->gpsdata.gps_fd, "$PASHS,NME,ALL,A,OFF");
+	/* then turn on some useful sentences */
+#ifdef ASHTECH_NOTYET
+	/* we could parse these, but they're oversize so they get dropped */
+	(void)nmea_send(session->gpsdata.gps_fd, "$PASHS,NME,POS,A,ON");
+	(void)nmea_send(session->gpsdata.gps_fd, "$PASHS,NME,SAT,A,ON");
+#else
+	(void)nmea_send(session->gpsdata.gps_fd, "$PASHS,NME,GGA,A,ON");
+	(void)nmea_send(session->gpsdata.gps_fd, "$PASHS,NME,GSA,A,ON");
+	(void)nmea_send(session->gpsdata.gps_fd, "$PASHS,NME,GSV,A,ON");
+	(void)nmea_send(session->gpsdata.gps_fd, "$PASHS,NME,RMC,A,ON");
+#endif
+	(void)nmea_send(session->gpsdata.gps_fd, "$PASHS,NME,ZDA,A,ON");
+    }
+}
+#endif /* ALLOW_RECONFIGURE */
+
+static void ashtech_ping(struct gps_device_t *session)
+{
+	(void)nmea_send(session->gpsdata.gps_fd, "$PASHQ,RID");
+}
+
+static struct gps_type_t ashtech = {
+    .type_name      = "Ashtech",	/* full name of type */
+    .trigger	    = "$PASHR,RID,",	/* Ashtech receivers respond thus */
+    .channels       = 24,		/* not used, GG24 has 24 channels */
+    .probe_wakeup   = ashtech_ping,	/* no wakeup to be done before hunt */
+    .probe_detect   = NULL,		/* no probe */
+    .probe_subtype  = NULL,		/* to be sent unconditionally */
+#ifdef ALLOW_RECONFIGURE
+    .configurator   = ashtech_configure, /* change its sentence set */
+#endif /* ALLOW_RECONFIGURE */
+    .get_packet     = generic_get,	/* how to get a packet */
     .parse_packet   = nmea_parse_input,	/* how to interpret a packet */
     .rtcm_writer    = pass_rtcm,	/* write RTCM data straight */
     .speed_switcher = NULL,		/* no speed switcher */
     .mode_switcher  = NULL,		/* no mode switcher */
     .rate_switcher  = NULL,		/* no sample-rate switcher */
     .cycle_chars    = -1,		/* not relevant, no rate switch */
-    .wrapup         = NULL,		/* no wrapup */
-    .cycle          = 1,		/* updates every second */
+#ifdef ALLOW_RECONFIGURE
+    .revert	    = NULL,		/* no setting-reversion method */
+#endif /* ALLOW_RECONFIGURE */
+    .wrapup	    = NULL,		/* no wrapup */
+    .cycle	    = 1,		/* updates every second */
 };
-#endif /* FV18_ENABLE */
+#endif /* ASHTECH_ENABLE */
 
+#ifdef FV18_ENABLE
 /**************************************************************************
  *
- * SiRF-II NMEA
- *
- * This NMEA -mode driver is a fallback in case the SiRF chipset has
- * firmware too old for binary to be useful, or we're not compiling in
- * the SiRF binary driver at all.
+ * FV18 -- uses 2 stop bits, needs to be told to send GSAs
  *
  **************************************************************************/
 
-static void sirf_initializer(struct gps_device_t *session)
+#ifdef ALLOW_RECONFIGURE
+static void fv18_configure(struct gps_device_t *session, unsigned int seq)
 {
-    /* (void)nmea_send(session->gpsdata.gps_fd, "$PSRF105,0"); */
-    (void)nmea_send(session->gpsdata.gps_fd, "$PSRF105,0");
-    (void)nmea_send(session->gpsdata.gps_fd, "$PSRF103,05,00,00,01"); /* no VTG */
-    (void)nmea_send(session->gpsdata.gps_fd, "$PSRF103,01,00,00,01"); /* no GLL */
+    /*
+     * Tell an FV18 to send GSAs so we'll know if 3D is accurate.
+     * Suppress GLL and VTG.  Enable ZDA so dates will be accurate for replay.
+     */
+    if (seq == 0)
+	(void)nmea_send(session->gpsdata.gps_fd,
+		    "$PFEC,GPint,GSA01,DTM00,ZDA01,RMC01,GLL00,VTG00,GSV05");
 }
+#endif /* ALLOW_RECONFIGURE */
 
-static bool sirf_switcher(struct gps_device_t *session, int nmea, unsigned int speed) 
-/* switch GPS to specified mode at 8N1, optionally to binary */
-{
-    if (nmea_send(session->gpsdata.gps_fd, "$PSRF100,%d,%d,8,1,0", nmea,speed) < 0)
-	return false;
-    return true;
-}
-
-static bool sirf_speed(struct gps_device_t *session, unsigned int speed)
-/* change the baud rate, remaining in SiRF NMWA mode */
-{
-    return sirf_switcher(session, 1, speed);
-}
-
-static void sirf_mode(struct gps_device_t *session, int mode)
-/* change mode to SiRF binary, speed unchanged */
-{
-    if (mode == 1) {
-	(void)gpsd_switch_driver(session, "SiRF-II binary");
-	session->gpsdata.driver_mode = (unsigned int)sirf_switcher(session, 0, session->gpsdata.baudrate);
-    } else
-	session->gpsdata.driver_mode = 0;
-}
-
-static struct gps_type_t sirfII_nmea = {
-    .typename      = "SiRF-II NMEA",	/* full name of type */
-#ifndef SIRFII_ENABLE
-    .trigger       = "$Ack Input105.",	/* expected response to SiRF PSRF105 */
-#else
-    .trigger       = NULL,		/* let the binary driver have it */
-#endif /* SIRFII_ENABLE */
-    .channels      = 12,		/* consumer-grade GPS */
-    .probe         = NULL,		/* no probe */
-    .initializer   = sirf_initializer,	/* turn off debugging messages */
-    .get_packet    = packet_get,	/* how to get a packet */
-    .parse_packet  = nmea_parse_input,	/* how to interpret a packet */
-    .rtcm_writer   = pass_rtcm,		/* write RTCM data straight */
-    .speed_switcher= sirf_speed,	/* we can change speeds */
-    .mode_switcher = sirf_mode,		/* there's a mode switch */
-    .rate_switcher = NULL,		/* no sample-rate switcher */
-    .cycle_chars   = -1,		/* not relevant, no rate switch */
-    .wrapup         = NULL,		/* no wrapup */
-    .cycle          = 1,		/* updates every second */
+static struct gps_type_t fv18 = {
+    .type_name      = "San Jose Navigation FV18",	/* full name of type */
+    .trigger	    = "$PFEC,GPint,",	/* FV18s should echo the probe */
+    .channels       = 12,		/* not used by this driver */
+    .probe_wakeup   = NULL,		/* no wakeup to be done before hunt */
+    .probe_detect   = NULL,		/* no probe */
+    .probe_subtype  = NULL,		/* to be sent unconditionally */
+#ifdef ALLOW_RECONFIGURE
+    .configurator   = fv18_configure,	/* change its sentence set */
+#endif /* ALLOW_RECONFIGURE */
+    .get_packet     = generic_get,	/* how to get a packet */
+    .parse_packet   = nmea_parse_input,	/* how to interpret a packet */
+    .rtcm_writer    = pass_rtcm,	/* write RTCM data straight */
+    .speed_switcher = NULL,		/* no speed switcher */
+    .mode_switcher  = NULL,		/* no mode switcher */
+    .rate_switcher  = NULL,		/* no sample-rate switcher */
+    .cycle_chars    = -1,		/* not relevant, no rate switch */
+#ifdef ALLOW_RECONFIGURE
+    .revert	    = NULL,		/* no setting-reversion method */
+#endif /* ALLOW_RECONFIGURE */
+    .wrapup	    = NULL,		/* no wrapup */
+    .cycle	    = 1,		/* updates every second */
 };
+#endif /* FV18_ENABLE */
 
-#if TRIPMATE_ENABLE
+#ifdef GPSCLOCK_ENABLE
+/**************************************************************************
+ *
+ * Furuno Electric GPSClock (GH-79L4)
+ *
+ **************************************************************************/
+
+/*
+ * Based on http://www.tecsys.de/fileadmin/user_upload/pdf/gh79_1an_intant.pdf
+ */
+
+static void gpsclock_probe_subtype(struct gps_device_t *session, unsigned int seq)
+{
+    /*
+     * Michael St. Laurent <mikes@hartwellcorp.com> reports that you have to
+     * ignore the trailing PPS edge when extracting time from this chip.
+     */
+    if (seq == 0) {
+	gpsd_report(LOG_INF, "PPS trailing edge will be ignored");
+	session->driver.nmea.ignore_trailing_edge = true;
+    }
+}
+
+static struct gps_type_t gpsclock = {
+    .type_name      = "Furuno Electric GH-79L4",	/* full name of type */
+    .trigger	    = "$PFEC,GPssd",	/* GPSclock should echo the probe */
+    .channels       = 12,		/* not used by this driver */
+    .probe_wakeup   = NULL,		/* no wakeup to be done before hunt */
+    .probe_detect   = NULL,		/* no probe */
+    .probe_subtype  = gpsclock_probe_subtype, /* to be sent unconditionally */
+#ifdef ALLOW_RECONFIGURE
+    .configurator   = NULL,		/* change its sentence set */
+#endif /* ALLOW_RECONFIGURE */
+    .get_packet     = generic_get,	/* how to get a packet */
+    .parse_packet   = nmea_parse_input,	/* how to interpret a packet */
+    .rtcm_writer    = pass_rtcm,	/* write RTCM data straight */
+    .speed_switcher = NULL,		/* no speed switcher */
+    .mode_switcher  = NULL,		/* no mode switcher */
+    .rate_switcher  = NULL,		/* sample rate is fixed */
+    .cycle_chars    = -1,		/* sample rate is fixed */
+#ifdef ALLOW_RECONFIGURE
+    .revert	    = NULL,		/* no setting-reversion method */
+#endif /* ALLOW_RECONFIGURE */
+    .wrapup	    = NULL,		/* no wrapup */
+    .cycle	    = 1,		/* updates every second */
+};
+#endif /* GPSCLOCK_ENABLE */
+
+#ifdef TRIPMATE_ENABLE
 /**************************************************************************
  *
  * TripMate -- extended NMEA, gets faster fix when primed with lat/long/time
@@ -260,29 +505,44 @@ static struct gps_type_t sirfII_nmea = {
  * and was replaced by the Zodiac EarthMate.
  */
 
-static void tripmate_initializer(struct gps_device_t *session)
+static void tripmate_probe_subtype(struct gps_device_t *session, unsigned int seq)
 {
     /* TripMate requires this response to the ASTRAL it sends at boot time */
-    (void)nmea_send(session->gpsdata.gps_fd, "$IIGPQ,ASTRAL");
-    /* stop it sending PRWIZCH */
-    (void)nmea_send(session->gpsdata.gps_fd, "$PRWIILOG,ZCH,V,,");
+    if (seq == 0)
+	(void)nmea_send(session->gpsdata.gps_fd, "$IIGPQ,ASTRAL");
 }
 
+#ifdef ALLOW_RECONFIGURE
+static void tripmate_configurator(struct gps_device_t *session, unsigned int seq)
+{
+    /* stop it sending PRWIZCH */
+    if (seq == 0)
+	(void)nmea_send(session->gpsdata.gps_fd, "$PRWIILOG,ZCH,V,,");
+}
+#endif /* ALLOW_RECONFIGURE */
+
 static struct gps_type_t tripmate = {
-    .typename      = "Delorme TripMate",	/* full name of type */
+    .type_name     = "Delorme TripMate",	/* full name of type */
     .trigger       ="ASTRAL",			/* tells us to switch */
     .channels      = 12,			/* consumer-grade GPS */
-    .probe         = NULL,			/* no probe */
-    .initializer   = tripmate_initializer,	/* send unconfitionally */
-    .get_packet    = packet_get,		/* how to get a packet */
+    .probe_wakeup  = NULL,			/* no wakeup before hunt */
+    .probe_detect  = NULL,			/* no probe */
+    .probe_subtype = tripmate_probe_subtype,	/* send unconditionally */
+#ifdef ALLOW_RECONFIGURE
+    .configurator  = tripmate_configurator,	/* send unconditionally */
+#endif /* ALLOW_RECONFIGURE */
+    .get_packet    = generic_get,		/* how to get a packet */
     .parse_packet  = nmea_parse_input,		/* how to interpret a packet */
     .rtcm_writer   = pass_rtcm,			/* send RTCM data straight */
     .speed_switcher= NULL,			/* no speed switcher */
     .mode_switcher = NULL,			/* no mode switcher */
     .rate_switcher = NULL,			/* no sample-rate switcher */
     .cycle_chars   = -1,			/* no rate switch */
-    .wrapup         = NULL,			/* no wrapup */
-    .cycle          = 1,			/* updates every second */
+#ifdef ALLOW_RECONFIGURE
+    .revert	   = NULL,			/* no setting-reversion method */
+#endif /* ALLOW_RECONFIGURE */
+    .wrapup	   = NULL,			/* no wrapup */
+    .cycle	   = 1,				/* updates every second */
 };
 #endif /* TRIPMATE_ENABLE */
 
@@ -292,7 +552,7 @@ static struct gps_type_t tripmate = {
  * Zodiac EarthMate textual mode
  *
  * Note: This is the pre-2003 version using Zodiac binary protocol.
- * It has been replaced with a design that uses a SiRF-II chipset.
+ * It has been replaced with a design that uses a SiRF chipset.
  *
  **************************************************************************/
 
@@ -307,147 +567,215 @@ static void earthmate_close(struct gps_device_t *session)
     /*@i@*/session->device_type = &earthmate;
 }
 
-static void earthmate_initializer(struct gps_device_t *session)
+static void earthmate_probe_subtype(struct gps_device_t *session, unsigned int seq)
 {
-    (void)write(session->gpsdata.gps_fd, "EARTHA\r\n", 8);
-    (void)usleep(10000);
-    /*@i@*/session->device_type = &zodiac_binary;
-    zodiac_binary.wrapup = earthmate_close;
-    if (zodiac_binary.initializer) zodiac_binary.initializer(session);
+    if (seq == 0) {
+	(void)gpsd_write(session, "EARTHA\r\n", 8);
+	(void)usleep(10000);
+	/*@i@*/session->device_type = &zodiac_binary;
+	zodiac_binary.wrapup = earthmate_close;
+	if (zodiac_binary.probe_subtype) zodiac_binary.probe_subtype(session, seq);
+    }
 }
 
 /*@ -redef @*/
 static struct gps_type_t earthmate = {
-    .typename      = "Delorme EarthMate (pre-2003, Zodiac chipset)",
+    .type_name     = "Delorme EarthMate (pre-2003, Zodiac chipset)",
     .trigger       = "EARTHA",			/* Earthmate trigger string */
-    .channels      = 12,			/* consumer-grade GPS */
-    .probe         = NULL,			/* no probe */
-    .initializer   = earthmate_initializer,	/* switch us to Zodiac mode */
-    .get_packet    = packet_get,		/* how to get a packet */
+    .channels      = 12,			/* not used by NMEA parser */
+    .probe_wakeup  = NULL,			/* no wakeup to be done before hunt */
+    .probe_detect  = NULL,			/* no probe */
+    .probe_subtype = earthmate_probe_subtype,	/* switch us to Zodiac mode */
+#ifdef ALLOW_RECONFIGURE
+    .configurator  = NULL,			/* no configuration here */
+#endif /* ALLOW_RECONFIGURE */
+    .get_packet    = generic_get,		/* how to get a packet */
     .parse_packet  = nmea_parse_input,		/* how to interpret a packet */
     .rtcm_writer   = NULL,			/* don't send RTCM data */
     .speed_switcher= NULL,			/* no speed switcher */
     .mode_switcher = NULL,			/* no mode switcher */
     .rate_switcher = NULL,			/* no sample-rate switcher */
     .cycle_chars   = -1,			/* no rate switch */
-    .wrapup         = NULL,			/* no wrapup code */
-    .cycle          = 1,			/* updates every second */
+#ifdef ALLOW_RECONFIGURE
+    .revert	   = NULL,			/* no setting-reversion method */
+#endif /* ALLOW_RECONFIGURE */
+    .wrapup	   = NULL,			/* no wrapup code */
+    .cycle	   = 1,				/* updates every second */
 };
 /*@ -redef @*/
 #endif /* EARTHMATE_ENABLE */
 
+#endif /* NMEA_ENABLE */
 
-#ifdef ITRAX_ENABLE
+#ifdef TNT_ENABLE
 /**************************************************************************
+ * True North Technologies - Revolution 2X Digital compass
  *
- * The NMEA mode of the iTrax chipset, as used in the FastTrax and others.
+ * More info: http://www.tntc.com/
  *
- * As described by v1.31 of the NMEA Protocol Specification for the
- * iTrax02 Evaluation Kit, 2003-06-12.
- * v1.18 of the  manual, 2002-19-6, describes effectively
- * the same protocol, but without ZDA.
+ * This is a digital compass which uses magnetometers to measure the
+ * strength of the earth's magnetic field. Based on these measurements
+ * it provides a compass heading using NMEA formatted output strings.
+ * This is useful to supplement the heading provided by another GPS
+ * unit. A GPS heading is unreliable at slow speed or no speed.
  *
  **************************************************************************/
 
-/*
- * Enable GGA=0x2000, RMC=0x8000, GSA=0x0002, GSV=0x0001, ZDA=0x0004.
- * Disable GLL=0x1000, VTG=0x4000, FOM=0x0020, PPS=0x0010.
- * This is 82+75+67+(3*60)+34 = 438 characters 
- * 
- * 1200   => at most 1 fix per 4 seconds
- * 2400   => at most 1 fix per 2 seconds
- * 4800   => at most 1 fix per 1 seconds
- * 9600   => at most 2 fixes per second
- * 19200  => at most 4 fixes per second
- * 57600  => at most 13 fixes per second
- * 115200 => at most 26 fixes per second
- *
- * We'd use FOM, but they don't specify a confidence interval.
- */
-#define ITRAX_MODESTRING	"$PFST,NMEA,A007,%d\r\n"
+enum {
+#include "packet_states.h"
+};
 
-static int literal_send(int fd, const char *fmt, ... )
-/* ship a raw command to the GPS */
+static void tnt_add_checksum(char *sentence)
+{
+    unsigned char sum = '\0';
+    char c, *p = sentence;
+
+    if (*p == '@') {
+	p++;
+    } else {
+	gpsd_report(LOG_ERROR, "Bad TNT sentence: '%s'\n", sentence);
+    }
+    while ( ((c = *p) != '*') && (c != '\0')) {
+	sum ^= c;
+	p++;
+    }
+    *p++ = '*';
+    /*@i@*/snprintf(p, 4, "%02X\r\n", sum);
+}
+
+static int tnt_send(int fd, const char *fmt, ... )
 {
     int status;
     char buf[BUFSIZ];
     va_list ap;
 
     va_start(ap, fmt) ;
-    (void)vsnprintf(buf, sizeof(buf), fmt, ap);
+    (void)vsnprintf(buf, sizeof(buf)-5, fmt, ap);
     va_end(ap);
+    strlcat(buf, "*", BUFSIZ);
+    tnt_add_checksum(buf);
     status = (int)write(fd, buf, strlen(buf));
+    tcdrain(fd);
     if (status == (int)strlen(buf)) {
-	gpsd_report(2, "=> GPS: %s\n", buf);
+	gpsd_report(LOG_IO, "=> GPS: %s\n", buf);
 	return status;
     } else {
-	gpsd_report(2, "=> GPS: %s FAILED\n", buf);
+	gpsd_report(LOG_WARN, "=> GPS: %s FAILED\n", buf);
 	return -1;
     }
 }
 
-static void itrax_initializer(struct gps_device_t *session)
-/* start navigation and synchronous mode */
+#define TNT_SNIFF_RETRIES       100
+/*
+ * The True North compass won't start talking
+ * unless you ask it to. So to identify it we
+ * need to query for its ID string.
+ */
+static int tnt_packet_sniff(struct gps_device_t *session)
 {
-    /* initialize GPS clock with current system time */ 
-    struct tm when;
-    double integral, fractional;
-    time_t intfixtime;
-    char buf[31], frac[6];
-    fractional = modf(timestamp(), &integral);
-    intfixtime = (time_t)integral;
-    (void)gmtime_r(&intfixtime, &when);
-    (void)strftime(buf, sizeof(buf), "$PFST,INITAID,%H%M%S.XX,%d%m%y\r\n", &when);
-    (void)snprintf(frac, sizeof(frac), "%.2f", fractional);
-    buf[21] = frac[2]; buf[22] = frac[3];
-    (void)literal_send(session->gpsdata.gps_fd, buf);
+    unsigned int n, count = 0;
 
-    (void)literal_send(session->gpsdata.gps_fd, "$PFST,START\r\n");
-    (void)literal_send(session->gpsdata.gps_fd, "$PFST,SYNCMODE,1\r\n");
-    (void)literal_send(session->gpsdata.gps_fd, 
-		    ITRAX_MODESTRING, session->gpsdata.baudrate);
+    gpsd_report(LOG_RAW, "tnt_packet_sniff begins\n");
+    for (n = 0; n < TNT_SNIFF_RETRIES; n++)
+    {
+      count = 0;
+      (void)tnt_send(session->gpsdata.gps_fd, "@X?");
+      if (ioctl(session->gpsdata.gps_fd, FIONREAD, &count) < 0)
+	  return BAD_PACKET;
+      if (count == 0) {
+	  //int delay = 10000000000.0 / session->gpsdata.baudrate;
+	  //gpsd_report(LOG_RAW, "usleep(%d)\n", delay);
+	  //usleep(delay);
+	  gpsd_report(LOG_RAW, "sleep(1)\n");
+	  (void)sleep(1);
+      } else if (generic_get(session) >= 0) {
+	if((session->packet.type == NMEA_PACKET)&&(session->packet.state == NMEA_RECOGNIZED))
+	{
+	  gpsd_report(LOG_RAW, "tnt_packet_sniff returns %d\n",session->packet.type);
+	  return session->packet.type;
+	}
+      }
+    }
+
+    gpsd_report(LOG_RAW, "tnt_packet_sniff found no packet\n");
+    return BAD_PACKET;
 }
 
-static bool itrax_speed(struct gps_device_t *session, speed_t speed)
-/* change the baud rate */
+static void tnt_probe_subtype(struct gps_device_t *session, unsigned int seq UNUSED)
 {
-    return literal_send(session->gpsdata.gps_fd, ITRAX_MODESTRING, speed) >= 0;
+  // Send codes to start the flow of data
+  //tnt_send(session->gpsdata.gps_fd, "@BA?"); // Query current rate
+  //tnt_send(session->gpsdata.gps_fd, "@BA=8"); // Start HTM packet at 1Hz
+  /*
+   * Sending this twice seems to make it more reliable!!
+   * I think it gets the input on the unit synced up.
+   */
+  (void)tnt_send(session->gpsdata.gps_fd, "@BA=15"); // Start HTM packet at 1200 per minute
+  (void)tnt_send(session->gpsdata.gps_fd, "@BA=15"); // Start HTM packet at 1200 per minute
 }
 
-static bool itrax_rate(struct gps_device_t *session, double rate)
-/* change the sample rate of the GPS */
+static bool tnt_probe(struct gps_device_t *session)
 {
-    return literal_send(session->gpsdata.gps_fd, "$PSFT,FIXRATE,%d\r\n", rate) >= 0;
+  unsigned int *ip;
+#ifdef FIXED_PORT_SPEED
+    /* just the one fixed port speed... */
+    static unsigned int rates[] = {FIXED_PORT_SPEED};
+#else /* FIXED_PORT_SPEED not defined */
+  /* The supported baud rates */
+  static unsigned int rates[] = {38400, 19200, 2400, 4800, 9600 };
+#endif /* FIXED_PORT_SPEED defined */
+
+  gpsd_report(LOG_PROG, "Probing TrueNorth Compass\n");
+
+  /*
+   * Only block until we get at least one character, whatever the
+   * third arg of read(2) says.
+   */
+  /*@ ignore @*/
+  memset(session->ttyset.c_cc,0,sizeof(session->ttyset.c_cc));
+  session->ttyset.c_cc[VMIN] = 1;
+  /*@ end @*/
+
+  session->ttyset.c_cflag &= ~(PARENB | PARODD | CRTSCTS);
+  session->ttyset.c_cflag |= CREAD | CLOCAL;
+  session->ttyset.c_iflag = session->ttyset.c_oflag = session->ttyset.c_lflag = (tcflag_t) 0;
+
+  session->baudindex = 0;
+  for (ip = rates; ip < rates + sizeof(rates)/sizeof(rates[0]); ip++)
+      if (ip == rates || *ip != rates[0])
+      {
+	  gpsd_report(LOG_PROG, "hunting at speed %d\n", *ip);
+	  gpsd_set_speed(session, *ip, 'N',1);
+	  if (tnt_packet_sniff(session) != BAD_PACKET)
+	      return true;
+      }
+  return false;
 }
 
-static void itrax_wrap(struct gps_device_t *session)
-/* stop navigation, this cuts the power drain */
-{
-    (void)literal_send(session->gpsdata.gps_fd, "$PFST,SYNCMODE,0\r\n");
-    (void)literal_send(session->gpsdata.gps_fd, "$PFST,STOP\r\n");
-}
-
-/*@ -redef @*/
-static struct gps_type_t itrax = {
-    .typename      = "iTrax",		/* full name of type */
-    .trigger       = "$PFST,OK",	/* tells us to switch to Itrax */
-    .channels      = 12,		/* consumer-grade GPS */
-    .probe         = NULL,		/* no probe */
-    .initializer   = itrax_initializer,	/* initialize */
-    .get_packet    = packet_get,	/* how to get a packet */
-    .parse_packet  = nmea_parse_input,	/* how to interpret a packet */
-    .rtcm_writer   = NULL,		/* iTrax doesn't support DGPS/WAAS/EGNOS */
-    .speed_switcher= itrax_speed,	/* no speed switcher */
-    .mode_switcher = NULL,		/* no mode switcher */
-    .rate_switcher = itrax_rate,	/* there's a sample-rate switcher */
-    .cycle_chars   = 438,		/* not relevant, no rate switch */
-    .wrapup         = itrax_wrap,	/* sleep the receiver */
-    .cycle          = 1,		/* updates every second */
+struct gps_type_t trueNorth = {
+    .type_name      = "True North",	/* full name of type */
+    .trigger	    = " TNT1500",
+    .channels       = 0,		/* not an actual GPS at all */
+    .probe_wakeup   = NULL,		/* this will become a real method */
+    .probe_detect   = tnt_probe,	/* probe by sending ID query */
+    .probe_subtype  = tnt_probe_subtype,/* probe for True North Digital Compass */
+#ifdef ALLOW_RECONFIGURE
+    .configurator   = NULL,		/* no setting changes */
+#endif /* ALLOW_RECONFIGURE */
+    .get_packet     = generic_get,	/* how to get a packet */
+    .parse_packet   = nmea_parse_input,	/* how to interpret a packet */
+    .rtcm_writer    = NULL,		/* Don't send */
+    .speed_switcher = NULL,		/* no speed switcher */
+    .mode_switcher  = NULL,		/* no mode switcher */
+    .rate_switcher  = NULL,		/* no wrapup */
+    .cycle_chars    = -1,		/* not relevant, no rate switch */
+#ifdef ALLOW_RECONFIGURE
+    .revert	    = NULL,		/* no setting-reversion method */
+#endif /* ALLOW_RECONFIGURE */
+    .wrapup	    = NULL,		/* no wrapup */
+    .cycle	    = 20,		/* updates per second */
 };
-/*@ -redef @*/
-#endif /* ITRAX_ENABLE */
-#endif /* NMEA_ENABLE */
-
+#endif
 #ifdef RTCM104_ENABLE
 /**************************************************************************
  *
@@ -457,78 +785,141 @@ static struct gps_type_t itrax = {
 
 static gps_mask_t rtcm104_analyze(struct gps_device_t *session)
 {
-    gpsd_report(5, "RTCM packet type 0x%02x length %d words: %s\n", 
+    rtcm_unpack(&session->gpsdata.rtcm, (char *)session->packet.isgps.buf);
+    gpsd_report(LOG_RAW, "RTCM packet type 0x%02x length %d words: %s\n",
 		session->gpsdata.rtcm.type,
 		session->gpsdata.rtcm.length+2,
-		gpsd_hexdump(session->driver.isgps.buf, (session->gpsdata.rtcm.length+2)*sizeof(isgps30bits_t)));
+		gpsd_hexdump(session->packet.isgps.buf, (session->gpsdata.rtcm.length+2)*sizeof(isgps30bits_t)));
     return RTCM_SET;
 }
 
 static struct gps_type_t rtcm104 = {
-    .typename      = "RTCM104",		/* full name of type */
+    .type_name     = "RTCM104",		/* full name of type */
     .trigger       = NULL,		/* no recognition string */
-    .channels      = 12,		/* consumer-grade GPS */
-    .probe         = NULL,		/* no probe */
-    .initializer   = NULL,		/* no initializer */
-    .get_packet    = packet_get,	/* how to get a packet */
-    .parse_packet  = rtcm104_analyze,	/* packet getter does the parsing */
+    .channels      = 0,			/* not used */
+    .probe_wakeup  = NULL,		/* no wakeup to be done before hunt */
+    .probe_detect  = NULL,		/* no probe */
+    .probe_subtype = NULL,		/* no subtypes */
+#ifdef ALLOW_RECONFIGURE
+    .configurator  = NULL,		/* no configurator */
+#endif /* ALLOW_RECONFIGURE */
+    .get_packet    = generic_get,	/* how to get a packet */
+    .parse_packet  = rtcm104_analyze,	/*  */
     .rtcm_writer   = NULL,		/* don't send RTCM data,  */
     .speed_switcher= NULL,		/* no speed switcher */
     .mode_switcher = NULL,		/* no mode switcher */
     .rate_switcher = NULL,		/* no sample-rate switcher */
     .cycle_chars   = -1,		/* not relevant, no rate switch */
-    .wrapup         = NULL,		/* no wrapup code */
-    .cycle          = 1,		/* updates every second */
+#ifdef ALLOW_RECONFIGURE
+    .revert	   = NULL,		/* no setting-reversion method */
+#endif /* ALLOW_RECONFIGURE */
+    .wrapup	   = NULL,		/* no wrapup code */
+    .cycle	   = 1,			/* updates every second */
 };
 #endif /* RTCM104_ENABLE */
 
-extern struct gps_type_t garmin_binary, sirf_binary, tsip_binary;
-extern struct gps_type_t evermore_binary, italk_binary, trueNorth;
+#ifdef GARMINTXT_ENABLE
+/**************************************************************************
+ *
+ * Garmin Simple Text protocol
+ *
+ **************************************************************************/
+
+static gps_mask_t garmintxt_parse_input(struct gps_device_t *session)
+{
+    //gpsd_report(LOG_PROG, "Garmin Simple Text packet\n");
+    return garmintxt_parse(session);
+}
+
+
+static struct gps_type_t garmintxt = {
+    .type_name     = "Garmin Simple Text",		/* full name of type */
+    .trigger       = NULL,		/* no recognition string */
+    .channels      = 0,			/* not used */
+    .probe_wakeup  = NULL,		/* no wakeup to be done before hunt */
+    .probe_detect  = NULL,		/* no probe */
+    .probe_subtype = NULL,		/* no subtypes */
+#ifdef ALLOW_RECONFIGURE
+    .configurator  = NULL,		/* no configurator */
+#endif /* ALLOW_RECONFIGURE */
+    .get_packet    = generic_get,	/* how to get a packet */
+    .parse_packet  = garmintxt_parse_input,	/*  */
+    .rtcm_writer   = NULL,		/* don't send RTCM data,  */
+    .speed_switcher= NULL,		/* no speed switcher */
+    .mode_switcher = NULL,		/* no mode switcher */
+    .rate_switcher = NULL,		/* no sample-rate switcher */
+    .cycle_chars   = -1,		/* not relevant, no rate switch */
+#ifdef ALLOW_RECONFIGURE
+    .revert	   = NULL,		/* no setting-reversion method */
+#endif /* ALLOW_RECONFIGURE */
+    .wrapup	   = NULL,		/* no wrapup code */
+    .cycle	   = 1,			/* updates every second */
+};
+#endif /* GARMINTXT_ENABLE */
+
+extern struct gps_type_t garmin_usb_binary, garmin_ser_binary;
+extern struct gps_type_t sirf_binary, tsip_binary;
+extern struct gps_type_t evermore_binary, italk_binary;
+extern struct gps_type_t navcom_binary;
 
 /*@ -nullassign @*/
 /* the point of this rigamarole is to not have to export a table size */
 static struct gps_type_t *gpsd_driver_array[] = {
 #ifdef NMEA_ENABLE
-    &nmea, 
-    &sirfII_nmea,
-#if FV18_ENABLE
+    &nmea,
+#ifdef ASHTECH_ENABLE
+    &ashtech,
+#endif /* ASHTECHV18_ENABLE */
+#ifdef FV18_ENABLE
     &fv18,
-    &garmin,
 #endif /* FV18_ENABLE */
-#if TRIPMATE_ENABLE
+#ifdef GPSCLOCK_ENABLE
+    &gpsclock,
+#endif /* GPSCLOCK_ENABLE */
+#ifdef GARMIN_ENABLE
+    &garmin,
+#endif /* GARMIN_ENABLE */
+#ifdef TRIPMATE_ENABLE
     &tripmate,
 #endif /* TRIPMATE_ENABLE */
-#if EARTHMATE_ENABLE
-    &earthmate, 
+#ifdef EARTHMATE_ENABLE
+    &earthmate,
 #endif /* EARTHMATE_ENABLE */
-#if ITRAX_ENABLE
-    &itrax, 
-#endif /* ITRAX_ENABLE */
 #endif /* NMEA_ENABLE */
 #ifdef ZODIAC_ENABLE
     &zodiac_binary,
 #endif /* ZODIAC_ENABLE */
-#if GARMIN_ENABLE
-    &garmin_binary,
+#ifdef NAVCOM_ENABLE
+    &navcom_binary,
+#endif /* NAVCOM_ENABLE */
+#ifdef UBX_ENABLE
+    &ubx_binary,
+#endif /* UBX_ENABLE */
+#ifdef GARMIN_ENABLE
+    &garmin_usb_binary,
+    &garmin_ser_binary,
 #endif /* GARMIN_ENABLE */
-#ifdef SIRFII_ENABLE
-    &sirf_binary, 
-#endif /* SIRFII_ENABLE */
+#ifdef SIRF_ENABLE
+    &sirf_binary,
+#endif /* SIRF_ENABLE */
 #ifdef TSIP_ENABLE
-    &tsip_binary, 
+    &tsip_binary,
 #endif /* TSIP_ENABLE */
 #ifdef TNT_ENABLE
     &trueNorth,
 #endif /* TSIP_ENABLE */
 #ifdef EVERMORE_ENABLE
-    &evermore_binary, 
+    &evermore_binary,
 #endif /* EVERMORE_ENABLE */
-#ifdef ITALK_ENABLE
-    &italk_binary, 
-#endif /* ITALK_ENABLE */
+#ifdef ITRAX_ENABLE
+    &italk_binary,
+#endif /* ITRAX_ENABLE */
 #ifdef RTCM104_ENABLE
-    &rtcm104, 
+    &rtcm104,
 #endif /* RTCM104_ENABLE */
+#ifdef GARMINTXT_ENABLE
+    &garmintxt,
+#endif /* GARMINTXT_ENABLE */
     NULL,
 };
 /*@ +nullassign @*/

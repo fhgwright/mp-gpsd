@@ -16,6 +16,7 @@
 
 <cmdsynopsis>
   <command>gpsfake</command>  
+      <arg choice='opt'>-1</arg>
       <arg choice='opt'>-h</arg>
       <arg choice='opt'>-b</arg>
       <arg choice='opt'>-c <replaceable>interval</replaceable></arg>
@@ -23,11 +24,13 @@
       <arg choice='opt'>-D <replaceable>debuglevel</replaceable></arg>
       <arg choice='opt'>-l</arg>
       <arg choice='opt'>-m <replaceable>monitor</replaceable></arg>
+      <arg choice='opt'>-n</arg>
       <arg choice='opt'>-o <replaceable>options</replaceable></arg>
       <arg choice='opt'>-p</arg>
       <arg choice='opt'>-r <replaceable>initcmd</replaceable></arg>
       <arg choice='opt'>-s <replaceable>speed</replaceable></arg>
-      <arg choice='opt'><replaceable>logfile</replaceable></arg>
+      <arg choice='opt'>-v</arg>
+      <arg choice='plain'><replaceable>logfile</replaceable></arg>
 </cmdsynopsis>
 </refsynopsisdiv>
 
@@ -44,9 +47,9 @@ GPS.</para>
 privileges, and can be run concurrently with a production 
 <application>gpsd</application> instance without causing problems.</para>
 
-<para>The logfile may be of NMEA, SiRF-II packets, or Zodiac packets.
-Leading lines beginning with # will be treated as comments and
-ignored.</para>
+<para>The logfile may be of NMEA, SiRF packets, TSIP packets, or
+Zodiac packets.  Leading lines beginning with # will be treated as
+comments and ignored.</para>
 
 <para>The <application>gpsd</application> instance is run in
 foreground.  The thread sending fake GPS data to the daemon 
@@ -55,16 +58,23 @@ is run in background.</para>
 </refsect1>
 <refsect1 id='options'><title>OPTIONS</title>
 
+<para>With the -1 option, the logfile is interpreted once only rather
+than repeatedly.  This option is intended to facilitate regression
+testing.</para>
+
 <para>The -b option enables a twirling-baton progress indicator
-on standard error.  At termination, it reports elaped time.</para>
+on standard error.  At termination, it reports elapsed time.</para>
 
 <para>The -c option sets the delay between sentences in
 seconds. Fractional values of seconds are legal.  The default is zero
 (no delay).</para>
 
-<para>The -l option makes the program dump a line or packet number just
-before each sentence is fed to the daemon. If the sentence is
-textual (e.g. NMEA, the text is dumped as well).</para>
+<para>The -l option makes the program dump a line or packet number
+just before each sentence is fed to the daemon. If the sentence is
+textual (e.g. NMEA), the text is dumped as well.  If not, the packet
+will be dumped in hexadecimal (except for RTCM packets, which aren't
+dumped at all).  This option is useful for checking that gpsfake is
+getting packet boundaries right.</para>
 
 <para>The -i option is for single-stepping through logfiles.  It dumps
 the line or packet number (and the sentence if the protocol is
@@ -77,19 +87,30 @@ daemon should be run.  This option is intended to be used with
 <citerefentry><refentrytitle>gdb</refentrytitle><manvolnum>1</manvolnum></citerefentry>
 and similar programs.</para>
 
-<para>The -o option specifies options to pass to the daemon.
-Passing "-n" is often useful.  The -D option passes a -D option
-to the daemon: thus -D 4 is shorthand for -o "-D 4".</para>
+<para>The -g option uses the monitor facility to run the
+<application>gpsd</application> instance within gpsfake under control
+of gdb.</para>
+
+<para>The -o option specifies options to pass to the daemon.  The -n
+option passes -n to start the daemon reading the GPS without waiting
+for a client (equivalent to -o "-n").  The -D option passes a -D
+option to the daemon: thus -D 4 is shorthand for -o "-D 4".</para>
 
 <para>The -p option dumps the NMEA and GPSD notifications generated
-by the log to standard output.  The logfile is interpreted once
-only.  (This option is intended to facilitate regression testing.)</para>
+by the log to standard output.</para>
 
 <para>The -r option specifies an initialization comand to use.  
-The defaylt is "w+r+"; "r=2" might be another interesting value.</para>
+The default is "w+r+"; "r=2" might be another interesting value.</para>
 
 <para>The -s option sets the baud rate for the slave tty.  The
 default is 4800.</para>
+
+<para>The -v option enables verbose progress reports to stderr.  It
+is mainly useful for debugging <application>gpsfake</application> itself.</para>
+
+<para>The -x option dumps packets as
+<application>gpsfake</application> gathers them.  It is mainly useful
+for debugging <application>gpsfake</application> itself.</para>
 
 <para>The -h option makes <application>gpsfake</application> print 
 a usage message and exit.</para>
@@ -112,15 +133,21 @@ daemon instance with data from specified sentence logs.</para>
 torture-test either <application>gpsd</application> itself or any
 <application>gpsd</application>-aware client application.</para>
 
+<para>Logfiles for the use with <application>gpsfake</application> can be
+retrieved using <application>gpspipe</application> and
+<application>sirfmon</application> from the gpsd distribution, or any other
+application which is able to create a compatible output.</para>
 </refsect1>
 <refsect1 id='see_also'><title>SEE ALSO</title>
 <para>
 <citerefentry><refentrytitle>gpsd</refentrytitle><manvolnum>8</manvolnum></citerefentry>,
-<citerefentry><refentrytitle>xgps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>libgps</refentrytitle><manvolnum>3</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>libgpsd</refentrytitle><manvolnum>3</manvolnum></citerefentry>,
-<citerefentry><refentrytitle>gpsprof</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
-<citerefentry><refentrytitle>gnuplot</refentrytitle><manvolnum>1</manvolnum></citerefentry>.
+<citerefentry><refentrytitle>gpsctl</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gpspipe</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gpsprof</refentrytitle><manvolnum>1</manvolnum></citerefentry>
+<citerefentry><refentrytitle>sirfmon</refentrytitle><manvolnum>1</manvolnum></citerefentry>.
 </para>
 </refsect1>
 

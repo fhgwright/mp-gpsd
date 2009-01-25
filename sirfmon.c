@@ -1,3 +1,4 @@
+/* $Id$ */
 /*
  * SiRF packet monitor, originally by Rob Janssen, PE1CHL.
  * Heavily hacked by Eric S. Raymond for use with the gpsd project.
@@ -22,20 +23,30 @@
  * sirfmon is intended to be an independent sanity check on SiRF decoding,
  * so it deliberately doesn't use much of the library. 
  */
+#include <sys/types.h>
 #include <stdio.h>
-#include <curses.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <assert.h>
+/* Cygwin has only _timezone and not timezone unless the following is set */
+#if defined(__CYGWIN__)
+#define timezonevar
+#endif /* defined(__CYGWIN__) */
 #include <time.h>
 #include <termios.h>
 #include <fcntl.h>	/* for O_RDWR */
 #include <stdarg.h>
 #include <stdbool.h>
 
-#include "config.h"
+#include "gpsd_config.h"
+#ifdef HAVE_NCURSES_H
+#include <ncurses.h>
+#else
+#include <curses.h>
+#endif /* HAVE_NCURSES_H */
 #include "gps.h"	/* for DEFAULT_GPSD_PORT; brings in PI as well */
 
 #define PUT_ORIGIN	-4
@@ -87,7 +98,7 @@ static char *verbpat[] =
 };
 /*@ +nullassign @*/
 
-static char *sbasvec[] =
+static char *dgpsvec[] =
 {
     "None",
     "SBAS",
@@ -140,14 +151,14 @@ static int nmea_send(int fd, const char *fmt, ... )
     va_start(ap, fmt) ;
     (void)vsnprintf(buf, sizeof(buf)-5, fmt, ap);
     va_end(ap);
-    strcat(buf, "*");
+    (void)strlcat(buf, "*", BUFLEN);
     nmea_add_checksum(buf);
     (void)fputs(buf, stderr);		/* so user can watch the baud hunt */
     status = (size_t)write(fd, buf, strlen(buf));
     if (status == strlen(buf)) {
 	return (int)status;
     } else {
-	perror("SiRF write");
+	perror("nmea_send");
 	return -1;
     }
 }
@@ -229,6 +240,7 @@ static void decode_sirf(unsigned char buf[], int len)
 {
     int i,j,ch,off,cn;
 
+    assert(mid27win != NULL);
     switch (buf[0])
     {
     case 0x02:		/* Measured Navigation Data */
@@ -330,7 +342,7 @@ static void decode_sirf(unsigned char buf[], int len)
 
     case 0x08:		/* 50 BPS data */
 	ch = (int)getub(buf, 1);
-	display(mid4win, ch, 27, "Y");
+	display(mid4win, ch+2, 27, "Y");
 	(void)wprintw(debugwin, "50B 0x08=");
 	subframe_enabled = true;
     	break;
@@ -361,7 +373,6 @@ static void decode_sirf(unsigned char buf[], int len)
 		(void)wprintw(mid13win, "   ");
 
 	}
-	(void)wprintw(mid13win, "\n");
 	(void)wprintw(debugwin, "VL  0x0d=");
     	break;
 
@@ -397,13 +408,13 @@ static void decode_sirf(unsigned char buf[], int len)
 	display(mid19win,13, 42, "%d", getub(buf, 63));/* Response Time Max */
 	display(mid19win,14, 42, "%d", getub(buf, 64));/* Time/Accu & Duty Cycle Priority */
 #undef YESNO
-	dispmode = !dispmode;
 	break;
 
     case 0x1b:
 	/******************************************************************
 	 Not actually documented in any published materials.
-	 Here is what Chris Kuethe got from the SiRF folks:
+	 Here is what Chris Kuethe got from the SiRF folks,
+	 (plus some corrections from the GpsPaSsion forums):
 
 	Start of message
 	----------------
@@ -419,8 +430,8 @@ static void decode_sirf(unsigned char buf[], int len)
 	Receiver Freq Hz    4 bytes
 	Bit rate BPS        1 byte
 	Status bit map      1 byte    01=Signal Valid,
-				     02=Auto frequency detect
-				     04=Auto bit rate detect
+				      02=Auto frequency detect
+				      04=Auto bit rate detect
 	Signal Magnitude    4 bytes   Note: in internal units
 	Signal Strength dB  2 bytes   derived from Signal Magnitude
 	SNR  dB             2 bytes
@@ -437,14 +448,17 @@ static void decode_sirf(unsigned char buf[], int len)
 	--------------
 	Repeated 12 times (pad with 0 if less than 12 SV corrections):
 	SVID                1 byte
-	Correction (m)      1 byte
+	Correction (cm)     2 bytes (signed short)
 
-	total               2 x 12 = 24 bytes
+	total               3 x 12 = 36 bytes
 	******************************************************************/
-	display(mid27win, 1, 14, "%d (%s)", getub(buf, 1), sbasvec[(int)getub(buf, 1)]);
+	(void)touchwin(mid27win);
+	display(mid27win, 1, 14, "                                                                                     ");
+	display(mid27win, 1, 14, "%s", dgpsvec[(int)getub(buf, 1)]);
 	for (i = j = 0; i < 12; i++) {
-	    if (/*@i1@*/getub(buf, 16+2*i) != '\0') {
-		(void)wprintw(mid27win, "%d=%d ", getub(buf, 16+2*i), getub(buf, 16+2*i+1));
+	    (void)touchwin(mid27win);
+	    if (/*@i1@*/getub(buf, 16+3*i) != '\0') {
+		(void)wprintw(mid27win, "  %d=%d", getub(buf, 16+3*i), getsw(buf, 16+3*i+1));
 		j++;
 	    }
 	}
@@ -457,6 +471,15 @@ static void decode_sirf(unsigned char buf[], int len)
     case 0x1E:	/* SV State Data */
     case 0x1F:	/* NL Initialized Data */
 	subframe_enabled = true;
+	break;
+    case 0x29:	/* Geodetic Navigation Message */
+	(void)wprintw(debugwin, "GNM 0x29=");
+	break;
+    case 0x32:	/* SBAS Parameters */
+	(void)wprintw(debugwin, "SBP 0x32=");
+	break;
+    case 0x34:	/* PPS Time */
+	(void)wprintw(debugwin, "PPS 0x34=");
 	break;
 
 #ifdef __UNUSED__
@@ -757,7 +780,7 @@ static int readword(void)
 }
 
 /*@ -globstate @*/
-static int readpkt(unsigned char *buf)
+static int readpkt(unsigned char *buf, size_t buflen)
 {
     int byte,len,csum,cnt;
     unsigned char *cp = buf;
@@ -772,6 +795,7 @@ static int readpkt(unsigned char *buf)
 	return EOF;
 
     csum = 0;
+    assert(len < (int)buflen);
     cnt = len;
 
     while (cnt-- > 0) {
@@ -921,12 +945,12 @@ int main (int argc, char **argv)
     gmt_offset = (int)tzoffset();
 
     /*@ -branchstate @*/
-    while ((option = getopt(argc, argv, "F:vh")) != -1) {
+    while ((option = getopt(argc, argv, "F:Vh")) != -1) {
 	switch (option) {
 	case 'F':
 	    controlsock = optarg;
 	    break;
-	case 'v':
+	case 'V':
 	    (void)printf("sirfmon %s\n", VERSION);
 	    exit(0);
 	case 'h': case '?': default:
@@ -962,7 +986,7 @@ int main (int argc, char **argv)
     /*@ -boolops */
     if (!arg || (arg && !slash) || (arg && colon1 && slash)) {	
 	if (!server)
-	    server = "localhost";
+	    server = "127.0.0.1";
 	devicefd = netlib_connectsock(server, port, "tcp");
 	if (devicefd < 0) {
 	    (void)fprintf(stderr, 
@@ -1003,6 +1027,10 @@ int main (int argc, char **argv)
     mid19win  = newwin(17, 50,  7, 30);
     mid27win  = newwin(4,  50, 20, 30);
     cmdwin    = newwin(2,  30, 22, 0);
+    if (mid2win==NULL || mid4win==NULL || mid6win==NULL || mid9win==NULL
+	|| mid13win==NULL || mid19win==NULL || mid27win==NULL || cmdwin==NULL)
+	goto quit;
+
     debugwin  = newwin(0,   0, 24, 0);
     (void)scrollok(debugwin, true);
     (void)wsetscrreg(debugwin, 0, LINES-21);
@@ -1024,7 +1052,7 @@ int main (int argc, char **argv)
     (void)wmove(mid2win, 2,1);
     (void)wprintw(mid2win, "Vel:                            m/s                                  climb m/s");
     (void)wmove(mid2win, 3,1);
-    (void)wprintw(mid2win, "Time:                  UTC:                Heading:                  speed m/s");
+    (void)wprintw(mid2win, "Time:                  GPS:                Heading:                  speed m/s");
     (void)wmove(mid2win, 4,1);
     (void)wprintw(mid2win, "Skew:                   TZ:                HDOP:      M1:        M2:    ");
     (void)wmove(mid2win, 5,1);
@@ -1109,7 +1137,7 @@ int main (int argc, char **argv)
 
     (void)wborder(mid27win, 0, 0, 0, 0, 0, 0, 0, 0),
     (void)wattrset(mid27win, A_BOLD);
-    display(mid27win, 1, 1, "SBAS source: ");
+    display(mid27win, 1, 1, "DGPS source: ");
     display(mid27win, 1, 31, "Corrections: ");
     display(mid27win, 3, 8, " Packet type 27 (0x1B) ");
     (void)wattrset(mid27win, A_NORMAL);
@@ -1144,6 +1172,7 @@ int main (int argc, char **argv)
 	} else {
 	    (void)touchwin(mid19win);
 	    (void)wrefresh(mid19win);
+	    (void)redrawwin(mid19win);
 	}
 	(void)wrefresh(debugwin);
 	(void)wrefresh(cmdwin);
@@ -1171,6 +1200,7 @@ int main (int argc, char **argv)
 	    } else {
 		(void)touchwin(mid19win);
 		(void)wrefresh(mid19win);
+		(void)redrawwin(mid19win);
 	    }
 	    (void)wrefresh(mid19win);
 	    (void)wrefresh(debugwin);
@@ -1284,9 +1314,7 @@ int main (int argc, char **argv)
 		goto quit;
 
 	    case 't':				/* poll navigation params */
-		putbyte(buf, 0,0x98);
-		putbyte(buf, 1,0x00);
-		(void)sendpkt(buf, 2, device);
+		dispmode = !dispmode;
 		break;
 
 	    case 'q':
@@ -1310,7 +1338,13 @@ int main (int argc, char **argv)
 	    }
 	}
 
-	if ((len = readpkt(buf)) != EOF) {
+	if (dispmode && (time(NULL) % 10 == 0)){
+	    putbyte(buf, 0,0x98);
+	    putbyte(buf, 1,0x00);
+	    (void)sendpkt(buf, 2, device);
+	}
+
+	if ((len = readpkt(buf, sizeof(buf))) != EOF) {
 	    decode_sirf(buf,len);
 	}
     }

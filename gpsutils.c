@@ -1,4 +1,6 @@
+/* $Id$ */
 /* gpsutils.c -- code shared between low-level and high-level interfaces */
+#include <sys/types.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -7,15 +9,17 @@
 #include <stdarg.h>
 #include <time.h>
 
+#include "gpsd_config.h"
 #include "gpsd.h"
 
 #define MONTHSPERYEAR	12		/* months per calendar year */
 
-void gps_clear_fix(/*@ out @*/struct gps_fix_t *fixp)
+void gps_clear_fix(/*@out@*/struct gps_fix_t *fixp)
 /* stuff a fix structure with recognizable out-of-band values */
 {
     fixp->time = NAN;
     fixp->mode = MODE_NOT_SEEN;
+    fixp->latitude = fixp->longitude = NAN;
     fixp->track = NAN;
     fixp->speed = NAN;
     fixp->climb = NAN;
@@ -28,11 +32,81 @@ void gps_clear_fix(/*@ out @*/struct gps_fix_t *fixp)
     fixp->epc = NAN;
 }
 
+unsigned int gps_valid_fields(/*@in@*/struct gps_fix_t *fixp)
+{
+    unsigned int valid = 0;
+
+    if (isnan(fixp->time) == 0)
+	valid |= TIME_SET;
+    if (fixp->mode != MODE_NOT_SEEN)
+	valid |= MODE_SET;
+    if (isnan(fixp->latitude) == 0 && isnan(fixp->longitude) == 0)
+	valid |= LATLON_SET;
+    if (isnan(fixp->altitude) == 0)
+	valid |= ALTITUDE_SET;
+    if (isnan(fixp->track) == 0)
+	valid |= TRACK_SET;
+    if (isnan(fixp->speed) == 0)
+	valid |= SPEED_SET;
+    if (isnan(fixp->climb) == 0)
+	valid |= CLIMB_SET;
+    if (isnan(fixp->ept) == 0)
+	valid |= TIMERR_SET;
+    if (isnan(fixp->eph) == 0)
+	valid |= HERR_SET;
+    if (isnan(fixp->epv) == 0)
+	valid |= VERR_SET;
+    if (isnan(fixp->epd) == 0)
+	valid |= TRACKERR_SET;
+    if (isnan(fixp->eps) == 0)
+	valid |= SPEEDERR_SET;
+    if (isnan(fixp->epc) == 0)
+	valid |= CLIMBERR_SET;
+    return valid;
+}
+
+char *gps_show_transfer(int transfer)
+{
+/*@ -statictrans @*/
+    static char showbuf[100];
+    showbuf[0] = '\0';
+    if ((transfer & TIME_SET)!=0)
+	(void)strlcat(showbuf, "time,", sizeof(showbuf));
+    if ((transfer & LATLON_SET)!=0)
+	(void)strlcat(showbuf, "latlon,", sizeof(showbuf));
+    if ((transfer & MODE_SET)!=0)
+	(void)strlcat(showbuf, "mode,", sizeof(showbuf));
+    if ((transfer & ALTITUDE_SET)!=0)
+	(void)strlcat(showbuf, "altitude,", sizeof(showbuf));
+    if ((transfer & TRACK_SET)!=0)
+	(void)strlcat(showbuf, "track,", sizeof(showbuf));
+    if ((transfer & SPEED_SET)!=0)
+	(void)strlcat(showbuf, "speed,", sizeof(showbuf));
+    if ((transfer & CLIMB_SET)!=0)
+	(void)strlcat(showbuf, "climb,", sizeof(showbuf));
+    if ((transfer & TIMERR_SET)!=0)
+	(void)strlcat(showbuf, "timerr,", sizeof(showbuf));
+    if ((transfer & HERR_SET)!=0)
+	(void)strlcat(showbuf, "herr,", sizeof(showbuf));
+    if ((transfer & VERR_SET)!=0)
+	(void)strlcat(showbuf, "verr,", sizeof(showbuf));
+    if ((transfer & SPEEDERR_SET)!=0)
+	(void)strlcat(showbuf, "speederr,", sizeof(showbuf));
+    if ((transfer & CLIMBERR_SET)!=0)
+	(void)strlcat(showbuf, "climberr,", sizeof(showbuf));
+    if (strlen(showbuf)>0)
+	showbuf[strlen(showbuf)-1] = '\0';
+    return showbuf;
+/*@ +statictrans @*/
+}
+
 void gps_merge_fix(/*@ out @*/struct gps_fix_t *to,
 		   gps_mask_t transfer,
 		   /*@ in @*/struct gps_fix_t *from)
 /* merge new data into an old fix */
 {
+    if ((NULL == to) || (NULL == from))
+	return;
     if ((transfer & TIME_SET)!=0)
 	to->time = from->time;
     if ((transfer & LATLON_SET)!=0) {
@@ -82,6 +156,9 @@ time_t mkgmtime(register struct tm *t)
     result += (year - 1968) / 4;
     result -= (year - 1900) / 100;
     result += (year - 1600) / 400;
+    if ((year % 4) == 0 && ((year % 100) != 0 || (year % 400) == 0) &&
+	(t->tm_mon % MONTHSPERYEAR) < 2)
+	     result--;
     result += t->tm_mday - 1;
     result *= 24;
     result += t->tm_hour;
@@ -108,25 +185,24 @@ double iso8601_to_unix(/*@in@*/char *isotime)
     return (double)mkgmtime(&tm) + usec;
 }
 
-/*@observer@*/char *unix_to_iso8601(double fixtime, /*@ out @*/char isotime[], int len)
+/*@observer@*/char *unix_to_iso8601(double fixtime, /*@ out @*/char isotime[], size_t len)
 /* Unix UTC time to ISO8601, no timezone adjustment */
+/* example: 2007-12-11T23:38:51.0Z */
 {
     struct tm when;
     double integral, fractional;
     time_t intfixtime;
-    size_t slen;
+    char timestr[30];
+    char fractstr[10];
 
     fractional = modf(fixtime, &integral);
     intfixtime = (time_t)integral;
     (void)gmtime_r(&intfixtime, &when);
 
-    (void)strftime(isotime, 28, "%Y-%m-%dT%H:%M:%S", &when);
-    slen = strlen(isotime);
-    (void)snprintf(isotime + slen, (size_t)len, "%.1f", fractional);
-    /*@ -aliasunique @*/
-    (void)memcpy(isotime+slen, isotime+slen+1, strlen(isotime+slen+1));
-    /*@ -aliasunique @*/
-    (void)strcat(isotime, "Z");
+    (void)strftime(timestr, sizeof(timestr), "%Y-%m-%dT%H:%M:%S", &when);
+    (void)snprintf(fractstr, sizeof(fractstr), "%.1f", fractional);
+    /* add fractional part, ignore leading 0; "0.2" -> ".2" */ 
+    (void)snprintf(isotime, len, "%s%sZ", timestr, fractstr+1);
     return isotime;
 }
 
@@ -210,19 +286,19 @@ double earth_distance(double lat1, double lon1, double lat2, double lon2)
     double a = (x1*x2 + y1*y2 + z1*z2)/pow(CalcRad((lat1+lat2)/2),2);
     // a should be in [1, -1] but can sometimes fall outside it by
     // a very small amount due to rounding errors in the preceding
-    // calculations (this is prone to happen when the argument points
-    // are very close together).  Thus we constrain it here.
+    // calculations.  This is prone to happen when the argument points
+    // are very close together.  Return NaN so calculations trying
+    // to use this will also blow up.
     if (fabs(a) > 1) 
-	a = 1;
-    else if (a < -1) 
-	a = -1;
-    return CalcRad((lat1+lat2) / 2) * acos(a);
+	return NAN;
+    else
+	return CalcRad((lat1+lat2) / 2) * acos(a);
 }
 
 /*****************************************************************************
 
 Carl Carter of SiRF supplied this algorithm for computing DOPs from 
-a list of visible satellites...
+a list of visible satellites (some typos corrected)...
 
 For satellite n, let az(n) = azimuth angle from North and el(n) be elevation.
 Let:
@@ -247,10 +323,10 @@ And its transpose A~:
 
 Compute the covariance matrix (A~*A)^-1, which is guaranteed symmetric:
 
-    | s(x)^2    s(x)*s(y)  s(x)*s(z)  s(x)*s(t) | 
-    | s(x)*s(y) s(y)^2     s(y)*s(z)  s(y)*s(t) |
-    | s(z)*s(t) s(y)*s(z)  s(z)^2     s(z)*s(t) |
-    | s(x)*s(t) s(y)*s(t)  s(z)*s(t)  s(z)^2    |
+    | s(x)^2    s(x)*s(y)  s(x)*s(z)  s(x)*s(t) |
+    | s(y)*s(x) s(y)^2     s(y)*s(z)  s(y)*s(t) |
+    | s(z)*s(x) s(z)*s(y)  s(z)^2     s(z)*s(t) |
+    | s(t)*s(x) s(t)*s(y)  s(t)*s(z)  s(t)^2    |
 
 Then:
 
@@ -258,7 +334,7 @@ GDOP = sqrt(s(x)^2 + s(y)^2 + s(z)^2 + s(t)^2)
 TDOP = sqrt(s(t)^2)
 PDOP = sqrt(s(x)^2 + s(y)^2 + s(z)^2)
 HDOP = sqrt(s(x)^2 + s(y)^2)
-VDOP = sqrt(s(y)^2)
+VDOP = sqrt(s(z)^2)
 
 Here's how we implement it...
 
@@ -308,7 +384,7 @@ driver.
 ******************************************************************************/
 
 /*@ -fixedformalarray -mustdefine @*/
-static int invert(double mat[4][4], /*@out@*/double inverse[4][4])
+static bool invert(double mat[4][4], /*@out@*/double inverse[4][4])
 {
   // Find all NECESSARY 2x2 subdeterminants
   double Det2_12_01 = mat[1][0]*mat[2][1] - mat[1][1]*mat[2][0];
@@ -371,9 +447,9 @@ static int invert(double mat[4][4], /*@out@*/double inverse[4][4])
 		+ mat[0][2]*Det3_123_013 
 		- mat[0][3]*Det3_123_012;
 
-  // ??? Should the test be made: fabs(det) <= epsilon ???
-  if (det == 0.0)
-      return 0;
+  // Very small determinants probably reflect floating-point fuzz near zero
+  if (fabs(det) < 0.0001)
+      return false;
 
   inverse[0][0] =  Det3_123_123 / det;
   //inverse[0][1] = -Det3_023_123 / det;
@@ -395,7 +471,7 @@ static int invert(double mat[4][4], /*@out@*/double inverse[4][4])
   //inverse[3][2] = -Det3_013_012 / det;
   inverse[3][3] =  Det3_012_012 / det;
 
-  return 1;
+  return true;
 }  
 /*@ +fixedformalarray +mustdefine @*/
 
@@ -404,19 +480,21 @@ gps_mask_t dop(struct gps_data_t *gpsdata)
     double prod[4][4];
     double inv[4][4];
     double satpos[MAXCHANNELS][4];
+    double hdop, vdop, pdop, tdop, gdop;
+    gps_mask_t mask;
     int i, j, k, n;
 
 #ifdef __UNUSED__
-    gpsd_report(0, "Satellite picture:\n");
-    for (k = 0; k < gpsdata->device_type.channels; k++) {
+    gpsd_report(LOG_INF, "Satellite picture:\n");
+    for (k = 0; k < MAXCHANNELS; k++) {
 	if (gpsdata->used[k])
-	    gpsd_report(0, "az: %d el: %d  SV: %d\n",
+	    gpsd_report(LOG_INF, "az: %d el: %d  SV: %d\n",
 			gpsdata->azimuth[k], gpsdata->elevation[k], gpsdata->used[k]);
     }
 #endif /* __UNUSED__ */
 
     for (n = k = 0; k < gpsdata->satellites_used; k++) {
-	if (gpsdata->used[k] != 0)
+	if (gpsdata->used[k] == 0)
 	    continue;
 	satpos[n][0] = sin(gpsdata->azimuth[k]*DEG_2_RAD)
 	    * cos(gpsdata->elevation[k]*DEG_2_RAD);
@@ -428,9 +506,9 @@ gps_mask_t dop(struct gps_data_t *gpsdata)
     }
 
 #ifdef __UNUSED__
-    gpsd_report(0, "Line-of-sight matrix:\n");
+    gpsd_report(LOG_INF, "Line-of-sight matrix:\n");
     for (k = 0; k < n; k++) {
-	gpsd_report(0, "%f %f %f %f\n",
+	gpsd_report(LOG_INF, "%f %f %f %f\n",
 		    satpos[k][0], satpos[k][1], satpos[k][2], satpos[k][3]);
     }
 #endif /* __UNUSED__ */
@@ -445,35 +523,68 @@ gps_mask_t dop(struct gps_data_t *gpsdata)
     }
 
 #ifdef __UNUSED__
-    gpsd_report(0, "product:\n");
+    gpsd_report(LOG_INF, "product:\n");
     for (k = 0; k < 4; k++) {
-	gpsd_report(0, "%f %f %f %f\n",
+	gpsd_report(LOG_INF, "%f %f %f %f\n",
 		    prod[k][0], prod[k][1], prod[k][2], prod[k][3]);
     }
 #endif /* __UNUSED__ */
 
     if (invert(prod, inv)) {
 #ifdef __UNUSED__
-	gpsd_report(0, "inverse:\n");
+	/*
+	 * Note: this will print garbage unless all the subdeterminants
+	 * are computed in the invert() function.
+	 */
+	gpsd_report(LOG_RAW, "inverse:\n");
 	for (k = 0; k < 4; k++) {
-	    gpsd_report(0, "%f %f %f %f\n",
+	    gpsd_report(LOG_RAW, "%f %f %f %f\n",
 			inv[k][0], inv[k][1], inv[k][2], inv[k][3]);
 	}
-	gpsd_report(1, "HDOP: reported = %f, computed = %f\n",
+	gpsd_report(LOG_INF, "HDOP: reported = %f, computed = %f\n",
 		    gpsdata->hdop, sqrt(inv[0][0] + inv[1][1]));
 #endif /* __UNUSED__ */
     } else {
-	gpsd_report(1, "LOS matrix is singular, can't calculate DOPs.\n");
+	gpsd_report(LOG_WARN, "LOS matrix is singular, can't calculate DOPs.\n");
 	return 0;
     }
 
+    hdop = sqrt(inv[0][0] + inv[1][1]);
+    vdop = sqrt(inv[2][2]);
+    pdop = sqrt(inv[0][0] + inv[1][1] + inv[2][2]);
+    tdop = sqrt(inv[3][3]);
+    gdop = sqrt(inv[0][0] + inv[1][1] + inv[2][2] + inv[3][3]);
+    mask = 0;
+
+    gpsd_report(LOG_PROG, "DOPS computed/reported: H=%f/%f, V=%f/%f, P=%f/%f, T=%f/%f, G=%f/%f\n",
+		hdop, gpsdata->hdop,
+		vdop, gpsdata->vdop,
+		pdop, gpsdata->pdop,
+		tdop, gpsdata->tdop,
+		gdop, gpsdata->gdop);
+
     /*@ -usedef @*/
-    //gpsdata->hdop = sqrt(inv[0][0] + inv[1][1]);
-    gpsdata->vdop = sqrt(inv[1][1]);
-    gpsdata->pdop = sqrt(inv[0][0] + inv[1][1] + inv[2][2]);
-    gpsdata->tdop = sqrt(inv[3][3]);
-    gpsdata->gdop = sqrt(inv[0][0] + inv[1][1] + inv[2][2] + inv[3][3]);
+    if (isnan(gpsdata->hdop)!=0) {
+	gpsdata->hdop = hdop;
+	mask |= HDOP_SET;
+    }
+    if (isnan(gpsdata->vdop)!=0) {
+	gpsdata->vdop = vdop;
+	mask |= VDOP_SET;
+    }
+    if (isnan(gpsdata->pdop)!=0) {
+	gpsdata->pdop = pdop;
+	mask |= PDOP_SET;
+    }
+    if (isnan(gpsdata->tdop)!=0) {
+	gpsdata->tdop = tdop;
+	mask |= TDOP_SET;
+    }
+    if (isnan(gpsdata->gdop)!=0) {
+	gpsdata->gdop = gdop;
+	mask |= GDOP_SET;
+    }
     /*@ +usedef @*/
 
-    return VDOP_SET | PDOP_SET | TDOP_SET | GDOP_SET;
+    return mask;
 }

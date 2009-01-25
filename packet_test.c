@@ -1,13 +1,14 @@
+/* $Id$ */
+#include <sys/types.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
-#include <sys/types.h>
 #include <stdarg.h>
 #include <getopt.h>
-#include "config.h"
+#include "gpsd_config.h"
 #include "gpsd.h"
 
 static int verbose = 0;
@@ -201,26 +202,26 @@ static struct map tests[] = {
 
 static int packet_test(struct map *mp)
 {
-    struct gps_device_t state;
+    struct gps_packet_t packet;
     ssize_t st;
     int failure = 0;
 
-    state.packet_type = BAD_PACKET;
-    state.packet_state = 0;
-    state.inbuflen = 0;
-    /*@i@*/memcpy(state.inbufptr = state.inbuffer, mp->test, mp->testlen);
-    /*@ -compdef -uniondef -usedef @*/
-    st = packet_parse(&state, mp->testlen);
-    if (state.packet_type != mp->type)
-	printf("%2d: %s test FAILED (packet type %d wrong).\n", mp-tests+1, mp->legend, state.packet_type);
-    else if (memcmp(mp->test + mp->garbage_offset, state.outbuffer, state.outbuflen)) {
-	printf("%2d: %s test FAILED (data garbled).\n", mp-tests+1, mp->legend);
+    packet.type = BAD_PACKET;
+    packet.state = 0;
+    packet.inbuflen = 0;
+    /*@i@*/memcpy(packet.inbufptr = packet.inbuffer, mp->test, mp->testlen);
+    /*@ -compdef -uniondef -usedef -formatcode @*/
+    st = packet_parse(&packet, mp->testlen);
+    if (packet.type != mp->type)
+	printf("%2zi: %s test FAILED (packet type %d wrong).\n", mp-tests+1, mp->legend, packet.type);
+    else if (memcmp(mp->test + mp->garbage_offset, packet.outbuffer, packet.outbuflen)) {
+	printf("%2zi: %s test FAILED (data garbled).\n", mp-tests+1, mp->legend);
 	++failure;
     } else
-	printf("%2d: %s test succeeded.\n", mp-tests+1, mp->legend);
+	printf("%2zi: %s test succeeded.\n", mp-tests+1, mp->legend);
 #ifdef DUMPIT
-    for (cp = state.outbuffer; 
-	 cp < state.outbuffer + state.outbuflen; 
+    for (cp = packet.outbuffer; 
+	 cp < packet.outbuffer + packet.outbuflen; 
 	 cp++) {
 	if (st != NMEA_PACKET)
 	    (void)printf(" 0x%02x", *cp);
@@ -235,7 +236,7 @@ static int packet_test(struct map *mp)
     }
     (void)putchar('\n');
 #endif /* DUMPIT */
-    /*@ +compdef +uniondef +usedef @*/
+    /*@ +compdef +uniondef +usedef +formatcode @*/
 
     return failure;
 }
@@ -247,7 +248,7 @@ int main(int argc, char *argv[])
     int option, singletest = 0;
 
     verbose = 0;
-    while ((option = getopt(argc, argv, "t:v:")) != -1) {
+    while ((option = getopt(argc, argv, "Vt:v:")) != -1) {
 	switch (option) {
 	case 't':
 	    singletest = atoi(optarg);
@@ -255,6 +256,9 @@ int main(int argc, char *argv[])
 	case 'v':
 	    verbose = atoi(optarg); 
 	    break;
+	case 'V':
+	    (void)fprintf(stderr, "SVN ID: $Id$ \n");
+	    exit(0);
 	}
     }
 

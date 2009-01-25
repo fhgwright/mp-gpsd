@@ -1,8 +1,8 @@
 This is a list of NMEA 0183 sentences with field descriptions.
-It is primarily intended to help people undestand GPS reports.
+It is primarily intended to help people understand GPS reports.
 
-It may originally have been redacted from the document cited as
-[NMEA200]; see the list of sources at the end of this document.
+This list may originally have been redacted from the document cited as
+[NMEA2000]; see the list of sources at the end of this document.
 The official NMEA standard was not consulted at any point, thus this
 document is not a derivative work of that standard and is not
 controlled by the rapacious lawyers of NMEA.
@@ -17,8 +17,10 @@ information on the following topics:
 * New documentation on BWC, DTM, GBS, GRS, GST, MSK, and MSS sentences.
 * Sentence examples merged from [GIDS]
 * Sentence explanations from [GIDS] and elsewhere
-* Corrected badly mangled GPZDA description.
+* Corrected badly mangled ZDA description.
+* Corrected DPT titling
 * Common talker IDs
+* Sentences HFB, ITS, TPC, TDS, TFI, TPC, TPR, TPT from [GLOBALSAT].
 
 Many of these are only emitted by high-end maritime navigation systems.
 Most GPS sensors emit only RMC, GSA, GSV, GLL, and VTG.  Note that the
@@ -67,7 +69,8 @@ ASCII, the high bit is not used.
 
 It appears there is an international standard, IEC 61162-1, published
 in 2000, that is essentially NMEA 0183.  [IEC] says "is closely
-aligned with NMEA 0183 version 2.30".
+aligned with NMEA 0183 version 2.30".  Unfortunately, it costs money
+and is not redistributable.
 
 Here are the NMEA-standard sentences.  The names are listed without the
 "talker ID", a two-character prefix that identifies the type of the 
@@ -78,7 +81,7 @@ are well known:
 		GP      Global Positioning System receiver
 		LC      Loran-C receiver
 		II      Integrated Instrumentation
-		IN	Integrated Nvigation
+		IN	Integrated Navigation
 		EC      Electronic Chart Display & Information System (ECDIS)
 		CD	Digital Selective Calling (DSC)
 
@@ -539,7 +542,7 @@ Example 2: $GPBWC,220516,5130.02,N,00046.34,W,213.8,T,218.0,M,0004.6,N,EGLM*11
 
 ------------------------------------------------------------------------------
 
- DPT - Heading - Deviation & Variation
+ DPT - Depth of Water
 
         1   2   3
         |   |   |
@@ -551,6 +554,10 @@ Example 2: $GPBWC,220516,5130.02,N,00046.34,W,213.8,T,218.0,M,0004.6,N,EGLM*11
      positive means distance from tansducer to water line
      negative means distance from transducer to keel
   3) Checksum
+
+This sentence was incorrectly titled "Heading - Deviation & Variation"
+in [NMEA2000].  It's documented at
+<http://www.humminbird.com/normal.asp?id=853>
 
 ------------------------------------------------------------------------------
 
@@ -601,7 +608,7 @@ GBS - GPS Satellite Fault Detection
   3) Expected error in longitude (meters)
   4) Expected error in altitude (meters)
   5) PRN of most likely failed satellite
-  6) Probability of misse detection for most likely failed satellite
+  6) Probability of missed detection for most likely failed satellite
   7) Estimate of bias in meters on most likely failed satellite
   8) Standard deviation of bias estimate
   9) Checksum
@@ -750,6 +757,8 @@ Example: $GPGRS,024603.00,1,-1.8,-2.7,0.3,,,,,,,,,*6C
 
  Field Number: 
   1) Selection mode
+	       M=Manual, forced to operate in 2D or 3D
+	       A=Automatic, 3D/2D
   2) Mode (1 = no fix, 2 = 2D fix, 3 = 3D fix)
   3) ID of 1st satellite used for fix
   4) ID of 2nd satellite used for fix
@@ -783,20 +792,27 @@ Typically they're shipped in a group of 2 or 3.
  $--GSV,x,x,x,x,x,x,x,...*hh<CR><LF>
 
  Field Number: 
-  1) total number of messages
-  2) message number
-  3) satellites in view
-  4) satellite number
-  5) elevation in degrees (0-90)
-  6) azimuth in degrees to true north (0-359)
-  7) SNR in dB (0-99)
-  more satellite infos like 4)-7)
+  1) total number of GSV messages to be transmitted in this group
+  2) 1-origin number of this GSV message  within current group
+  3) total number of satellites in view (leading zeros sent)
+  4) satellite PRN number (leading zeros sent)
+  5) elevation in degrees (00-90) (leading zeros sent)
+  6) azimuth in degrees to true north (000-359) (leading zeros sent)
+  7) SNR in dB (00-99) (leading zeros sent)
+  more satellite info quadruples like 4-7
   n) checksum
 
 Example:
     $GPGSV,3,1,11,03,03,111,00,04,15,270,00,06,01,010,00,13,06,292,00*74
     $GPGSV,3,2,11,14,25,170,00,16,57,208,39,18,67,296,40,19,40,246,00*74
     $GPGSV,3,3,11,22,42,067,42,24,14,311,43,27,05,244,00,,,,*4D
+
+Some GPS receivers may emit more than 12 quadruples (more than three
+GPGSV sentences), even though NMEA-0813 doesn't allow this.  (The
+extras might be WAAS satellites, for example.) Receivers may also
+report quads for satellites they aren't tracking, in which case the
+SNR field will be null; we don't know whether this is formally allowed
+or not.
 
 ------------------------------------------------------------------------------
 
@@ -885,6 +901,23 @@ producing true heading.
 
 ------------------------------------------------------------------------------
 
+ HFB - Trawl Headrope to Footrope and Bottom
+
+         1  2  3  4 5
+         |  |  |  | |
+ $--HFB,x.x,M,y.y,M*hh<CR><LF>
+
+ Field Number: 
+  1) Distance from headrope to footrope
+  2) Meters (0-100)
+  3) Distance from headrope to bottom
+  4) Meters (0-100)
+  5) Checksum
+
+From [GLOBALSAT]. Shown with a "@II" leader rather than "$GP".
+
+------------------------------------------------------------------------------
+
  HSC - Heading Steering Command
 
         1   2 3   4  5
@@ -897,6 +930,25 @@ producing true heading.
   3) Heading Degrees, Magnetic
   4) M = Magnetic
   5) Checksum
+
+[GLOBALSAT] describes a completely different meaning for this
+sentence, having to do with water temperature sensors.  It is 
+unclear which is correct.
+
+------------------------------------------------------------------------------
+
+ ITS - Trawl Door Spread 2 Distance
+
+         1  2 3
+         |  | |
+ $--ITS,x.x,M*hh<CR><LF>
+
+ Field Number)
+  1) Second spread distance
+  2) Meters
+  3) Checksum.
+
+From [GLOBALSAT]. Shown with a "@II" leader rather than "$GP".
 
 ------------------------------------------------------------------------------
 
@@ -956,7 +1008,7 @@ producing true heading.
 
 ------------------------------------------------------------------------------
 
- MTW - Water Temperature
+ MTW - Mean Temperature of Water 
 
         1   2 3
         |   | | 
@@ -966,6 +1018,9 @@ producing true heading.
   1) Degrees
   2) Unit of Measurement, Celcius
   3) Checksum
+
+[GLOBALSAT] lists this as "Meteorological Temperature of Water",
+which is probably incorrect.
 
 ------------------------------------------------------------------------------
 
@@ -1224,6 +1279,98 @@ and produces a single output.
 
 ------------------------------------------------------------------------------
 
+ TDS - Trawl Door Spread Distance
+
+         1  2 3
+         |  | |
+ $--TDS,x.x,M*hh<CR><LF>
+
+ Field Number)
+  1) Distance between trawl doors
+  2) Meters (0-300)
+  3) Checksum.
+
+From [GLOBALSAT].  Shown with a "@II" leader rather than "$GP".
+
+------------------------------------------------------------------------------
+
+ TFI - Trawl Filling Indicator
+
+        1 2 3 4
+        | | | |
+ $--TFI,x,y,z*hh<CR><LF>
+
+ Field number:
+  1) Catch sensor #1 (0 = off, 1 = on, 2 = no answer)
+  2) Catch sensor #2 (0 = off, 1 = on, 2 = no answer)
+  3) Catch sensor #3 (0 = off, 1 = on, 2 = no answer)
+
+From [GLOBALSAT].  Shown with a "@II" leader rather than "$GP".
+
+------------------------------------------------------------------------------
+
+ TPC - Trawl Position Cartesian Coordinates
+
+        1 2 3 4  5  6 7
+        | | | |  |  | |
+ $--TPC,x,M,y,P,z.z,M*hh,<CR><LF>
+
+ Field Number:
+  1) Horizontal distance from the vessel center line
+  2) Meters 
+  3) Horizontal distance from the transducer to the trawl along the
+     vessel center line. The value is normally positive assuming the 
+     trawl is located behind the vessel.
+  4) Meters
+  5) Depth of the trawl below the surface
+  6) Meters
+  7) Checksum
+
+From [GLOBALSAT]. Shown with a "@II" leader rather than "$GP".
+This entry actually merges their TPC description with another
+entry labeled (apparently incorrectly) TPT, which differs from the
+TPT shown below.
+
+------------------------------------------------------------------------------
+
+ TPR - Trawl Position Relative Vessel
+
+        1 2 3 4  5  6 7
+        | | | |  |  | |
+ $--TPR,x,M,y,P,z.z,M*hh,<CR><LF>
+
+ Field Number:
+  1) Horizontal range relative to target
+  2) Meters (0-4000)
+  3) Bearing to target relative to vessel heading.  Resolution is one degree.
+  4) Separator
+  5) Depth of trawl below the surface
+  6) Meters (0-2000)
+  7) Checksum
+
+From [GLOBALSAT]. Shown with a "@II" leader rather than "$GP".
+
+------------------------------------------------------------------------------
+
+ TPT - Trawl Position True
+
+        1 2 3 4  5  6 7
+        | | | |  |  | |
+ $--TPT,x,M,y,P,z.z,M*hh,<CR><LF>
+
+ Field Number:
+  1) Horizontal range relative to target
+  2) Meters (0-4000)
+  3) True bearing to taget (ie. relative north).  Resolution is one degree.
+  4) Separator
+  5) Depth of trawl below the surface
+  6) Meters (0-2000)
+  7) Checksum
+
+From [GLOBALSAT]. Shown with a "@II" leader rather than "$GP".
+
+------------------------------------------------------------------------------
+
  TRF - TRANSIT Fix Data
                                                                     13
         1         2      3       4 5        6 7   8   9   10  11  12|
@@ -1257,11 +1404,11 @@ and produces a single output.
  $--TTM,xx,x.x,x.x,a,x.x,x.x,a,x.x,x.x,a,c--c,a,a*hh<CR><LF>
 
  Field Number: 
-  1) Target Number
+  1) Target Number (0-99)
   2) Target Distance
   3) Bearing from own ship
   4) Bearing Units
-  5) Target speed
+  5) Target Speed
   6) Target Course
   7) Course Units
   8) Distance of closest-point-of-approach
@@ -1271,6 +1418,10 @@ and produces a single output.
  12) Target Status
  13) Reference Target
  14) Checksum
+
+[GLOBALSAT] gives this in a slightly different form, with 14th and
+15th fields conveying time of observation and whether target
+acquisition was automatic or manual.
 
 ------------------------------------------------------------------------------
 
@@ -1324,6 +1475,10 @@ and produces a single output.
   7) Kilometers (speed of vessel relative to the water)
   8) K = Kilometers
   9) Checksum
+
+[GLOBALSAT] describes a different format in which the first three
+fields are water-temperature measurements.  It's not clear which 
+is correct.
 
 ------------------------------------------------------------------------------
 
@@ -1391,6 +1546,9 @@ Note: in some older versions of NMEA 0183, the sentence looks like this:
 The two forms can be distinguished by field 2, which will be
 the fixed text 'T' in the newer form.  The new form appears
 to have been introduced with NMEA 3.01 in 2002.
+
+Some devices, such as those described in [GLOBALSAT], leave the
+magnetic-bearing fields 3 and 4 empty.
 
 ------------------------------------------------------------------------------
 
@@ -1578,11 +1736,11 @@ ZDL - Time and Distance to Variable Point
 
 Vendor extensions (this list is very incomplete):
 
-Garmin Estimated Error
+ PGRME - Garmin Estimated Error
 
         1  2  3  4  5  6  7
         |  |  |  |  |  |  |
-$PGRME,hhh,M,vvv,M,ttt,M*hh<CR><LF>
+ $PGRME,hhh,M,vvv,M,ttt,M*hh<CR><LF>
 
  Field Number: 
    1) Estimated horizontal position error (HPE), 
@@ -1597,11 +1755,11 @@ Example: $PGRME,15.0,M,45.0,M,25.0,M*22
 
 ------------------------------------------------------------------------------
 
-Magellan Status
+ PMGNST - Magellan Status
 
           1   2 3  4    5    6  7    8
           |   | |  |    |    |  |    |
-$PMGNST,xx.xx,m,t,nnn,xx.xx,nnn,nn,c
+ $PMGNST,xx.xx,m,t,nnn,xx.xx,nnn,nn,c
 
  Field Number: 
   1) Firmware version number?
@@ -1617,12 +1775,63 @@ $PMGNST,xx.xx,m,t,nnn,xx.xx,nnn,nn,c
 
 ------------------------------------------------------------------------------
 
+ PRWIZCH - Rockwell Channel Status
+
  $PRWIZCH,n,s,n,s,n,s,n,s,n,s,n,s,n,s,n,s,n,s,n,s,n,s,n,s,c*hh<CR><LF>
 
  Fields consist of 12 pairs of a satellite PRN followed by a 
  signal quality number in the range 0-7 (0 worst, 7 best).  
 
- Only emitted by the Zodiac (Rockwell) chipset.
+ Only emitted by the now-obsolete Zodiac (Rockwell) chipset.
+
+------------------------------------------------------------------------------
+
+ PUBX 00 - uBlox Lat/Long Position Data
+
+ $PUBX,00,hhmmss.ss,Latitude,N,Longitude,E,AltRef,NavStat,Hacc,Vacc,SOG,COG,Vvel,+ageC,HDOP,VDOP,TDOP,GU,RU,DR,*hh<CR><LF>
+
+Example:
+$PUBX,00,081350.00,4717.113210,N,00833.915187,E,546.589,G3,2.1,2.0,0.007,77.52,0+.007,,0.92,1.19,0.77,9,0,0*5F<CR><LF>
+
+Only emitted by uBlox Antaris chipset.
+
+------------------------------------------------------------------------------
+
+ PUBX 01 - uBlox UTM Position Data
+
+The $PUBX,01 is a UTM (Universal Transverse Mercator projection) version
+of the $PUBX,00 sentence.
+
+$PUBX,01,hhmmss.ss,Easting,E,Northing,N,AltMSL,NavStat,Hacc,Vacc,SOG,COG,Vvel,ag+eC,HDOP,VDOP,TDOP,GU,RU,DR,*hh<CR><LF>
+
+Example:
+$PUBX,01,075142.00,467125.245,E,5236949.763,N,498.235,G3,2.1,1.9,0.005,85.63,0.0+00,,0.78,0.90,0.52,12,0,0*65
+
+Only emitted by uBlox Antaris chipset.
+
+------------------------------------------------------------------------------
+
+ PUBX 03 - uBlox Satellite Status
+
+ $PUBX,03,GT{,ID,s,AZM,EL,SN,LK},*hh<CR><LF>
+
+Example:
+$PUBX,03,11,23,-,,,45,010,29,-,,,46,013,07,-,,,42,015,08,U,067,31,42,025,10,U,19+5,33,46,026,18,U,326,08,39,026,17,-,,,32,015,26,U,306,66,48,025,27,U,073,10,36,+026,28,U,089,61,46,024,15,-,,,39,014*0D
+
+Only emitted by uBlox Antaris chipset.
+
+(There's no PUBX 02)
+
+------------------------------------------------------------------------------
+
+ PUBX 04 - uBlox Time of Day and Clock Information
+
+$PUBX,04,hhmmss.ss,ddmmyy,UTC_TOW,week,reserved,Clk_B,Clk_D,PG,*hh<CR><LF>
+
+Example:
+$PUBX,04,073731.00,091202,113851.00,1196,113851.00,1930035,-2660.664,43,*3C<CR><+LF>
+
+Only emitted by uBlox Antaris chipset.
 
 ------------------------------------------------------------------------------
 
@@ -1631,7 +1840,7 @@ Sources:
 [NMEA2000]
     The NMEA 0183 protocol
     http://nmeatool.nmea2000.de/download/0183.pdf
-    Probably the origin of this document.
+    Probably the ancestor of this document.
 
 [DEPRIEST]
     "NMEA data"
@@ -1681,3 +1890,7 @@ Sources:
 [SEATALK]
     "SeaTalk Technical Reference"
     http://www.thomasknauf.de/seatalk.htm
+
+[GLOBALSAT]
+    "NMEA (National Marine Electronics Association) 0183 Protocol"
+    http://www.usglobalsat.com/faq_details/NMEA.htm

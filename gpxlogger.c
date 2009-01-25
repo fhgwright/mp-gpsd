@@ -1,3 +1,5 @@
+/* $Id$ */
+#include <sys/types.h>
 #include <string.h>
 #include <stdlib.h>
 #include <syslog.h>
@@ -11,14 +13,16 @@
 #include <dbus/dbus-glib.h>
 
 #include <glib/gprintf.h>
+#include "gpsd_config.h"
+#include "gps.h"
 
 DBusConnection* connection;
-FILE* gpxfile;
 
 static char *author = "Amaury Jacquot";
-static char *copyright = "GPL v 2.0";
+static char *copyright = "BSD or GPL v 2.0";
 
 static int intrack = 0;
+static int first = 1;
 static time_t tracklimit = 5; /* seconds */
 
 static struct {
@@ -42,62 +46,46 @@ static struct {
 
 
 static void print_gpx_trk_start (void) {
-	fprintf (gpxfile, " <trk>\n");
-	fprintf (gpxfile, "  <trkseg>\n");
-	fflush (gpxfile);
+	fprintf (stdout, " <trk>\n");
+	fprintf (stdout, "  <trkseg>\n");
+	fflush (stdout);
 }
 
 static void print_gpx_trk_end (void) {
-	fprintf (gpxfile, "  </trkseg>\n");
-	fprintf (gpxfile, " </trk>\n");
-	fflush (gpxfile);
+	fprintf (stdout, "  </trkseg>\n");
+	fprintf (stdout, " </trk>\n");
+	fflush (stdout);
 }
 
 static DBusHandlerResult handle_gps_fix (DBusMessage* message) {
-	DBusMessageIter	iter;
+	DBusError	error;
 	double		temp_time;
-	
-	if (!dbus_message_iter_init (message, &iter)) {
-		/* we have a problem */
-		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
-	}
 
-	/* this should be smarter :D */
-	temp_time		= dbus_message_iter_get_double (&iter);
+	dbus_error_init (&error);
+
+	dbus_message_get_args (message,
+			       &error,
+			       DBUS_TYPE_DOUBLE, &temp_time,
+			       DBUS_TYPE_INT32,	 &gpsfix.mode,
+			       DBUS_TYPE_DOUBLE, &gpsfix.ept,
+			       DBUS_TYPE_DOUBLE, &gpsfix.latitude,
+			       DBUS_TYPE_DOUBLE, &gpsfix.longitude,
+			       DBUS_TYPE_DOUBLE, &gpsfix.eph,
+			       DBUS_TYPE_DOUBLE, &gpsfix.altitude,
+			       DBUS_TYPE_DOUBLE, &gpsfix.epv,
+			       DBUS_TYPE_DOUBLE, &gpsfix.track,
+			       DBUS_TYPE_DOUBLE, &gpsfix.epd,
+			       DBUS_TYPE_DOUBLE, &gpsfix.speed,
+			       DBUS_TYPE_DOUBLE, &gpsfix.eps,
+			       DBUS_TYPE_DOUBLE, &gpsfix.climb,
+			       DBUS_TYPE_DOUBLE, &gpsfix.epc,
+			       DBUS_TYPE_INVALID);
 	gpsfix.time = floor(temp_time);
-	dbus_message_iter_next (&iter);
-	gpsfix.mode		= dbus_message_iter_get_int32 (&iter);
-	dbus_message_iter_next (&iter);
-	gpsfix.ept		= dbus_message_iter_get_double (&iter);
-	dbus_message_iter_next (&iter);
-	gpsfix.latitude		= dbus_message_iter_get_double (&iter);
-	dbus_message_iter_next (&iter);
-	gpsfix.longitude	= dbus_message_iter_get_double (&iter);
-	dbus_message_iter_next (&iter);
-	gpsfix.eph		= dbus_message_iter_get_double (&iter);
-	dbus_message_iter_next (&iter);
-	gpsfix.altitude		= dbus_message_iter_get_double (&iter);
-	dbus_message_iter_next (&iter);
-	gpsfix.epv		= dbus_message_iter_get_double (&iter);
-	dbus_message_iter_next (&iter);
-	gpsfix.track		= dbus_message_iter_get_double (&iter);
-	dbus_message_iter_next (&iter);
-	gpsfix.epd		= dbus_message_iter_get_double (&iter);
-	dbus_message_iter_next (&iter);
-	gpsfix.speed		= dbus_message_iter_get_double (&iter);
-	dbus_message_iter_next (&iter);
-	gpsfix.eps		= dbus_message_iter_get_double (&iter);
-	dbus_message_iter_next (&iter);
-	gpsfix.climb		= dbus_message_iter_get_double (&iter);
-	dbus_message_iter_next (&iter);
-	gpsfix.epc		= dbus_message_iter_get_double (&iter);
-	dbus_message_iter_next (&iter);
-	//gpsfix.separation	= dbus_message_iter_get_double (&iter);
-
+	
 	/* 
 	 * we have a fix there - log the point
 	 */
-	if (gpxfile&&(gpsfix.time!=gpsfix.old_time)&&gpsfix.mode>1) {
+	if ((gpsfix.time!=gpsfix.old_time)&&gpsfix.mode>1) {
 		struct tm 	time;
 
 		/* Make new track if the jump in time is above
@@ -105,7 +93,7 @@ static DBusHandlerResult handle_gps_fix (DBusMessage* message) {
 		 * backwards in time.  The clock sometimes jump
 		 * backward when gpsd is submitting junk on the
 		 * dbus. */
-		if (fabs(gpsfix.time - gpsfix.old_time) > tracklimit) {
+		if (fabs(gpsfix.time - gpsfix.old_time) > tracklimit && !first) {
 			print_gpx_trk_end();
 			intrack = 0;
 		}
@@ -113,47 +101,47 @@ static DBusHandlerResult handle_gps_fix (DBusMessage* message) {
 		if (!intrack) {
 			print_gpx_trk_start();
 			intrack = 1;
+			if (first)
+			    first = 0;
 		}
 		
 		gpsfix.old_time = gpsfix.time;
-		fprintf (gpxfile, "   <trkpt lat=\"%f\" lon=\"%f\">\n", gpsfix.latitude, gpsfix.longitude);
-		fprintf (gpxfile, "    <ele>%f</ele>\n", gpsfix.altitude);
+		fprintf (stdout, "   <trkpt lat=\"%f\" lon=\"%f\">\n", gpsfix.latitude, gpsfix.longitude);
+		fprintf (stdout, "    <ele>%f</ele>\n", gpsfix.altitude);
 		gmtime_r (&(gpsfix.time), &time);
-		fprintf (gpxfile, "    <time>%04d-%02d-%02dT%02d:%02d:%02dZ</time>\n",
+		fprintf (stdout, "    <time>%04d-%02d-%02dT%02d:%02d:%02dZ</time>\n",
 				time.tm_year+1900, time.tm_mon+1, time.tm_mday,
 				time.tm_hour, time.tm_min, time.tm_sec);
 		if (gpsfix.mode==1)
-			fprintf (gpxfile, "    <fix>none</fix>\n");
+			fprintf (stdout, "    <fix>none</fix>\n");
 		else
-			fprintf (gpxfile, "    <fix>%dd</fix>\n", gpsfix.mode);
-		fprintf (gpxfile, "   </trkpt>\n");
-		fflush (gpxfile);
+			fprintf (stdout, "    <fix>%dd</fix>\n", gpsfix.mode);
+		fprintf (stdout, "   </trkpt>\n");
+		fflush (stdout);
 	}
 	return DBUS_HANDLER_RESULT_HANDLED;
 }
 
 static void print_gpx_header (void) {
-	if (!gpxfile) return;
-
-	fprintf (gpxfile, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
-	fprintf (gpxfile, "<gpx version=\"1.1\" creator=\"navsys logger\"\n");
-	fprintf (gpxfile, "        xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n");
-	fprintf (gpxfile, "        xmlns=\"http://www.topografix.com/GPX/1.1\"\n");
-	fprintf (gpxfile, "        xsi:schemaLocation=\"http://www.topografix.com/GPS/1/1\n");
-	fprintf (gpxfile, "        http://www.topografix.com/GPX/1/1/gpx.xsd\">\n");
-	fprintf (gpxfile, " <metadata>\n");
-	fprintf (gpxfile, "  <name>NavSys GPS logger dump</name>\n");
-	fprintf (gpxfile, "  <author>%s</author>\n", author);
-	fprintf (gpxfile, "  <copyright>%s</copyright>\n", copyright);
-	fprintf (gpxfile, " </metadata>\n");
-	fflush (gpxfile);
+	fprintf (stdout, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
+	fprintf (stdout, "<gpx version=\"1.1\" creator=\"navsys logger\"\n");
+	fprintf (stdout, "        xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n");
+	fprintf (stdout, "        xmlns=\"http://www.topografix.com/GPX/1.1\"\n");
+	fprintf (stdout, "        xsi:schemaLocation=\"http://www.topografix.com/GPS/1/1\n");
+	fprintf (stdout, "        http://www.topografix.com/GPX/1/1/gpx.xsd\">\n");
+	fprintf (stdout, " <metadata>\n");
+	fprintf (stdout, "  <name>NavSys GPS logger dump</name>\n");
+	fprintf (stdout, "  <author>%s</author>\n", author);
+	fprintf (stdout, "  <copyright>%s</copyright>\n", copyright);
+	fprintf (stdout, " </metadata>\n");
+	fflush (stdout);
 }
 
 static void print_gpx_footer (void) {
 	if (intrack)
 		print_gpx_trk_end();
-	fprintf (gpxfile, "</gpx>\n");
-	fclose (gpxfile);
+	fprintf (stdout, "</gpx>\n");
+	fclose (stdout);
 }
 
 static void quit_handler (int signum) {
@@ -185,27 +173,16 @@ int main (int argc, char** argv) {
 	DBusError error;
 
 	/* initializes the gpsfix data structure */
-	bzero (&gpsfix, sizeof(gpsfix));
+	gps_clear_fix(&gpsfix);
 
 	/* catch all interesting signals */
 	signal (SIGTERM, quit_handler);
 	signal (SIGQUIT, quit_handler);
 	signal (SIGINT, quit_handler);
-			
+
+	//openlog ("gpxlogger", LOG_PID | LOG_NDELAY , LOG_DAEMON);
+	//syslog (LOG_INFO, "---------- STARTED ----------");
 	
-	openlog ("gpxlogger", LOG_PID | LOG_NDELAY , LOG_DAEMON);
-	syslog (LOG_INFO, "---------- STARTED ----------");
-	
-	if (argc<2) {
-		fprintf (stderr, "need the filename as an argument\n");
-		return 1;
-	}
-	
-	gpxfile = fopen (argv[1],"w");
-	if (!gpxfile) {
-		syslog (LOG_CRIT, "Unable to open destination file %s", argv[1]);
-		return 2;
-	}
 	print_gpx_header ();
 	
 	mainloop = g_main_loop_new (NULL, FALSE);

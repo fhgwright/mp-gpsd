@@ -1,9 +1,13 @@
-#include "config.h"
+/* $Id$ */
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <string.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <ctype.h>
+#include "gpsd_config.h"
+
 #if defined(HAVE_SYS_MODEM_H)
 #include <sys/modem.h>
 #endif /* HAVE_SYS_MODEM_H */
@@ -16,6 +20,34 @@
 #    define CRTSCTS 0
 #  endif /* CNEW_RTSCTS */
 #endif /* !CRTSCTS */
+
+void gpsd_tty_init(struct gps_device_t *session)
+/* to be called on allocating a device */
+{
+    /* mark GPS fd closed and its baud rate unknown */
+    session->gpsdata.gps_fd = -1;
+    session->saved_baud = -1;
+#ifdef NTPSHM_ENABLE
+    /* mark NTPD shared memory segments as unused */
+    session->shmindex = -1;
+# ifdef PPS_ENABLE
+    session->shmTimeP = -1;
+# endif /* PPS_ENABLE */
+#endif /* NTPSHM_ENABLE */
+}
+
+#if defined(__CYGWIN__)
+/* Workaround for Cygwin, which is missing cfmakeraw */
+/* Pasted from man page; added in serial.c arbitrarily */
+void cfmakeraw(struct termios *termios_p)
+{
+    termios_p->c_iflag &= ~(IGNBRK|BRKINT|PARMRK|ISTRIP|INLCR|IGNCR|ICRNL|IXON);
+    termios_p->c_oflag &= ~OPOST;
+    termios_p->c_lflag &= ~(ECHO|ECHONL|ICANON|ISIG|IEXTEN);
+    termios_p->c_cflag &= ~(CSIZE|PARENB);
+    termios_p->c_cflag |= CS8;
+}
+#endif /* defined(__CYGWIN__) */
 
 speed_t gpsd_get_speed(struct termios* ttyctl)
 {
@@ -32,6 +64,18 @@ speed_t gpsd_get_speed(struct termios* ttyctl)
     case B57600: return(57600);
     default: return(115200);
     }
+}
+
+bool gpsd_set_raw(struct gps_device_t *session)
+{
+    (void)cfmakeraw(&session->ttyset);
+    if (tcsetattr(session->gpsdata.gps_fd, TCIOFLUSH, &session->ttyset) < 0) {
+ 	gpsd_report(LOG_ERROR,
+		    "error changing port attributes: %s\n",strerror(errno));
+ 	return false;
+    }
+
+    return true;
 }
 
 void gpsd_set_speed(struct gps_device_t *session, 
@@ -80,52 +124,120 @@ void gpsd_set_speed(struct gps_device_t *session,
  	    session->ttyset.c_cflag |= PARENB | PARODD;
  	    break;
  	}
-	session->ttyset.c_cflag &=~ CSIZE;
-	session->ttyset.c_cflag |= (CSIZE & (stopbits==2 ? CS7 : CS8));
 	if (tcsetattr(session->gpsdata.gps_fd, TCSANOW, &session->ttyset) != 0)
 	    return;
+
+	/*
+	 * Serious black magic begins here.  Getting this code wrong can cause
+	 * failures to lock to a correct speed, and not clean reproducible 
+	 * failures but flukey hardware- and timing-dependent ones.  So
+	 * be very sure you know what you're doing before hacking it, and
+	 * test thoroughly.
+	 *
+	 * The fundamental problem here is that serial devices take time 
+	 * to settle into a new baud rate after tcsetattr() is issued. Until
+	 * they do so, input will be arbitarily garbled.  Normally this
+	 * is not a big problem, but in our hunt loop the garbling can trash 
+	 * a long enough prefix of each sample to prevent detection of a 
+	 * packet header.  We could address the symptom by making the sample
+	 * size enough larger that subtracting the maximum length of garble
+	 * would still leave a sample longer than the maximum packet size.  
+	 * But it's better (and more efficient) to address the disease.
+	 *
+	 * In theory, one might think that not even a tcflush() call would 
+	 * be needed, with tcsetattr() delaying its return until the device
+	 * is in a good state.  For simple devices like a 14550 UART that 
+	 * have fixed response timings this may even work, if the driver
+	 * writer was smart enough to delay the return by the right number
+	 * of milliseconds after poking the device port(s).
+	 *
+	 * Problems may arise if the driver's timings are off.  Or we may
+         * be talking to a USB device like the pl2303 commonly used in GPS
+	 * mice; on these, the change will not happen immediately because
+	 * it has to be sent as a message to the external processor that 
+	 * has to act upon it, and that processor may still have buffered 
+	 * data in its own FIFO.  In this case the expected delay may be
+	 * too large and too variable (depending on the details of how the
+	 * USB device is integrated with its symbiont hardware) to be put
+	 * in the driver.
+	 *
+	 * So, somehow, we have to introduce a delay after tcsatattr() 
+	 * returns sufficient to allow *any* device to settle.  On the other
+	 * hand, a really long delay will make gpsd device registration
+	 * unpleasantly laggy.
+	 *
+	 * The classic way to address this is with a tcflush(), counting
+	 * on it to clear the device FIFO. But that call may clear only the
+	 * kernel buffers, not the device's hardware FIFO, so it may not
+	 * be sufficient by itself.
+	 *
+	 * flush followed by a 200-millisecond delay followed by flush has
+	 * been found to work reliably on the pl2303.  It is also known
+	 * from testing that a 100-millisec delay is too short, allowing
+	 * occasional failure to lock.
+	 */
+	(void)tcflush(session->gpsdata.gps_fd, TCIOFLUSH);
+	(void)usleep(200000);
 	(void)tcflush(session->gpsdata.gps_fd, TCIOFLUSH);
     }
-    gpsd_report(1, "speed %d, %d%c%d\n", speed, 9-stopbits, parity, stopbits);
+    gpsd_report(LOG_INF, "speed %d, %d%c%d\n", speed, 9-stopbits, parity, stopbits);
 
     session->gpsdata.baudrate = (unsigned int)speed;
     session->gpsdata.parity = (unsigned int)parity;
     session->gpsdata.stopbits = stopbits;
-    packet_reset(session);
+
+    /*
+     * The device might need a wakeup string before it will send data.
+     * If we don't know the device type, ship it every driver's wakeup
+     * in hopes it will respond.
+     */
+    if (isatty(session->gpsdata.gps_fd)!=0 && !session->context->readonly) {
+	struct gps_type_t **dp;
+	if (session->device_type == NULL) {
+	    for (dp = gpsd_drivers; *dp; dp++)
+		if ((*dp)->probe_wakeup != NULL)
+		    (*dp)->probe_wakeup(session);
+	} else if (session->device_type->probe_wakeup != NULL)
+	    session->device_type->probe_wakeup(session);
+    }
+    packet_reset(&session->packet);
 }
 
 int gpsd_open(struct gps_device_t *session)
 {
-    gpsd_report(1, "opening GPS data source at '%s'\n", session->gpsdata.gps_device);
-    if ((session->gpsdata.gps_fd = open(session->gpsdata.gps_device, O_RDWR|O_NOCTTY)) < 0) {
-	gpsd_report(1, "device open failed: %s\n", strerror(errno));
-	return -1;
+    struct stat sb;
+    mode_t mode = (mode_t)O_RDWR;
+
+    /*@ -boolops @*/
+    if (session->context->readonly || ((stat(session->gpsdata.gps_device, &sb) != -1) && ((sb.st_mode & S_IFCHR) != S_IFCHR))){
+	mode = (mode_t)O_RDONLY;
+	gpsd_report(LOG_INF, "opening read-only GPS data source at '%s'\n", session->gpsdata.gps_device);
+    } else {
+	gpsd_report(LOG_INF, "opening GPS data source at '%s'\n", session->gpsdata.gps_device);
+    }
+    /*@ +boolops @*/
+
+    if ((session->gpsdata.gps_fd = open(session->gpsdata.gps_device, (int)(mode|O_NONBLOCK|O_NOCTTY))) < 0) {
+	gpsd_report(LOG_ERROR, "device open failed: %s - retrying read-only\n", strerror(errno));
+	if ((session->gpsdata.gps_fd = open(session->gpsdata.gps_device, O_RDONLY|O_NONBLOCK|O_NOCTTY)) < 0) {
+	    gpsd_report(LOG_ERROR, "read-only device open failed: %s\n", strerror(errno));
+	    return -1;
+	}
     }
 
+#ifdef FIXED_PORT_SPEED
+    session->saved_baud = FIXED_PORT_SPEED;
+#endif
+
     if (session->saved_baud != -1) {
-        /*@i@*/(void)cfsetspeed(&session->ttyset, (speed_t)session->saved_baud);
+        /*@i@*/(void)cfsetispeed(&session->ttyset, (speed_t)session->saved_baud);
+        /*@i@*/(void)cfsetospeed(&session->ttyset, (speed_t)session->saved_baud);
 	(void)tcsetattr(session->gpsdata.gps_fd, TCSANOW, &session->ttyset);
 	(void)tcflush(session->gpsdata.gps_fd, TCIOFLUSH);
     }
 
-    session->packet_type = BAD_PACKET;
+    session->packet.type = BAD_PACKET;
     if (isatty(session->gpsdata.gps_fd)!=0) {
-#ifdef NON_NMEA_ENABLE
-	struct gps_type_t **dp;
-
-	for (dp = gpsd_drivers; *dp; dp++) {
-	    (void)tcflush(session->gpsdata.gps_fd, TCIOFLUSH);  /* toss stale data */
-	    if ((*dp)->probe!=NULL && (*dp)->probe(session)!=0) {
-		gpsd_report(3, "probe found %s driver...\n", (*dp)->typename);
-		/*@i1@*/session->device_type = *dp;
-		if (session->device_type->initializer)
-		    session->device_type->initializer(session);
-		/*@i1@*/return session->gpsdata.gps_fd;
-	    }
- 	}
-	gpsd_report(3, "no probe matched...\n");
-#endif /* NON_NMEA_ENABLE */
-
 	/* Save original terminal parameters */
 	if (tcgetattr(session->gpsdata.gps_fd,&session->ttyset_old) != 0)
 	  return -1;
@@ -155,17 +267,18 @@ int gpsd_open(struct gps_device_t *session)
     return session->gpsdata.gps_fd;
 }
 
-bool gpsd_write(struct gps_device_t *session, void const *buf, size_t len)
+ssize_t gpsd_write(struct gps_device_t *session, void const *buf, size_t len)
 {
      ssize_t status;
      bool ok;
+     if (session->context->readonly)
+	return 0;
      status = write(session->gpsdata.gps_fd, buf, len);	
      ok = (status == (ssize_t)len);
      (void)tcdrain(session->gpsdata.gps_fd);
-     /* code that will check for data could be add here to print buffer as text or hex */
      /* no test here now, always print as hex */
-     gpsd_report(5, "=> GPS: %s%s\n", gpsd_hexdump(buf, len), ok?"":" FAILED");
-     return ok;
+     gpsd_report(LOG_IO, "=> GPS: %s%s\n", gpsd_hexdump(buf, len), ok?"":" FAILED");
+     return status;
 }
 
 /*
@@ -179,22 +292,56 @@ bool gpsd_write(struct gps_device_t *session, void const *buf, size_t len)
 bool gpsd_next_hunt_setting(struct gps_device_t *session)
 /* advance to the next hunt setting  */
 {
+#ifdef FIXED_PORT_SPEED
+    /* just the one fixed port speed... */
+    static unsigned int rates[] = {FIXED_PORT_SPEED};
+#else /* FIXED_PORT_SPEED not defined */
     /* every rate we're likely to see on a GPS */
-    static unsigned int rates[] = {0, 4800, 9600, 19200, 38400, 57600};
+    static unsigned int rates[] = {0, 4800, 9600, 19200, 38400, 57600, 115200};
+#endif /* FIXED_PORT_SPEED defined */
 
-    if (session->retry_counter++ >= SNIFF_RETRIES) {
-	session->retry_counter = 0;
-	if (session->baudindex++ >= (unsigned int)(sizeof(rates)/sizeof(rates[0]))) {
+    if (session->packet.retry_counter++ >= SNIFF_RETRIES) {
+	session->packet.retry_counter = 0;
+	if (session->baudindex++ >= (unsigned int)(sizeof(rates)/sizeof(rates[0]))-1) {
 	    session->baudindex = 0;
 	    if (session->gpsdata.stopbits++ >= 2)
 		return false;			/* hunt is over, no sync */
 	}
 	gpsd_set_speed(session, 
 		       rates[session->baudindex],
-		       'N', session->gpsdata.stopbits);
+		       (unsigned char)session->gpsdata.parity, 
+		       session->gpsdata.stopbits);
     }
 
     return true;	/* keep hunting */
+
+}
+
+void gpsd_assert_sync(struct gps_device_t *session)
+/* to be called when we want to register that we've synced with a device */
+{
+    /*
+     * We've achieved first sync with the device. Remember the
+     * baudrate so we can try it first next time this device
+     * is opened.
+     */
+    if (session->saved_baud == -1)
+	session->saved_baud = (int)cfgetispeed(&session->ttyset);
+
+#ifdef NTPSHM_ENABLE
+    /*
+     * Now is the right time to grab the shared memory segment(s)
+     * to communicate the navigation message derived and (possibly)
+     * 1pps derived time data to ntpd.
+     */
+
+    gpsd_report(LOG_INF, "ntpd_link_activate: %d\n",
+      (int)session->shmindex >=0 );
+    /* do not start more than one ntp thread */
+    if (!(session->shmindex >=0))
+       ntpd_link_activate(session);
+
+#endif /* NTPSHM_ENABLE */
 }
 
 void gpsd_close(struct gps_device_t *session)
@@ -215,3 +362,4 @@ void gpsd_close(struct gps_device_t *session)
 	session->gpsdata.gps_fd = -1;
     }
 }
+

@@ -3,13 +3,16 @@
 # Collect and plot latency-profiling data from a running gpsd.
 # Requires gnuplot.
 #
-import sys, os, time, getopt, gps, tempfile, time, socket, math, copy
+import sys, os, time, getopt, tempfile, time, socket, math, copy
+import gps
 
 class Baton:
     "Ship progress indication to stderr."
     def __init__(self, prompt, endmsg=None):
         self.stream = sys.stderr
-        self.stream.write(prompt + "... \010")
+        self.stream.write(prompt + "...")
+        if os.isatty(self.stream.fileno()):
+            self.stream.write(" \010")
         self.stream.flush()
         self.count = 0
         self.endmsg = endmsg
@@ -21,7 +24,7 @@ class Baton:
             return
         if ch:
             self.stream.write(ch)
-        else:
+        elif os.isatty(self.stream.fileno()):
             self.stream.write("-/|\\"[self.count % 4])
             self.stream.write("\010")
         self.count = self.count + 1
@@ -453,8 +456,8 @@ if __name__ == '__main__':
                 title = val
             elif (switch == '-h'):
                 sys.stderr.write(\
-                    "usage: gpsprof [-h] [-r] [-m threshold] [-n samplecount] \n"
-                     + "\t[-f {" + "|".join(map(lambda x: x.name, formatters)) + "}] [-s speed] [-t title] [-o file]\n")
+                    "usage: gpsprof [-h] [-m threshold] [-n samplecount] \n"
+                     + "\t[-f {" + "|".join(map(lambda x: x.name, formatters)) + "}] [-s speed] [-t title]\n")
                 sys.exit(0)
         sys.stdout.write(plotframe(await,formatter,speed,threshold,title))
     except KeyboardInterrupt:

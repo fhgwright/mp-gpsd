@@ -9,11 +9,19 @@
 import sys, os, signal, time, getopt, socket
 import gpsfake
 
+# So we can do regression tests without stepping on a production daemon
+# According to IANA port 12000 belongs to an IBM SNA service. Picking an
+# obsolete service seems safer than picking an unused number that IANA might
+# allocate in the future.
+fakeport = 12000
+
 class Baton:
     "Ship progress indications to stderr."
     def __init__(self, prompt, endmsg=None):
         self.stream = sys.stderr
-        self.stream.write(prompt + "... \010")
+        self.stream.write(prompt + "...")
+        if os.isatty(self.stream.fileno()):
+            self.stream.write(" \010")
         self.stream.flush()
         self.count = 0
         self.endmsg = endmsg
@@ -23,13 +31,14 @@ class Baton:
     def twirl(self, ch=None):
         if self.stream is None:
             return
-        if ch:
-            self.stream.write(ch)
-        else:
-            self.stream.write("-/|\\"[self.count % 4])
-            self.stream.write("\010")
+        if os.isatty(self.stream.fileno()):
+            if ch:
+                self.stream.write(ch)
+            else:
+                self.stream.write("-/|\\"[self.count % 4])
+                self.stream.write("\010")
+            self.stream.flush()
         self.count = self.count + 1
-        self.stream.flush()
         return
 
     def end(self, msg=None):
@@ -39,18 +48,31 @@ class Baton:
             self.stream.write("...(%2.2f sec) %s.\n" % (time.time() - self.time, msg))
         return
 
-(options, arguments) = getopt.getopt(sys.argv[1:], "bc:D:ghilm:o:pr:s:")
+try:
+    (options, arguments) = getopt.getopt(sys.argv[1:], "1bc:D:fghilm:no:pr:s:vx")
+except getopt.GetoptError, msg:
+    print "gpsfake: " + str(msg)
+    raise SystemExit, 1
+
+port = None
 progress = False
 cycle = 0
 monitor = ""
 speed = 4800
 linedump = False
+predump = False
 pipe = False
+singleshot = False
+flicker = False
 promptme = False
 init = "w+r+"
 doptions = ""
+verbose = False
 for (switch, val) in options:
-    if (switch == '-b'):
+    if (switch == '-1'):
+        singleshot = True
+        port = fakeport
+    elif (switch == '-b'):
         progress = True
     elif (switch == '-c'):
         cycle = float(val)
@@ -64,33 +86,51 @@ for (switch, val) in options:
         linedump = True
     elif (switch == '-m'):
         monitor = val + " "
+    elif (switch == '-n'):
+        doptions += " -n"
+    elif (switch == '-x'):
+        predump = True
     elif (switch == '-o'):
         doptions = val
     elif (switch == '-p'):
         pipe = True
-        cycle = 0.05
     elif (switch == '-r'):
-        init = val
+        if flicker:
+            init += val
+        else:
+            init = val
     elif (switch == '-s'):
         speed = int(val)
+    elif (switch == '-v'):
+        verbose = True
     elif (switch == '-h'):
         sys.stderr.write("usage: gpsfake [-h] [-l] [-m monitor] [--D debug] [-o options] [-p] [-s speed] [-c cycle] [-b] logfile\n")
         raise SystemExit,0
 logfile = arguments[0]
 
+def hexdump(s):
+    rep = ""
+    for c in s:
+        rep += "%02x" % ord(c)
+    return rep
 
 def fakehook(linenumber, fakegps):
     if linenumber % len(fakegps.testload.sentences) == 0:
-        if pipe and linenumber > 0:
+        if singleshot and linenumber > 0:
             return False
-        if not pipe:
+        if progress:
+            baton.twirl('*\010')
+        elif not singleshot:
             sys.stderr.write("gpsfake: log cycle begins.\n")
     time.sleep(cycle)
     if linedump and fakegps.testload.legend:
-        if fakegps.testload.textual:
-            ml = fakegps.testload.sentences[linenumber % len(fakegps.testload.sentences)].strip()
-        else:
-            ml = ""
+        ml = fakegps.testload.sentences[linenumber % len(fakegps.testload.sentences)].strip()
+        if not fakegps.testload.textual:
+            if fakegps.testload.idoffset != None:
+                prefix = "type %02x " % ord(ml[fakegps.testload.idoffset])
+            else:
+                prefix = ''
+            ml = prefix + hexdump(ml)
         announce = fakegps.testload.legend % (linenumber % len(fakegps.testload.sentences) + 1) + ml
         if promptme:
             raw_input(announce + "? ")
@@ -103,15 +143,22 @@ def fakehook(linenumber, fakegps):
 if progress:
     baton = Baton("Processing %s" % logfile, "done")
 
-test = gpsfake.TestSession(prefix=monitor, options=doptions)
+test = gpsfake.TestSession(prefix=monitor, port=port, options=doptions, verbose=verbose, predump=predump)
 
 if pipe:
     test.reporter = sys.stdout.write
+    #test.progress = sys.stdout.write
 
 try:
     try:
         test.gps_add(logfile, speed=speed, pred=fakehook)
+    except gpsfake.TestLoadError, e:
+        sys.stderr.write("gpsfake: " + e.msg + "\n")
+        raise SystemExit, 1
     except gpsfake.PacketError, e:
+        sys.stderr.write("gpsfake: " + e.msg + "\n")
+        raise SystemExit, 1
+    except gpsfake.DaemonError, e:
         sys.stderr.write("gpsfake: " + e.msg + "\n")
         raise SystemExit, 1
     except IOError, e:
@@ -123,8 +170,9 @@ try:
 
     try:
         test.client_add(init + "\n")
-    except socket.error:
-        sys.stderr.write("gpsfake: socket error %s.\n", msg)
+        test.run()
+    except socket.error, msg:
+        sys.stderr.write("gpsfake: socket error %s.\n" % msg)
         raise SystemExit, 1
 finally:
     test.cleanup();

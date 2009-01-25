@@ -1,3 +1,20 @@
+/* $Id$ */
+/*
+ * Copyright (c) 2005-2007 Chris Kuethe <chris.kuethe@gmail.com>
+ * Copyright (c) 2005-2007 Eric S. Raymond <esr@thyrsus.com>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
 /*
  * This is the SiRF-dependent part of the gpsflash program.
  *
@@ -46,10 +63,12 @@
  * Copyright (c) 2005 Chris Kuethe <chris.kuethe@gmail.com>
  */
 
+#include <sys/types.h>
+#include "gpsd_config.h"
 #include "gpsd.h"
 #include "gpsflash.h"
 
-#if defined(SIRFII_ENABLE) && defined(BINARY_ENABLE)
+#if defined(SIRF_ENABLE) && defined(BINARY_ENABLE)
 
 /* From the SiRF protocol manual... may as well be consistent */
 #define PROTO_SIRF 0
@@ -181,7 +200,7 @@ static int sirfProbe(int fd, char **version)
     char buf[MAX_PACKET_LENGTH];
     ssize_t status, want;
 
-    gpsd_report(4, "probing with %s\n", 
+    gpsd_report(LOG_PROG, "probing with %s\n", 
 		gpsd_hexdump(versionprobe, sizeof(versionprobe)));
     if ((status = write(fd, versionprobe, sizeof(versionprobe))) != 10)
 	return -1;
@@ -191,9 +210,9 @@ static int sirfProbe(int fd, char **version)
      * Accept either.
      */
     want = 0;
-    if (expect(fd,"\xa0\xa2\x00\x15\x06", 5, 5))
+    if (expect(fd,"\xa0\xa2\x00\x15\x06", 5, 1))
 	want = 21;
-    else if (expect(fd,"\xa0\xa2\x00\x51\x06", 5, 5)) 
+    else if (expect(fd,"\xa0\xa2\x00\x51\x06", 5, 1)) 
 	want = 81;
 
     if (want) {
@@ -204,7 +223,7 @@ static int sirfProbe(int fd, char **version)
 	    if (status == -1)
 		return -1;
 	}
-	gpsd_report(4, "%d bytes = %s\n", len, gpsd_hexdump(buf, (size_t)len));
+	gpsd_report(LOG_PROG, "%d bytes = %s\n", len, gpsd_hexdump(buf, (size_t)len));
 	*version = strdup(buf);
 	return 0;
     } else {
@@ -220,9 +239,9 @@ static int sirfPortSetup(int fd, struct termios *term)
     return sirfSetProto(fd, term, PROTO_SIRF, 38400);
 }
 
-static int sirfVersionCheck(int fd, const char *version UNUSED,
-			    const char *loader, size_t ls UNUSED,
-			    const char *firmware, size_t fs UNUSED)
+static int sirfVersionCheck(int fd UNUSED, const char *version UNUSED,
+			    const char *loader UNUSED, size_t ls UNUSED,
+			    const char *firmware UNUSED, size_t fs UNUSED)
 {
     /*
      * This implies that any SiRF loader and firmware image is good for 
@@ -234,14 +253,14 @@ static int sirfVersionCheck(int fd, const char *version UNUSED,
 static int wait2seconds(int fd UNUSED)
 {
     /* again we wait, this time for our uploaded code to start running */
-    gpsd_report(1, "waiting 2 seconds...\n");
+    gpsd_report(LOG_PROG, "waiting 2 seconds...\n");
     return (int)sleep(2);
 }
 
 static int wait5seconds(int fd UNUSED)
 {
     /* wait for firmware upload to settle in */
-    gpsd_report(1, "waiting 5 seconds...\n");
+    gpsd_report(LOG_PROG, "waiting 5 seconds...\n");
     return (int)sleep(5);
 }
 
@@ -288,4 +307,4 @@ struct flashloader_t sirf_type = {
     .stage3_command = wait5seconds,
     .port_wrapup = sirfPortWrapup,	/* after signals unblock */
 };
-#endif /* defined(SIRFII_ENABLE) && defined(BINARY_ENABLE) */
+#endif /* defined(SIRF_ENABLE) && defined(BINARY_ENABLE) */

@@ -1,3 +1,4 @@
+/* $Id$ */
 /* 
  * geoid.c -- ECEF to WGS84 conversions, including ellipsoid-to-MSL height
  *
@@ -5,8 +6,12 @@
  * ECEF conversion by Rob Janssen.
  */
 
+#include <sys/types.h>
 #include <math.h>
+#include "gpsd_config.h"
 #include "gpsd.h"
+
+static double fix_minuz(double d);
 
 static double bilinear(double x1, double y1, double x2, double y2, double x, double y, double z11, double z12, double z21, double z22)
 {
@@ -55,6 +60,14 @@ double wgs84_separation(double lat, double lon)
     ilat=(int)floor(( 90.+lat)/10);
     ilon=(int)floor((180.+lon)/10);
 	
+    /* sanity checks to prevent segfault on bad data */
+    if ( ( ilat > 90 ) || ( ilat < -90 ) ) {
+	return 0.0;
+    }
+    if ( ( ilon > 180 ) || ( ilon < -180 ) ) {
+	return 0.0;
+    }
+
     ilat1=ilat;
     ilon1=ilon;
     ilat2=(ilat < GEOID_ROW-1)? ilat+1:ilat;
@@ -92,20 +105,35 @@ void ecef_to_wgs84fix(struct gps_data_t *gpsdata,
     phi = atan2(z + e_2*b*pow(sin(theta),3),p - e2*a*pow(cos(theta),3));
     n = a / sqrt(1.0 - e2*pow(sin(phi),2));
     h = p / cos(phi) - n;
-    gpsdata->newdata.latitude = phi * RAD_2_DEG;
-    gpsdata->newdata.longitude = lambda * RAD_2_DEG;
-    gpsdata->separation = wgs84_separation(gpsdata->newdata.latitude, gpsdata->newdata.longitude);
-    gpsdata->newdata.altitude = h - gpsdata->separation;
+    gpsdata->fix.latitude = phi * RAD_2_DEG;
+    gpsdata->fix.longitude = lambda * RAD_2_DEG;
+    gpsdata->separation = wgs84_separation(gpsdata->fix.latitude, gpsdata->fix.longitude);
+    gpsdata->fix.altitude = h - gpsdata->separation;
     /* velocity computation */
     vnorth = -vx*sin(phi)*cos(lambda)-vy*sin(phi)*sin(lambda)+vz*cos(phi);
     veast = -vx*sin(lambda)+vy*cos(lambda);
-    gpsdata->newdata.climb = vx*cos(phi)*cos(lambda)+vy*cos(phi)*sin(lambda)+vz*sin(phi);
-    gpsdata->newdata.speed = sqrt(pow(vnorth,2) + pow(veast,2));
-    heading = atan2(veast,vnorth);
+    gpsdata->fix.climb = vx*cos(phi)*cos(lambda)+vy*cos(phi)*sin(lambda)+vz*sin(phi);
+    gpsdata->fix.speed = sqrt(pow(vnorth,2) + pow(veast,2));
+    heading = atan2(fix_minuz(veast), fix_minuz(vnorth));
     /*@ +evalorder @*/
     if (heading < 0)
 	heading += 2 * PI;
-    gpsdata->newdata.track = heading * RAD_2_DEG;
+    gpsdata->fix.track = heading * RAD_2_DEG;
+}
+
+/*
+ * Some systems propagate the sign along with zero. This messes up
+ * certain trig functions, like atan2():
+ *    atan2(+0, +0) = 0
+ *    atan2(+0, -0) = PI
+ * Obviously that will break things. Luckily the "==" operator thinks
+ * that -0 == +0; we will use this to return an unambiguous value.
+ *
+ * I hereby decree that zero is not allowed to have a negative sign!
+ */
+static double fix_minuz(double d)
+{
+    return ((d == 0.0) ? 0.0 : d);
 }
 
 #ifdef TESTMAIN

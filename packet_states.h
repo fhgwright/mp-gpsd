@@ -1,14 +1,22 @@
+/* $Id$ */
    GROUND_STATE,	/* we don't know what packet type to expect */
+
+   COMMENT_BODY,	/* pound comment for a test load */
+   COMMENT_RECOGNIZED,	/* comment recognized */
 
 #ifdef NMEA_ENABLE
    NMEA_DOLLAR,		/* we've seen first character of NMEA leader */
+   NMEA_BANG,		/* we've seen first character of an AIS message '!' */
    NMEA_PUB_LEAD,	/* seen second character of NMEA G leader */
+   NMEA_VENDOR_LEAD,	/* seen second character of NMEA P leader */
    NMEA_LEADER_END,	/* seen end char of NMEA leader, in body */
    NMEA_CR,	   	/* seen terminating \r of NMEA packet */
    NMEA_RECOGNIZED,	/* saw trailing \n of NMEA packet */
 
    SIRF_ACK_LEAD_1,	/* seen A of possible SiRF Ack */
    SIRF_ACK_LEAD_2,	/* seen c of possible SiRF Ack */
+   AIS_LEAD_1,		/* seen A of possible marine AIS message */
+   AIS_LEAD_2,		/* seen I of possible marine AIS message */
 
    SEATALK_LEAD_1,	/* SeaTalk/Garmin packet leader 'I' */
 #endif /* NMEA_ENABLE */
@@ -31,7 +39,7 @@
    EARTHA_5,		/* EARTHA leader H */
 #endif /* EARTHMATE_ENABLE */
 
-#ifdef SIRFII_ENABLE
+#ifdef SIRF_ENABLE
    SIRF_LEADER_1,	/* we've seen first character of SiRF leader */
    SIRF_LEADER_2,	/* seen second character of SiRF leader */
    SIRF_LENGTH_1,	/* seen first byte of SiRF length */
@@ -39,7 +47,7 @@
    SIRF_DELIVERED,	/* saw last byte of SiRF payload/checksum */
    SIRF_TRAILER_1,	/* saw first byte of SiRF trailer */ 
    SIRF_RECOGNIZED,	/* saw second byte of SiRF trailer */
-#endif /* SIRFII_ENABLE */
+#endif /* SIRF_ENABLE */
 
 #ifdef ZODIAC_ENABLE
    ZODIAC_EXPECTED,	/* expecting Zodiac packet */
@@ -56,8 +64,9 @@
    ZODIAC_RECOGNIZED,	/* found end of the Zodiac packet */
 #endif /* ZODIAC_ENABLE */
 
-#ifdef TNT_ENABLE
+#if defined(TNT_ENABLE) || defined(GARMINTXT_ENABLE)
    TNT_LEADER,          /* saw True North status leader '@' */
+                        /* Garmin Simple Text starts with @ leader */
 #endif
 
 #ifdef EVERMORE_ENABLE
@@ -68,15 +77,40 @@
    EVERMORE_RECOGNIZED,	/* found end of EverMore packet */
 #endif /* EVERMORE_ENABLE */
 
-#ifdef ITALK_ENABLE
+#ifdef ITRAX_ENABLE
    ITALK_LEADER_1,	/* saw leading < of iTalk packet */
-   ITALK_LEADER_2,	/* saw leading * of iTalk packet */
-   ITALK_LENGTH_1,	/* saw MSB of packet length */
-   ITALK_LENGTH_2,	/* saw LSB of packet length */
+   ITALK_LEADER_2,	/* saw leading ! of iTalk packet */
+   ITALK_LENGTH,	/* saw packet length */
+   ITALK_PAYLOAD,	/* in payload part of iTalk Packet */
    ITALK_DELIVERED,	/* seen end of payload */
-   ITALK_TRAILER_1,	/* saw iTalk trailer byte */
+   ITALK_TRAILER,	/* saw iTalk trailer byte */
    ITALK_RECOGNIZED,	/* found end of the iTalk packet */
-#endif /* ITALK_ENABLE */
+#endif /* ITRAX_ENABLE */
+
+#ifdef NAVCOM_ENABLE
+   NAVCOM_EXPECTED,	/* expecting Navcom packet */
+   NAVCOM_LEADER_1,	/* saw leading 0x02 */
+   NAVCOM_LEADER_2,	/* saw leading 0x99 */
+   NAVCOM_LEADER_3,	/* saw leading 0x66 */
+   NAVCOM_ID,   	/* saw message ID */
+   NAVCOM_LENGTH_1,	/* saw first byte of Navcom packet length */
+   NAVCOM_LENGTH_2,	/* saw second byte of Navcom packet length */
+   NAVCOM_PAYLOAD,	/* we're in a Navcom payload */
+   NAVCOM_CSUM, 	/* saw checksum */
+   NAVCOM_RECOGNIZED,	/* found end of the Navcom packet */
+#endif /* NAVCOM_ENABLE */
+
+#ifdef UBX_ENABLE
+   UBX_LEADER_1,        /* first constant leader byte found */
+   UBX_LEADER_2,        /* second constant leader byte found */
+   UBX_CLASS_ID,        /* classid read */
+   UBX_MESSAGE_ID,      /* message id read */
+   UBX_LENGTH_1,        /* first length byte read (le) */
+   UBX_LENGTH_2,        /* second length byte read (le) */
+   UBX_PAYLOAD,         /* payload eating */
+   UBX_CHECKSUM_A,      /* checksum A byte (tcp checksum) */
+   UBX_RECOGNIZED,      /* this is also UBX_CHECKSUM_B */
+#endif
 
 /*
  * Packet formats without checksums start here.  We list them last so
@@ -84,15 +118,18 @@
  * be recognized, that will be preferred.
  */
 
-#ifdef TSIP_ENABLE
+#if defined(TSIP_ENABLE) || defined(GARMIN_ENABLE)
    TSIP_LEADER,		/* a DLE after having seen TSIP data */
    TSIP_PAYLOAD,	/* we're in TSIP payload */
    TSIP_DLE,		/* we've seen a DLE in TSIP payload */
    TSIP_RECOGNIZED,	/* found end of the TSIP packet */
-#endif /* TSIP_ENABLE */
+   GARMIN_RECOGNIZED,	/* found end of Garmin packet */
+#endif /* TSIP_ENABLE GARMIN_ENABLE */
 
 #ifdef RTCM104_ENABLE
    RTCM_SYNC_STATE,	/* we have sync lock */
    RTCM_SKIP_STATE,	/* we have sync lock, but this character is bad */
    RTCM_RECOGNIZED,	/* we have an RTCM packet */
 #endif /* RTCM104_ENABLE */
+
+/* end of packet_states.h */

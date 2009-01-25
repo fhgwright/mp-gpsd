@@ -1,3 +1,4 @@
+/* $Id$ */
 /*****************************************************************************
 
 This is a decoder for the unnamed protocol described in IS-GPS-200,
@@ -5,15 +6,15 @@ the Navstar GPS Interface Specification, and used as a transport layer
 for both GPS satellite downlink transmissions and the RTCM104 format
 for broadcasting differential-GPS corrections.
 
-The code was originally by Wolfgang Rupprecht.  ESR severely hacked
-it, with Wolfgang's help, in order to separate message analysis from
-message dumping and separate this lower layer from the upper layer 
-handing RTCM decoding.  You are not expected to understand any of it. 
-
 This lower layer just handles synchronizing with the incoming
 bitstream and parity checking; all it does is assemble message
 packets.  It needs an upper layer to analyze the packets into
-bitfields and the assemble the bitfields into usable data.
+bitfields and then assemble the bitfields into usable data.  
+
+The upper layer must supply a preamble_match() hook to tell our
+decoder when it has a legitimate start of packet, and a length_check()
+hook to tell it when the packet has reached the length it is supposed
+to have.
 
 Here are Wolfgang's original rather cryptic notes on this code:
 
@@ -45,28 +46,25 @@ Shift 6 bytes of RTCM data in as such:
               |||||||||||||||||||||||
 --------------------------------------------------------------------------
 
-The lower layer's job is done when it has assembled a message of up to
-33 words of clean parity-checked data.  At this point the upper layer
-takes over.  struct rtcm_msg_t is overlaid on the buffer and the bitfields
-are used to extract pieces of it (which, if you're on a big-endian machine
-may need to be swapped end-for-end).  Those pieces are copied and (where
-necessary) reassembled into a struct rtcm_t.
+The code was originally by Wolfgang Rupprecht.  ESR severely hacked
+it, with Wolfgang's help, in order to separate message analysis from
+message dumping and separate this lower layer from the upper layer 
+handing RTCM decoding.  You are not expected to understand any of this.
 
 *****************************************************************************/
 
+#include <sys/types.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 
+#include "gpsd_config.h"
 #include "gpsd.h"
 
 #define MAG_SHIFT 6u
 #define MAG_TAG_DATA (1 << MAG_SHIFT)
 #define MAG_TAG_MASK (3 << MAG_SHIFT)
-
-#define PREAMBLE_SHIFT 22
-#define PREAMBLE_MASK (0xFF << PREAMBLE_SHIFT)
 
 #define W_DATA_MASK	0x3fffffc0u
 
@@ -170,18 +168,18 @@ static bool isgps_parityok(isgps30bits_t w)
 }
 #endif
 
-void isgps_init(/*@out@*/struct gps_device_t *session)
+void isgps_init(/*@out@*/struct gps_packet_t *session)
 {
-    session->driver.isgps.curr_word = 0;
-    session->driver.isgps.curr_offset = 24;	/* first word */
-    session->driver.isgps.locked = false;
-    session->driver.isgps.bufindex = 0;
+    session->isgps.curr_word = 0;
+    session->isgps.curr_offset = 24;	/* first word */
+    session->isgps.locked = false;
+    session->isgps.bufindex = 0;
 }
 
 /*@ -usereleased -compdef @*/
-enum isgpsstat_t isgps_decode(struct gps_device_t *session, 
+enum isgpsstat_t isgps_decode(struct gps_packet_t *session, 
 				     bool (*preamble_match)(isgps30bits_t *),
-				     bool (*length_check)(struct gps_device_t *),
+				     bool (*length_check)(struct gps_packet_t *),
 			      size_t maxlen,
 				     unsigned int c)
 {
@@ -197,106 +195,106 @@ enum isgpsstat_t isgps_decode(struct gps_device_t *session,
     c = reverse_bits[c & 0x3f];
 
     /*@ -shiftnegative @*/
-    if (!session->driver.isgps.locked) {
-	session->driver.isgps.curr_offset = -5;
-	session->driver.isgps.bufindex = 0;
+    if (!session->isgps.locked) {
+	session->isgps.curr_offset = -5;
+	session->isgps.bufindex = 0;
 
-	while (session->driver.isgps.curr_offset <= 0) {
-	    session->driver.isgps.curr_word <<= 1;
-	    if (session->driver.isgps.curr_offset > 0) {
-		session->driver.isgps.curr_word |= c << session->driver.isgps.curr_offset;
+	while (session->isgps.curr_offset <= 0) {
+	    session->isgps.curr_word <<= 1;
+	    if (session->isgps.curr_offset > 0) {
+		session->isgps.curr_word |= c << session->isgps.curr_offset;
 	    } else {
-		session->driver.isgps.curr_word |= c >> -(session->driver.isgps.curr_offset);
+		session->isgps.curr_word |= c >> -(session->isgps.curr_offset);
 	    }
-	    gpsd_report(ISGPS_ERRLEVEL_BASE+2, "ISGPS syncing at byte %d: %0x%08x\n", session->char_counter, session->driver.isgps.curr_word);
+	    gpsd_report(ISGPS_ERRLEVEL_BASE+2, "ISGPS syncing at byte %d: %0x%08x\n", session->char_counter, session->isgps.curr_word);
 
-	    if (preamble_match(&session->driver.isgps.curr_word)) {
-		if (isgps_parityok(session->driver.isgps.curr_word)) {
+	    if (preamble_match(&session->isgps.curr_word)) {
+		if (isgps_parityok(session->isgps.curr_word)) {
 		    gpsd_report(ISGPS_ERRLEVEL_BASE+1, 
 				"ISGPS preamble ok, parity ok -- locked\n");
-		    session->driver.isgps.locked = true;
-		    /* session->driver.isgps.curr_offset;  XXX - testing */
+		    session->isgps.locked = true;
+		    /* session->isgps.curr_offset;  XXX - testing */
 		    break;
 		}
 		gpsd_report(ISGPS_ERRLEVEL_BASE+1, 
 			    "ISGPS preamble ok, parity fail\n");
 	    }
-	    session->driver.isgps.curr_offset++;
+	    session->isgps.curr_offset++;
 	}			/* end while */
     }
-    if (session->driver.isgps.locked) {
+    if (session->isgps.locked) {
 	res = ISGPS_SYNC;
 
-	if (session->driver.isgps.curr_offset > 0) {
-	    session->driver.isgps.curr_word |= c << session->driver.isgps.curr_offset;
+	if (session->isgps.curr_offset > 0) {
+	    session->isgps.curr_word |= c << session->isgps.curr_offset;
 	} else {
-	    session->driver.isgps.curr_word |= c >> -(session->driver.isgps.curr_offset);
+	    session->isgps.curr_word |= c >> -(session->isgps.curr_offset);
 	}
 
-	if (session->driver.isgps.curr_offset <= 0) {
+	if (session->isgps.curr_offset <= 0) {
 	    /* weird-assed inversion */
-	    if (session->driver.isgps.curr_word & P_30_MASK)
-		session->driver.isgps.curr_word ^= W_DATA_MASK;
+	    if (session->isgps.curr_word & P_30_MASK)
+		session->isgps.curr_word ^= W_DATA_MASK;
 
-	    if (isgps_parityok(session->driver.isgps.curr_word)) {
+	    if (isgps_parityok(session->isgps.curr_word)) {
 #if 0
 		/*
 		 * Don't clobber the buffer just because we spot
 		 * another preamble pattern in the data stream. -wsr
 		 */
-		if (preamble_match(&session->driver.isgps.curr_word)) {
+		if (preamble_match(&session->isgps.curr_word)) {
 		    gpsd_report(ISGPS_ERRLEVEL_BASE+2, 
 				"ISGPS preamble spotted (index: %u)\n",
-				session->driver.isgps.bufindex);
-		    session->driver.isgps.bufindex = 0;
+				session->isgps.bufindex);
+		    session->isgps.bufindex = 0;
 		}
 #endif
 		gpsd_report(ISGPS_ERRLEVEL_BASE+2,
 			    "ISGPS processing word %u (offset %d)\n",
-			    session->driver.isgps.bufindex, session->driver.isgps.curr_offset);
+			    session->isgps.bufindex, session->isgps.curr_offset);
 		{
 		    /*
 		     * Guard against a buffer overflow attack.  Just wait for
-		     * the next PREAMBLE_PATTERN and go on from there. 
+		     * the next preamble match and go on from there. 
 		     */
-		    if (session->driver.isgps.bufindex >= (unsigned)maxlen){
-			session->driver.isgps.bufindex = 0;
+		    if (session->isgps.bufindex >= (unsigned)maxlen){
+			session->isgps.bufindex = 0;
 			gpsd_report(ISGPS_ERRLEVEL_BASE+1, 
 				    "ISGPS buffer overflowing -- resetting\n");
 			return ISGPS_NO_SYNC;
 		    }
 
-		    session->driver.isgps.buf[session->driver.isgps.bufindex] = session->driver.isgps.curr_word;
+		    session->isgps.buf[session->isgps.bufindex] = session->isgps.curr_word;
 
-		    if ((session->driver.isgps.bufindex == 0) &&
-			!preamble_match((isgps30bits_t *)session->driver.isgps.buf)) {
+		    if ((session->isgps.bufindex == 0) &&
+			!preamble_match((isgps30bits_t *)session->isgps.buf)) {
 			gpsd_report(ISGPS_ERRLEVEL_BASE+1, 
 				    "ISGPS word 0 not a preamble- punting\n");
 			return ISGPS_NO_SYNC;
 		    }
-		    session->driver.isgps.bufindex++;
+		    session->isgps.bufindex++;
 
 		    if (length_check(session)) {
 			/* jackpot, we have a complete packet*/
-			session->driver.isgps.bufindex = 0;
+			session->isgps.bufindex = 0;
 			res = ISGPS_MESSAGE;
 		    }
 		}
-		session->driver.isgps.curr_word <<= 30;	/* preserve the 2 low bits */
-		session->driver.isgps.curr_offset += 30;
-		if (session->driver.isgps.curr_offset > 0) {
-		    session->driver.isgps.curr_word |= c << session->driver.isgps.curr_offset;
+		session->isgps.curr_word <<= 30;	/* preserve the 2 low bits */
+		session->isgps.curr_offset += 30;
+		if (session->isgps.curr_offset > 0) {
+		    session->isgps.curr_word |= c << session->isgps.curr_offset;
 		} else {
-		    session->driver.isgps.curr_word |= c >> -(session->driver.isgps.curr_offset);
+		    session->isgps.curr_word |= c >> -(session->isgps.curr_offset);
 		}
 	    } else {
 		gpsd_report(ISGPS_ERRLEVEL_BASE+0, 
 			    "ISGPS parity failure, lost lock\n");
-		session->driver.isgps.locked = false;
+		session->isgps.locked = false;
 	    }
 	}
-	session->driver.isgps.curr_offset -= 6;
-	gpsd_report(ISGPS_ERRLEVEL_BASE+2, "residual %d\n", session->driver.isgps.curr_offset);
+	session->isgps.curr_offset -= 6;
+	gpsd_report(ISGPS_ERRLEVEL_BASE+2, "residual %d\n", session->isgps.curr_offset);
 	return res;
     }
     /*@ +shiftnegative @*/
@@ -308,3 +306,33 @@ enum isgpsstat_t isgps_decode(struct gps_device_t *session,
 }
 /*@ +usereleased +compdef @*/
 
+#ifdef __UNUSED__
+void isgps_output_magnavox(isgps30bits_t *ip, unsigned int len, FILE *fp)
+/* ship an IS-GPS-200 message to standard output in Magnavox format */
+{
+    isgps30bits_t w = 0;
+
+    while (len-- > 0) {
+	w <<= 30;
+	w |= *ip++ & W_DATA_MASK;
+
+	w |= isgps_parity(w);
+
+	/* weird-assed inversion */
+	if (w & P_30_MASK)
+	    w ^= W_DATA_MASK;
+
+	/*
+	 * Write each 30-bit IS-GPS-200 data word as 5 Magnavox-format bytes
+	 * with data in the low 6-bits of the byte.  MSB first.
+	 */
+	/*@ -type @*/
+	(void)fputc(MAG_TAG_DATA | reverse_bits[(w >> 24) & 0x3f], fp);
+	(void)fputc(MAG_TAG_DATA | reverse_bits[(w >> 18) & 0x3f], fp);
+	(void)fputc(MAG_TAG_DATA | reverse_bits[(w >> 12) & 0x3f], fp);
+	(void)fputc(MAG_TAG_DATA | reverse_bits[(w >> 6) & 0x3f], fp);
+	(void)fputc(MAG_TAG_DATA | reverse_bits[(w) & 0x3f], fp);
+	/*@ +type @*/
+    }
+}
+#endif /* __UNUSED__ */
