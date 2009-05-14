@@ -1,11 +1,11 @@
-# $Id: Portfile 47411 2009-02-28 01:49:15Z jeremyhu@macports.org $
+# $Id: Portfile 50984 2009-05-14 21:08:43Z and.damore@macports.org $
 
 PortSystem 1.0
 
 name		gpsd
 version		2.37
 categories	net
-maintainers	shadow@dementia.org
+maintainers	dementia.org:shadow
 description	gps multiplexor daemon
 long_description	\
 	gpsd is a small daemon multiplexes output or information from a GPS \
