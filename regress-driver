@@ -8,18 +8,23 @@ PATH=.:$PATH
 export PATH
 
 mode=regress
-while getopts trbvo:n opt
+opts=""
+while getopts strbvo:n opt
 do
     case $opt in
-	t) mode=regress ;;	# Run regression tests
+	s) mode=regress ;;	# Run regression tests
+	t) opts="-b $opts" mode=regress ;;	# Run regression tests w/baton
 	r) mode=superraw ;;	# Run superraw regressions (r=2 mode)
 	b) mode=build ;;	# Rebuild regression check files
 	v) mode=view ;;		# View result of generating a check file
-	o) opts="$OPTARG" ;;	# Pass options to gpsfake
+	o) opts="$opts $OPTARG" ;;	# Pass options to gpsfake
 	n) do=echo ;;		# Just echo commands, don't do them
     esac
 done
 shift $(($OPTIND - 1))
+
+# Enables us to turn debugging up high without screwing up the diff checks
+GPSFILTER='^GPSD,X|^gpsd:|^gpsfake:|^GPS DATA'
 
 case $mode in
     regress)
@@ -29,8 +34,11 @@ case $mode in
             dir=`dirname $f`
 	    if [ -r $f.chk ]
 	    then
-		$do gpsfake -s 38400 -1 -b -p $opts ${f} | grep -v "^GPSD,X" >$dir/test.chk;
-		if $do diff -ub ${f}.chk $dir/test.chk; then :; else
+		$do gpsfake -s 38400 -1 -p $opts ${f} | egrep -v "${GPSFILTER}" >$dir/test.chk;
+		$do sed <$dir/test.chk >$dir/test-trunc.chk -e '$d'
+		diff -ub ${f}.chk $dir/test.chk >$dir/diff
+		diff -ub ${f}.chk $dir/test-trunc.chk >>$dir/diff
+		if test -s $dir/diff; then :; else
 		    errors=`expr $errors + 1`;
 		fi;
 	    else
@@ -39,7 +47,7 @@ case $mode in
 	    fi
 	    total=`expr $total + 1`;
         done; 
-	$do rm -f $dir/test.chk;
+	$do rm -f $dir/test.chk $dir/test-trunc.chk $dir/diff; 
         if test $errors -gt 0; then
             echo "Regression test FAILED: $errors errors in $total tests total  ($notfound not found).";
             exit 1;
@@ -61,7 +69,7 @@ case $mode in
     build)
 	echo "Rebuilding regressions..."
         for f in $*; do
-            $do gpsfake -s 38400 -1 -b -p $opts ${f} | grep -v "^GPSD,X" >${f}.chk;
+            gpsfake -s 38400 -1 -b -p $opts ${f} | egrep -v "${GPSFILTER}" >${f}.chk;
         done
         exit 0
         ;;

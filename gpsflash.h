@@ -1,4 +1,7 @@
 /* $Id$ */
+#ifndef _GPSD_GPSFLASH_H_
+#define _GPSD_GPSFLASH_H_
+
 /*
  * Copyright (c) 2005 Chris Kuethe <chris.kuethe@gmail.com>
  *
@@ -15,14 +18,13 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef _GPSFLASH_H_
-#define _GPSFLASH_H_
-
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 
+#ifndef S_SPLINT_S
 #include <netinet/in.h>	/* for htonl() under Linux */
+#endif /* S_SPLINT_S */
 
 #include <ctype.h>
 #include <err.h>
@@ -33,7 +35,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
-#include <unistd.h>
 #include <stdbool.h>
 
 struct flashloader_t {
@@ -61,4 +62,4 @@ int srecord_send(int pfd, char *fw, size_t len);
 int binary_send(int pfd, char *data, size_t ls);
 bool expect(int pfd, const char *str, size_t len, time_t timeout);
 
-#endif /* _GPSFLASH_H_ */
+#endif /* _GPSD_GPSFLASH_H_ */

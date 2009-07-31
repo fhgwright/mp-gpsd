@@ -38,8 +38,7 @@
 
 static Widget draww, appshell;
 static GC drawGC;
-static Dimension width, height;
-static int diameter;
+static Dimension width, height, diameter;
 static Pixmap pixmap;
 
 /*@ -usedef -compdef -mustfreefresh @*/
@@ -139,7 +138,7 @@ draw_graphics(struct gps_data_t *gpsdata)
 
 		/* draw something in the center */
 		set_color("Grey");
-		draw_arc(width / 2, height / 2, 6);
+		draw_arc((int)(width / 2), (int)(height / 2), 6);
 
 		/* draw the 45 degree circle */
 #ifdef PCORRECT
@@ -147,11 +146,11 @@ draw_graphics(struct gps_data_t *gpsdata)
 #else
 #define FF	0.5
 #endif
-		draw_arc(width / 2, height / 2, (unsigned)((i - RM) * FF));
+		draw_arc((int)(width / 2), (int)(height / 2), (unsigned)((i - RM) * FF));
 #undef FF
 
 		set_color("Black");
-		draw_arc(width / 2, height / 2, (unsigned)(i - RM));
+		draw_arc((int)(width / 2), (int)(height / 2), (unsigned)(i - RM));
 
 		pol2cart(0, 0, &x, &y);
 		set_color("Black");
@@ -229,7 +228,7 @@ draw_graphics(struct gps_data_t *gpsdata)
 }
 
 void
-redraw(Widget widget, XtPointer client_data, XtPointer call_data)
+redraw(Widget widget UNUSED, XtPointer client_data UNUSED, XtPointer call_data)
 {
 	XmDrawingAreaCallbackStruct *cbs =
 	    (XmDrawingAreaCallbackStruct *)call_data;
@@ -245,7 +244,7 @@ redraw(Widget widget, XtPointer client_data, XtPointer call_data)
 
 /*@ -usedef @*/
 void
-resize(Widget widget, XtPointer client_data, XtPointer call_data UNUSED)
+resize(Widget widget, XtPointer client_data UNUSED, XtPointer call_data UNUSED)
 {
 	GC gc;
 	XtVaGetValues(widget,

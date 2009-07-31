@@ -41,10 +41,7 @@ packets coming from a SiRF GPS (the SiRF chipset is the one by far the
 most commonly used in GPS mice and other consumer-grade GPSes, about
 80% of them and rising in early 2005).  This program is primarily
 useful as a diagnostic aid for troubleshooting
-<application>gpsd</application> problems; it deliberately uses decoder
-logic that different from the decoder in the
-<application>gpsd</application> SiRF driver, so behaviors that show up
-in both are unlikely to be due to logic bugs in either.</para>
+<application>gpsd</application> problems.</para>
 
 <para><application>sirfmon</application> accepts an -h option that
 displays a usage message, or a -v option to dump the package
@@ -67,6 +64,10 @@ automatically.</para>
 control socket to which the program should send device control
 strings.  You must specify a valid pathname of a Unix-domain socket on
 your local filesystem.</para>
+
+<para>The -D option enables packet-getter debugging output and is
+probably only useful to developers of thus code.  Consult the
+packet-getter source code for relevant values.</para>
 
 <para> You will probably need to be root to run this program, as the
 serial devices and control socket it uses are normally

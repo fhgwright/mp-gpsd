@@ -12,20 +12,26 @@
 #include <termios.h>
 #include <unistd.h>
 
-static int ubx_send(int , char *, char *);
-static unsigned short ubx_gen_checksum(char *, int);
+/* 
+ * @@Cj - receiver ID
+ * @@Be 0 - almanac dump
+ */
+
+static int moto_send(int , char *, char *);
+static char moto_gen_checksum(char *, int);
 char *gpsd_hexdump(char *, size_t);
 int gpsd_hexpack(char *, char *, int);
 int hex2bin(char *s);
 
+#define BSIZ 64
 int main(int argc, char **argv) {
 	int speed, l, fd, n;
 	struct termios term;
-	char buf[BUFSIZ];
+	char buf[BSIZ];
 	time_t s, t;
 
 	if (argc != 5){
-		fprintf(stderr, "usage: nmeasend <speed> <port> ubx-type-hex ubx-body-hex\n");
+		fprintf(stderr, "usage: motosend <speed> <port> msgtype moto-body-hex\n");
 		return 1;
 	}
 
@@ -34,7 +40,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	if (l % 2){
+	if (l % 2) {
 		fprintf(stderr, "body must have an even number of hex digits\n");
 		return 1;
 	}
@@ -62,24 +68,21 @@ int main(int argc, char **argv) {
 	cfmakeraw(&term);
 	cfsetospeed(&term, speed);
 	cfsetispeed(&term, speed);
-        term.c_cc[VMIN] = 1;
-        term.c_cc[VTIME] = 0;
-        term.c_cflag &= ~(PARENB | PARODD | CRTSCTS);
-        term.c_cflag |= CREAD | CLOCAL;
-        term.c_iflag = term.c_oflag = term.c_lflag = (tcflag_t) 0;
+	term.c_cc[VMIN] = 8;
+	term.c_cc[VTIME] = 1;
+	term.c_cflag &= ~(PARENB | PARODD | CRTSCTS);
+	term.c_cflag |= CREAD | CLOCAL;
+	term.c_iflag = term.c_oflag = term.c_lflag = (tcflag_t) 0;
 
 	if (tcsetattr(fd, TCSANOW | TCSAFLUSH, &term) == -1)
 		err(1, "tcsetattr");
-	
+
 	tcflush(fd, TCIOFLUSH);
-	ubx_send(fd, argv[3], argv[4]);
-	tcdrain(fd);
-// return 0;
 	t = 0; n = 0;
 	while (1){
-		usleep(10000);
-		bzero(buf, BUFSIZ);
-		if ((l = read(fd, buf, BUFSIZ)) == -1)
+		usleep(1000);
+		bzero(buf, BSIZ);
+		if ((l = read(fd, buf, BSIZ)) == -1)
 			if (!(EINTR == errno || EAGAIN == errno))
 				err(1, "read");
 
@@ -87,75 +90,55 @@ int main(int argc, char **argv) {
 			printf("%s", gpsd_hexdump(buf, l));
 			fflush(stdout);
 		}
-		if (((s = time(NULL)) > t) && (n < 3)){
+		/* allow for up to "n" resends, once per second */
+		if (((s = time(NULL)) > t) && (n < 1)){
 			t = s;
 			n++;
-			ubx_send(fd, argv[3], argv[4]);
+			moto_send(fd, argv[3], argv[4]);
 		}
 	}
 	return 0;
 }
 
-unsigned short ubx_gen_checksum(char *buf, int len){
+char moto_gen_checksum(char *buf, int len){
 	int n;
-	unsigned short ck;
-	unsigned char ck_a = 0, ck_b = 0;
+	char ck = '\0';
 
-	for (n = 0; n < len; n++) {
-		ck_a += buf[n];
-		ck_b += ck_a;
-//		printf("n: %d c: 0x%02x ck_a: 0x%02x ck_b: 0x%02x\r\n", n, buf[n], ck_a, ck_b);
-	}
-	ck = ( (((unsigned short)ck_a & 0x00ff) << 8) | ((unsigned short)ck_b & 0x00ff));
-#if BYTE_ORDER == LITTLE_ENDIAN
-	ck = swap16(ck);
-#endif
+	for (n = 0; n < len; n++)
+		ck ^= buf[n];
 	return ck;
 
 }
 
-static int ubx_send(int fd, char *type, char *body ) {
+static int moto_send(int fd, char *type, char *body ) {
 	size_t status;
 	char *buf;
 	unsigned short l, n, ck;
 
 	l = strlen(body) / 2;
-	if ((buf = malloc(l+8)) == NULL)
+	if ((buf = malloc(l+7)) == NULL)
 		return -1;
 
-	bzero(buf, l+8);
-	buf[0] = 0xb5; buf[1] = 0x62;
-
-	if (gpsd_hexpack(type, buf+2, 2) == -1){
-		free(buf);
-		return -1;
-	}
-
-#if BYTE_ORDER == BIG_ENDIAN
-	n = swap16(l);
-#else
-	n = l;
-#endif
-	memcpy(buf+4, &n, 2);
+	bzero(buf, l+7);
+	buf[0] = '@'; buf[1] = '@';
+	buf[2] = type[0]; buf[3] = type[1];
 
 	if (l)
-		if (gpsd_hexpack(body, buf+6, l) == -1){
+		if (gpsd_hexpack(body, buf+4, l) == -1){
 			free(buf);
 			return -1;
 		}
 
-	ck = ubx_gen_checksum(buf+2, l+4);
-	memcpy(buf+l+6, &ck, 2);
+	buf[l+4] = moto_gen_checksum(buf+2, l+2);
+	buf[l+5] = '\r'; buf[l+6] = '\n';
 
-	fputs("\r\n>>>>>>>>>>>>", stderr);
-	fputs(gpsd_hexdump(buf, l+8), stderr);
-	fputs("\r\n>>>>>>>>>>>>\r\n", stderr);
-	status = write(fd, buf, l+8);
+	status = write(fd, buf, l+7);
 	if (status == -1)
-		perror("ubx_send");
+		perror("moto_send");
 	return (int)status;
 }
 
+static char last;
 char *gpsd_hexdump(char *binbuf, size_t binbuflen)
 {
 	static char hexbuf[USHRT_MAX*2+10+2];
@@ -165,12 +148,17 @@ char *gpsd_hexdump(char *binbuf, size_t binbuflen)
 	const char *hexchar = "0123456789abcdef";
 
 	for (i = 0; i < len; i++) {
-		if (((unsigned char)ibuf[i] == 0xb5) && ((unsigned char)ibuf[i+1] == 0x62)){
+		if (ibuf[i] == '@' && (ibuf[i+1] == '@' || last == '@')){
 			hexbuf[j++] = '\n';
-			hexbuf[j++] = '\n';
+			hexbuf[j++] = ibuf[i++];
+			hexbuf[j++] = ibuf[i++];
+			hexbuf[j++] = ibuf[i++];
+			hexbuf[j++] = ibuf[i++];
+		} else {
+			hexbuf[j++] = hexchar[ (ibuf[i]&0xf0)>>4 ];
+			hexbuf[j++] = hexchar[ ibuf[i]&0x0f ];
 		}
-		hexbuf[j++] = hexchar[ (ibuf[i]&0xf0)>>4 ];
-		hexbuf[j++] = hexchar[ ibuf[i]&0x0f ];
+		last = ibuf[i];
 	}
 	hexbuf[j] ='\0';
 	return hexbuf;

@@ -23,15 +23,19 @@
  */
 
 #include <sys/types.h>
+#include <sys/stat.h>
+#ifndef S_SPLINT_S
 #include <sys/socket.h>
+#include <unistd.h>
+#endif /* S_SPLINT_S */
 #include <errno.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <fcntl.h>
 #include <termios.h>
+#include <assert.h>
 #include "gpsd_config.h"
 #include "gpsd.h"
 
@@ -45,8 +49,47 @@ static void spinner(unsigned int, unsigned int);
 static struct termios oldtio, newtio;
 static char serbuf[255];
 
+/* Daemonize me. */
+static void daemonize(void) {
+  int i;
+  pid_t pid;
+
+  /* Run as my child. */
+  pid=fork();
+  if (pid<0) exit(1); /* fork error */
+  if (pid>0) exit(0); /* parent exits */
+
+  /* Obtain a new process group. */
+  (void)setsid();
+
+  /* Close all open descriptors. */
+  for(i=getdtablesize();i>=0;--i)
+      (void)close(i);
+
+  /* Reopen STDIN, STDOUT, STDERR to /dev/null. */
+  i=open("/dev/null",O_RDWR);	/* STDIN */
+  /*@ -sefparams @*/
+  assert(dup(i) != -1); 	/* STDOUT */
+  assert(dup(i) != -1);		/* STDERR */
+
+  /* Know thy mask. */
+  (void)umask(0x033);
+
+  /* Run from a known spot. */
+  assert(chdir("/") != -1);
+  /*@ +sefparams @*/
+
+  /* Catch child sig */
+  (void)signal(SIGCHLD,SIG_IGN);
+
+  /* Ignore tty signals */
+  (void)signal(SIGTSTP,SIG_IGN);
+  (void)signal(SIGTTOU,SIG_IGN);
+  (void)signal(SIGTTIN,SIG_IGN);
+}
+
 /* open the serial port and set it up */
-static void open_serial(char* device) 
+static void open_serial(char* device)
 {
     /* 
      * Open modem device for reading and writing and not as controlling
@@ -70,11 +113,11 @@ static void open_serial(char* device)
     (void)cfmakeraw(&newtio);
     /* set speed */
     /*@i@*/(void)cfsetospeed(&newtio, BAUDRATE);
-	 
+
     /* Clear the modem line and activate the settings for the port. */
     (void)tcflush(fd_out,TCIFLUSH);
     if (tcsetattr(fd_out,TCSANOW,&newtio) != 0) {
-	(void)fprintf(stderr, "gspipe: error configuring serial port\n");
+	(void)fprintf(stderr, "gpspipe: error configuring serial port\n");
 	exit(1);
     }
 }
@@ -83,37 +126,46 @@ static void usage(void)
 {
     (void)fprintf(stderr, "Usage: gpspipe [OPTIONS] [server[:port[:device]]]\n\n"
 		  "SVN ID: $Id$ \n"
+		  "-d Run as a daemon.\n"
+		  "-f [file] Write output to file.\n"
 		  "-h Show this help.\n"
 		  "-r Dump raw NMEA.\n"
 		  "-R Dump super-raw mode (GPS binary).\n"
 		  "-w Dump gpsd native data.\n"
 		  "-j Turn on server-side buffering.\n"
+		  "-l Sleep for ten seconds before connecting to gpsd.\n"
 		  "-t Time stamp the data.\n"
 		  "-s [serial dev] emulate a 4800bps NMEA GPS on serial port (use with '-r').\n"
 		  "-n [count] exit after count packets.\n"
 		  "-v Print a little spinner.\n"
 		  "-V Print version and exit.\n\n"
 		  "You must specify one, or both, of -r/-w.\n"
+		  "You must use -f if you use -d.\n"
 	);
 }
 
-int main( int argc, char **argv) 
+int main( int argc, char **argv)
 {
     int sock = 0;
     char buf[4096];
     ssize_t wrote = 0;
     bool timestamp = false;
+    bool daemon = false;
+    bool binary = false;
+    bool sleepy = false;
     bool new_line = true;
     long count = -1;
     int option;
     unsigned int vflag = 0, l = 0;
+    FILE * fp;
 
-    char *arg = NULL, *colon1, *colon2, *device = NULL; 
+    char *arg = NULL, *colon1, *colon2, *device = NULL;
     char *port = DEFAULT_GPSD_PORT, *server = "127.0.0.1";
     char *serialport = NULL;
+    char *filename = NULL;
 
     buf[0] = '\0';
-    while ((option = getopt(argc, argv, "?hrRwjtvVn:s:")) != -1) {
+    while ((option = getopt(argc, argv, "?dlhrRwjtvVn:s:f:")) != -1) {
 	switch (option) {
 	case 'n':
 	    count = strtol(optarg, 0, 0);
@@ -122,7 +174,14 @@ int main( int argc, char **argv)
 	    (void)strlcat(buf, "r=1;", sizeof(buf));
 	    break;
 	case 'R':
+	    binary=true;
 	    (void)strlcat(buf, "r=2;", sizeof(buf));
+	    break;
+	case 'd':
+	    daemon = true;
+	    break;
+	case 'l':
+	    sleepy = true;
 	    break;
 	case 't':
 	    timestamp = true;
@@ -142,6 +201,9 @@ int main( int argc, char **argv)
 	case 's':
 	    serialport = optarg;
 	    break;
+	case 'f':
+	    filename = optarg;
+	    break;
 	case '?':
 	case 'h':
 	default:
@@ -152,6 +214,11 @@ int main( int argc, char **argv)
 
     if (serialport!=NULL && strstr(buf, "r=1")==NULL) {
 	(void)fprintf(stderr, "gpsipipe: use of '-s' requires '-r'.\n");
+	exit(1);
+    }
+
+    if (filename==NULL && daemon) {
+	(void)fprintf(stderr, "gpsipipe: use of '-d' requires '-f'.\n");
 	exit(1);
     }
 
@@ -187,6 +254,33 @@ int main( int argc, char **argv)
     }
     /*@ +branchstate @*/
 
+    /* Daemonize if the user requested it. */
+    if (daemon)
+      daemonize();
+
+    /* Sleep for ten seconds if the user requested it. */
+    if (sleepy)
+	(void)sleep(10);
+
+    /* Open the output file if the user requested it.  If the user
+       requested '-R', we use the 'b' flag in fopen() to "do the right
+       thing" in non-linux/unix OSes. */
+    if (filename==NULL) {
+      fp = stdout;
+    } else {
+      if (binary)
+	fp = fopen(filename,"wb");
+      else
+	fp = fopen(filename,"w");
+
+      if (fp == NULL) {
+	(void)fprintf(stderr,
+		      "gpspipe: unable to open output file:  %s\n",
+		      filename);
+	exit(1);
+      }
+    }
+
     /* Open the serial port and set it up. */
     if (serialport)
 	open_serial(serialport);
@@ -194,7 +288,7 @@ int main( int argc, char **argv)
     /*@ -nullpass @*/
     sock = netlib_connectsock( server, port, "tcp");
     if (sock < 0) {
-	(void)fprintf(stderr, 
+	(void)fprintf(stderr,
 		      "gpspipe: could not connect to gpsd %s:%s, %s(%d)\n",
 		      server, port, strerror(errno), errno);
 	exit(1);
@@ -204,12 +298,12 @@ int main( int argc, char **argv)
     /* ship the assembled options */
     wrote = write(sock, buf, strlen(buf));
     if ((ssize_t)strlen(buf) != wrote) {
-	(void)fprintf(stderr, "gpspipe: write error, %s(%d)\n", 
+	(void)fprintf(stderr, "gpspipe: write error, %s(%d)\n",
 		      strerror(errno), errno);
 	exit(1);
     }
 
-    if (isatty(STDERR_FILENO) == 0)
+    if ((isatty(STDERR_FILENO) == 0) || daemon)
 	vflag = 0;
 
     for(;;) {
@@ -230,14 +324,14 @@ int main( int argc, char **argv)
 		    time_t now = time(NULL);
 
 		    new_line = 0;
-		    if (fprintf(stdout, "%.24s :", ctime(&now)) <= 0) {
+		    if (fprintf(fp, "%.24s :", ctime(&now)) <= 0) {
 			(void)fprintf(stderr,
 				      "gpspipe: write error, %s(%d)\n",
 				      strerror(errno), errno);
 			exit(1);
 		    }
 		}
-		if (fputc(c, stdout) == EOF) {
+		if (fputc(c, fp) == EOF) {
 		    fprintf( stderr, "gpspipe: Write Error, %s(%d)\n",
 			     strerror(errno), errno);
 		    exit(1);
@@ -246,7 +340,7 @@ int main( int argc, char **argv)
 		if (c == '\n') {
 		    if (serialport != NULL) {
 			if (write(fd_out, serbuf, (size_t)j) == -1) {
-			    fprintf(stderr, 
+			    fprintf(stderr,
 				    "gpspipe: Serial port write Error, %s(%d)\n",
 				     strerror(errno), errno);
 			    exit(1);
@@ -256,7 +350,7 @@ int main( int argc, char **argv)
 
 		    new_line = true;
 		    /* flush after every good line */
-		    if (fflush(stdout)) {
+		    if (fflush(fp)) {
 			(void)fprintf(stderr, "gpspipe: fflush Error, %s(%d)\n",
 				strerror(errno), errno);
 			exit(1);
@@ -279,14 +373,14 @@ int main( int argc, char **argv)
 #ifdef __UNUSED__
     if (serialport != NULL) {
 	/* Restore the old serial port settings. */
-	if (tcsetattr(fd, TCSANOW, &oldtio) != 0) {
+	if (tcsetattr(fd_out, TCSANOW, &oldtio) != 0) {
 	    (void)fprintf(stderr, "Error restoring serial port settings\n");
 	    exit(1);
 	}
     }
 
     exit(0);
-#endif /* __UNUSED__ */  
+#endif /* __UNUSED__ */
 }
 
 static void spinner (unsigned int v, unsigned int num) {

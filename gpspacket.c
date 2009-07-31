@@ -12,11 +12,13 @@ static PyObject *ErrorObject = NULL;
 
 static PyObject *report_callback = NULL;
 
-void gpsd_report(int errlevel UNUSED, const char *fmt, ... )
+void gpsd_report(int errlevel, const char *fmt, ... )
 {
     char buf[BUFSIZ];
     PyObject *args;
     va_list ap;
+
+    gpsd_hexdump_level = errlevel;
 
     if (!report_callback)   /* no callback defined, exit early */
 	return;	
@@ -65,25 +67,32 @@ Lexer_init(LexerObject *self)
     packet_reset(&self->lexer);
     return 0;
 }
+
 static PyObject *
 Lexer_get(LexerObject *self, PyObject *args)
 {
-    ssize_t len;
+    ssize_t len, waiting;
     int fd;
 
     if (!PyArg_ParseTuple(args, "i;missing or invalid file descriptor argument to gpspacket.get", &fd))
         return NULL;
 
+    waiting = packet_buffered_input(&self->lexer);
+
     len = packet_get(fd, &self->lexer);
     if (PyErr_Occurred())
 	return NULL;
 
-    if (len == 0) {
-	self->lexer.type = BAD_PACKET;
+    if (len <= 0 && waiting <= 0) {
+	self->lexer.type = EMPTY_PACKET;
 	self->lexer.outbuffer[0] = '\0';
+	self->lexer.outbuflen = 0;
     }
 
-    return Py_BuildValue("(i, s)", self->lexer.type, self->lexer.outbuffer);
+    return Py_BuildValue("(i, s#)", 
+			 self->lexer.type, 
+			 self->lexer.outbuffer, 
+			 self->lexer.outbuflen);
 }
 
 static PyObject *
@@ -248,6 +257,7 @@ initgpspacket(void)
     m = Py_InitModule3("gpspacket", gpspacket_methods, module_doc);
 
     PyModule_AddIntConstant(m, "BAD_PACKET", BAD_PACKET);
+    PyModule_AddIntConstant(m, "EMPTY_PACKET", EMPTY_PACKET);
     PyModule_AddIntConstant(m, "COMMENT_PACKET", COMMENT_PACKET);
     PyModule_AddIntConstant(m, "NMEA_PACKET", NMEA_PACKET);
     PyModule_AddIntConstant(m, "SIRF_PACKET", SIRF_PACKET);
@@ -255,6 +265,12 @@ initgpspacket(void)
     PyModule_AddIntConstant(m, "TSIP_PACKET", TSIP_PACKET);
     PyModule_AddIntConstant(m, "EVERMORE_PACKET", EVERMORE_PACKET);
     PyModule_AddIntConstant(m, "ITALK_PACKET", ITALK_PACKET);
-    PyModule_AddIntConstant(m, "RTCM_PACKET", RTCM_PACKET);
     PyModule_AddIntConstant(m, "GARMIN_PACKET", GARMIN_PACKET);
+    PyModule_AddIntConstant(m, "NAVCOM_PACKET", NAVCOM_PACKET);
+    PyModule_AddIntConstant(m, "RTCM2_PACKET", RTCM2_PACKET);
+    PyModule_AddIntConstant(m, "RTCM3_PACKET", RTCM3_PACKET);
+    PyModule_AddIntConstant(m, "UBX_PACKET", UBX_PACKET);
+    PyModule_AddIntConstant(m, "GARMINTXT_PACKET", GARMINTXT_PACKET);
+
+    PyModule_AddIntConstant(m, "LOG_IO", LOG_IO);
 }

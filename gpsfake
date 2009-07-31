@@ -67,7 +67,7 @@ flicker = False
 promptme = False
 init = "w+r+"
 doptions = ""
-verbose = False
+verbose = 0
 for (switch, val) in options:
     if (switch == '-1'):
         singleshot = True
@@ -102,7 +102,7 @@ for (switch, val) in options:
     elif (switch == '-s'):
         speed = int(val)
     elif (switch == '-v'):
-        verbose = True
+        verbose += 1
     elif (switch == '-h'):
         sys.stderr.write("usage: gpsfake [-h] [-l] [-m monitor] [--D debug] [-o options] [-p] [-s speed] [-c cycle] [-b] logfile\n")
         raise SystemExit,0
@@ -115,6 +115,9 @@ def hexdump(s):
     return rep
 
 def fakehook(linenumber, fakegps):
+    if len(fakegps.testload.sentences) == 0:
+        print >>sys.stderr, "fakegps: no sentences in test load."
+        raise SystemExit, 1
     if linenumber % len(fakegps.testload.sentences) == 0:
         if singleshot and linenumber > 0:
             return False
@@ -126,11 +129,7 @@ def fakehook(linenumber, fakegps):
     if linedump and fakegps.testload.legend:
         ml = fakegps.testload.sentences[linenumber % len(fakegps.testload.sentences)].strip()
         if not fakegps.testload.textual:
-            if fakegps.testload.idoffset != None:
-                prefix = "type %02x " % ord(ml[fakegps.testload.idoffset])
-            else:
-                prefix = ''
-            ml = prefix + hexdump(ml)
+            ml = hexdump(ml)
         announce = fakegps.testload.legend % (linenumber % len(fakegps.testload.sentences) + 1) + ml
         if promptme:
             raw_input(announce + "? ")
@@ -142,12 +141,16 @@ def fakehook(linenumber, fakegps):
 
 if progress:
     baton = Baton("Processing %s" % logfile, "done")
+else:
+    print >>sys.stderr, "Processing %s" % logfile
 
 test = gpsfake.TestSession(prefix=monitor, port=port, options=doptions, verbose=verbose, predump=predump)
 
 if pipe:
     test.reporter = sys.stdout.write
-    #test.progress = sys.stdout.write
+    if verbose:
+        progress = False
+        test.progress = sys.stdout.write
 
 try:
     try:

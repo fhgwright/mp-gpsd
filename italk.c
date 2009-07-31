@@ -16,7 +16,6 @@
 #include "gpsd.h"
 #if defined(ITRAX_ENABLE) && defined(BINARY_ENABLE)
 
-#define LITTLE_ENDIAN_PROTOCOL
 #include "bits.h"
 #include "italk.h"
 
@@ -34,13 +33,14 @@ static gps_mask_t decode_itk_navfix(struct gps_device_t *session, unsigned char 
     double t;
 
     if (len != 296){
-	gpsd_report(LOG_PROG, "ITALK: bad NAV_FIX (len %d, should be 296)\n", len);
+	gpsd_report(LOG_PROG, "ITALK: bad NAV_FIX (len %zu, should be 296)\n",
+		    len);
 	return -1;
     }
 
-    flags = getuw(buf, 7 + 4);
-    cflags = getuw(buf, 7 + 6);
-    pflags = getuw(buf, 7 + 8);
+    flags = getleuw(buf, 7 + 4);
+    cflags = getleuw(buf, 7 + 6);
+    pflags = getleuw(buf, 7 + 8);
 
     session->gpsdata.status = STATUS_NO_FIX;
     session->gpsdata.fix.mode = MODE_NO_FIX;
@@ -50,33 +50,33 @@ static gps_mask_t decode_itk_navfix(struct gps_device_t *session, unsigned char 
     if (0 != (pflags & FIX_FLAG_MASK_INVALID) || 0 == (flags & FIXINFO_FLAG_VALID))
 	return mask;
 
-    gps_week = (ushort)getsw(buf, 7 + 82);
-    tow = getul(buf, 7 + 84);
+    gps_week = (ushort)getlesw(buf, 7 + 82);
+    tow = getleul(buf, 7 + 84);
     t = gpstime_to_unix((int)gps_week, tow/1000.0) - session->context->leap_seconds;
     session->gpsdata.sentence_time = t;
     session->gpsdata.fix.time = t;
     mask |= TIME_SET;
 
-    epx = (double)(getsl(buf, 7 + 96)/100.0);
-    epy = (double)(getsl(buf, 7 + 100)/100.0);
-    epz = (double)(getsl(buf, 7 + 104)/100.0);
-    evx = (double)(getsl(buf, 7 + 186)/1000.0);
-    evy = (double)(getsl(buf, 7 + 190)/1000.0);
-    evz = (double)(getsl(buf, 7 + 194)/1000.0);
+    epx = (double)(getlesl(buf, 7 + 96)/100.0);
+    epy = (double)(getlesl(buf, 7 + 100)/100.0);
+    epz = (double)(getlesl(buf, 7 + 104)/100.0);
+    evx = (double)(getlesl(buf, 7 + 186)/1000.0);
+    evy = (double)(getlesl(buf, 7 + 190)/1000.0);
+    evz = (double)(getlesl(buf, 7 + 194)/1000.0);
     ecef_to_wgs84fix(&session->gpsdata, epx, epy, epz, evx, evy, evz);
     mask |= LATLON_SET | ALTITUDE_SET | SPEED_SET | TRACK_SET | CLIMB_SET  ;
-    session->gpsdata.fix.eph = (double)(getsl(buf, 7 + 252)/100.0);
-    session->gpsdata.fix.eps = (double)(getsl(buf, 7 + 254)/100.0);
+    session->gpsdata.fix.eph = (double)(getlesl(buf, 7 + 252)/100.0);
+    session->gpsdata.fix.eps = (double)(getlesl(buf, 7 + 254)/100.0);
 
     session->gpsdata.satellites_used = 0xffff ^ getub(buf, 7 + 16);
     mask |= USED_SET ;
 
     if (flags & FIX_CONV_DOP_VALID){
-	session->gpsdata.hdop = (double)(getuw(buf, 7 + 56)/100.0);
-	session->gpsdata.gdop = (double)(getuw(buf, 7 + 58)/100.0);
-	session->gpsdata.pdop = (double)(getuw(buf, 7 + 60)/100.0);
-	session->gpsdata.vdop = (double)(getuw(buf, 7 + 62)/100.0);
-	session->gpsdata.tdop = (double)(getuw(buf, 7 + 64)/100.0);
+	session->gpsdata.hdop = (double)(getleuw(buf, 7 + 56)/100.0);
+	session->gpsdata.gdop = (double)(getleuw(buf, 7 + 58)/100.0);
+	session->gpsdata.pdop = (double)(getleuw(buf, 7 + 60)/100.0);
+	session->gpsdata.vdop = (double)(getleuw(buf, 7 + 62)/100.0);
+	session->gpsdata.tdop = (double)(getleuw(buf, 7 + 64)/100.0);
 	mask |= HDOP_SET | GDOP_SET | PDOP_SET | VDOP_SET | TDOP_SET;
     }
 
@@ -102,12 +102,12 @@ static gps_mask_t decode_itk_prnstatus(struct gps_device_t *session, unsigned ch
     double t;
 
     if (len < 62){
-	gpsd_report(LOG_PROG, "ITALK: runt PRN_STATUS (len=%d)\n", len);
+	gpsd_report(LOG_PROG, "ITALK: runt PRN_STATUS (len=%zu)\n", len);
 	return ERROR_SET;
     }
 
-    gps_week = getuw(buf, 7 + 4);
-    tow = getul(buf, 7 + 6);
+    gps_week = getleuw(buf, 7 + 4);
+    tow = getleul(buf, 7 + 6);
     t = gpstime_to_unix((int)gps_week, tow/1000.0) - session->context->leap_seconds;
     session->gpsdata.sentence_time = session->gpsdata.fix.time = t;
 
@@ -115,14 +115,14 @@ static gps_mask_t decode_itk_prnstatus(struct gps_device_t *session, unsigned ch
     nchan = (unsigned int)((len - 10 - 52) / 20);
     nsv = 0;
     for (i = st = 0; i < nchan; i++) {
-	int off = 7+ 52 + 20 * i;
+	unsigned int off = 7+ 52 + 20 * i;
 	unsigned short flags;
 
-	flags = getuw(buf, off);
-	session->gpsdata.ss[i]		= (int)getuw(buf, off+2)&0xff;
-	session->gpsdata.PRN[i]		= (int)getuw(buf, off+4)&0xff;
-	session->gpsdata.elevation[i]	= (int)getsw(buf, off+6)&0xff;
-	session->gpsdata.azimuth[i]	= (int)getsw(buf, off+8)&0xff;
+	flags = getleuw(buf, off);
+	session->gpsdata.ss[i]		= (int)getleuw(buf, off+2)&0xff;
+	session->gpsdata.PRN[i]		= (int)getleuw(buf, off+4)&0xff;
+	session->gpsdata.elevation[i]	= (int)getlesw(buf, off+6)&0xff;
+	session->gpsdata.azimuth[i]	= (int)getlesw(buf, off+8)&0xff;
 	if (session->gpsdata.PRN[i]){
 	    st++;
 	    if (flags & PRN_FLAG_USE_IN_NAV)
@@ -143,20 +143,21 @@ static gps_mask_t decode_itk_utcionomodel(struct gps_device_t *session, unsigned
     double t;
 
     if (len != 64){
-	gpsd_report(LOG_PROG, "ITALK: bad UTC_IONO_MODEL (len %d, should be 64)\n", len);
+	gpsd_report(LOG_PROG,
+		    "ITALK: bad UTC_IONO_MODEL (len %zu, should be 64)\n", len);
 	return ERROR_SET;
     }
 
-    flags = getuw(buf, 7);
+    flags = getleuw(buf, 7);
     if (0 == (flags & UTC_IONO_MODEL_UTCVALID))
 	return 0;
 
-    leap = (int)getuw(buf, 7 + 24);
+    leap = (int)getleuw(buf, 7 + 24);
     if (session->context->leap_seconds < leap)
 	session->context->leap_seconds = leap;
 
-    gps_week = getuw(buf, 7 + 36);
-    tow = getul(buf, 7 + 38);
+    gps_week = getleuw(buf, 7 + 36);
+    tow = getleul(buf, 7 + 38);
     t = gpstime_to_unix((int)gps_week, tow/1000.0) - session->context->leap_seconds;
     session->gpsdata.sentence_time = session->gpsdata.fix.time = t;
 
@@ -164,21 +165,21 @@ static gps_mask_t decode_itk_utcionomodel(struct gps_device_t *session, unsigned
 }
 
 /*@ +charint -usedef -compdef @*/
-static bool italk_write(int fd, unsigned char *msg, size_t msglen) {
-   bool      ok;
+static ssize_t italk_write(struct gps_device_t *session, char *msg, size_t msglen) {
+   ssize_t      status;
 
    /* CONSTRUCT THE MESSAGE */
 
    /* we may need to dump the message */
    gpsd_report(LOG_IO, "writing italk control type %02x:%s\n",
-	       msg[0], gpsd_hexdump(msg, msglen));
+	msg[0], gpsd_hexdump_wrapper(msg, msglen, LOG_IO));
 #ifdef ALLOW_RECONFIGURE
-   ok = (write(fd, msg, msglen) == (ssize_t)msglen);
-   (void)tcdrain(fd);
+   status = write(session->gpsdata.gps_fd, msg, msglen);
+   (void)tcdrain(session->gpsdata.gps_fd);
 #else
-   ok = 0;
+   status = -1;
 #endif /* ALLOW_RECONFIGURE */
-   return(ok);
+   return(status);
 }
 /*@ -charint +usedef +compdef @*/
 
@@ -193,43 +194,44 @@ static gps_mask_t italk_parse(struct gps_device_t *session, unsigned char *buf, 
 
     type = (uint)getub(buf, 4);
     /* we may need to dump the raw packet */
-    gpsd_report(LOG_RAW, "raw italk packet type 0x%02x length %d: %s\n", type, len, gpsd_hexdump(buf, len));
+    gpsd_report(LOG_RAW, "raw italk packet type 0x%02x length %zu: %s\n",
+	type, len, gpsd_hexdump_wrapper(buf, len, LOG_RAW));
 
     switch (type)
     {
     case ITALK_NAV_FIX:
-	gpsd_report(LOG_IO, "iTalk NAV_FIX len %d\n", len);
+	gpsd_report(LOG_IO, "iTalk NAV_FIX len %zu\n", len);
 	mask = decode_itk_navfix(session, buf, len);
 	break;
     case ITALK_PRN_STATUS:
-	gpsd_report(LOG_IO, "iTalk PRN_STATUS len %d\n", len);
+	gpsd_report(LOG_IO, "iTalk PRN_STATUS len %zu\n", len);
 	mask = decode_itk_prnstatus(session, buf, len);
 	break;
     case ITALK_UTC_IONO_MODEL:
-	gpsd_report(LOG_IO, "iTalk UTC_IONO_MODEL len %d\n", len);
+	gpsd_report(LOG_IO, "iTalk UTC_IONO_MODEL len %zu\n", len);
 	mask = decode_itk_utcionomodel(session, buf, len);
 	break;
 
     case ITALK_ACQ_DATA:
-	gpsd_report(LOG_IO, "iTalk ACQ_DATA len %d\n", len);
+	gpsd_report(LOG_IO, "iTalk ACQ_DATA len %zu\n", len);
 	break;
     case ITALK_TRACK:
-	gpsd_report(LOG_IO, "iTalk TRACK len %d\n", len);
+	gpsd_report(LOG_IO, "iTalk TRACK len %zu\n", len);
 	break;
     case ITALK_PSEUDO:
-	gpsd_report(LOG_IO, "iTalk PSEUDO len %d\n", len);
+	gpsd_report(LOG_IO, "iTalk PSEUDO len %zu\n", len);
 	break;
     case ITALK_RAW_ALMANAC:
-	gpsd_report(LOG_IO, "iTalk RAW_ALMANAC len %d\n", len);
+	gpsd_report(LOG_IO, "iTalk RAW_ALMANAC len %zu\n", len);
 	break;
     case ITALK_RAW_EPHEMERIS:
-	gpsd_report(LOG_IO, "iTalk RAW_EPHEMERIS len %d\n", len);
+	gpsd_report(LOG_IO, "iTalk RAW_EPHEMERIS len %zu\n", len);
 	break;
     case ITALK_SUBFRAME:
-	gpsd_report(LOG_IO, "iTalk SUBFRAME len %d\n", len);
+	gpsd_report(LOG_IO, "iTalk SUBFRAME len %zu\n", len);
 	break;
     case ITALK_BIT_STREAM:
-	gpsd_report(LOG_IO, "iTalk BIT_STREAM len %d\n", len);
+	gpsd_report(LOG_IO, "iTalk BIT_STREAM len %zu\n", len);
 	break;
 
     case ITALK_AGC:
@@ -263,10 +265,13 @@ static gps_mask_t italk_parse(struct gps_device_t *session, unsigned char *buf, 
     case ITALK_PULL_FIX:
     case ITALK_MEMCTRL:
     case ITALK_STOP_TASK:
-	gpsd_report(LOG_IO, "iTalk not processing packet: id 0x%02x length %d\n", type, len);
+	gpsd_report(LOG_IO,
+		    "iTalk not processing packet: id 0x%02x length %zu\n",
+		    type, len);
 	break;
     default:
-	gpsd_report(LOG_IO, "iTalk unknown packet: id 0x%02x length %d\n", type, len);
+	gpsd_report(LOG_IO, "iTalk unknown packet: id 0x%02x length %zu\n",
+		    type, len);
     }
     if (mask == ERROR_SET)
 	mask = 0;
@@ -284,12 +289,12 @@ static gps_mask_t italk_parse_input(struct gps_device_t *session)
 
     if (session->packet.type == ITALK_PACKET){
 	st = italk_parse(session, session->packet.outbuffer, session->packet.outbuflen);
-	session->gpsdata.driver_mode = 1;	/* binary */
+	session->gpsdata.driver_mode = MODE_BINARY;	/* binary */
 	return st;
 #ifdef NMEA_ENABLE
     } else if (session->packet.type == NMEA_PACKET) {
 	st = nmea_parse((char *)session->packet.outbuffer, session);
-	session->gpsdata.driver_mode = 0;	/* NMEA */
+	session->gpsdata.driver_mode = MODE_NMEA;	/* NMEA */
 	return st;
 #endif /* NMEA_ENABLE */
     } else
@@ -300,11 +305,11 @@ static bool italk_set_mode(struct gps_device_t *session UNUSED,
 			      speed_t speed UNUSED, bool mode UNUSED)
 {
     /*@ +charint @*/
-    unsigned char msg[] = {0,};
+    char msg[] = {0,};
 
     /* HACK THE MESSAGE */
 
-    return italk_write(session->gpsdata.gps_fd, msg, sizeof(msg));
+    return (italk_write(session, msg, sizeof(msg)) != -1);
     /*@ +charint @*/
 }
 
@@ -315,12 +320,9 @@ static bool italk_speed(struct gps_device_t *session, speed_t speed)
 
 static void italk_mode(struct gps_device_t *session, int mode)
 {
-    if (mode == 0) {
-	(void)gpsd_switch_driver(session, "Generic NMEA");
+    if (mode == MODE_NMEA) {
 	(void)italk_set_mode(session, session->gpsdata.baudrate, false);
-	session->gpsdata.driver_mode = 0;	/* NMEA */
-    } else
-	session->gpsdata.driver_mode = 1;	/* binary */
+    }
 }
 
 #ifdef ALLOW_RECONFIGURE
@@ -344,11 +346,13 @@ static void italk_ping(struct gps_device_t *session)
 struct gps_type_t italk_binary =
 {
     .type_name      = "iTalk binary",	/* full name of type */
-    .trigger        = NULL,		/* recognize the type */
+    .packet_type    = ITALK_PACKET,	/* associated lexer packet type */
+    .trigger	    = NULL,		/* recognize the type */
     .channels       = 12,		/* consumer-grade GPS */
+    .control_send   = italk_write,	/* how to send a control string */
     .probe_wakeup   = NULL,		/* no wakeup to be done before hunt */
-    .probe_detect   = NULL,        	/* how to detect at startup time */
-    .probe_subtype  = NULL,        	/* initialize the device */
+    .probe_detect   = NULL,		/* how to detect at startup time */
+    .probe_subtype  = NULL,		/* initialize the device */
 #ifdef ALLOW_RECONFIGURE
     .configurator   = italk_configurator,/* configure the device */
 #endif /* ALLOW_RECONFIGURE */
@@ -420,7 +424,7 @@ static void itrax_probe_subtype(struct gps_device_t *session, unsigned int seq)
 /* start it reporting */
 {
     if (seq == 0) {
-	/* initialize GPS clock with current system time */ 
+	/* initialize GPS clock with current system time */
 	struct tm when;
 	double integral, fractional;
 	time_t intfixtime;
@@ -444,7 +448,7 @@ static void itrax_configurator(struct gps_device_t *session, int seq)
 {
     if (seq == 0) {
 	(void)literal_send(session->gpsdata.gps_fd, "$PFST,SYNCMODE,1\r\n");
-	(void)literal_send(session->gpsdata.gps_fd, 
+	(void)literal_send(session->gpsdata.gps_fd,
 		    ITRAX_MODESTRING, session->gpsdata.baudrate);
     }
 }
@@ -480,10 +484,12 @@ static void itrax_wrap(struct gps_device_t *session)
 }
 
 /*@ -redef @*/
-static struct gps_type_t itrax = {
+const static struct gps_type_t itrax = {
     .type_name     = "iTrax",		/* full name of type */
+    .packet_type    = NMEA_PACKET;	/* associated lexer packet type */
     .trigger       = "$PFST,OK",	/* tells us to switch to Itrax */
     .channels      = 12,		/* consumer-grade GPS */
+    .control_send  = italk_write,	/* how to send a control string */
     .probe_wakeup  = NULL,		/* no wakeup to be done before hunt */
     .probe_detect  = NULL,		/* no probe */
     .probe_subtype = itrax_probe_subtype,	/* initialize */

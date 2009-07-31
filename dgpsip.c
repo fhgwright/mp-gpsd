@@ -1,7 +1,9 @@
 /* $Id$ */
 /* dgpsip.c -- gather and dispatch DGPS data from DGPSIP servers */
 #include <sys/types.h>
+#ifndef S_SPLINT_S
 #include <sys/socket.h>
+#endif /* S_SPLINT_S */
 #include <sys/time.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -35,8 +37,10 @@ int dgpsip_open(struct gps_context_t *context, const char *dgpsserver)
 	(void)gethostname(hn, sizeof(hn));
 	/* greeting required by some RTCM104 servers; others will ignore it */
 	(void)snprintf(buf,sizeof(buf), "HELO %s gpsd %s\r\nR\r\n",hn,VERSION);
-	(void)write(context->dsock, buf, strlen(buf));
-	context->dgnss_service = dgnss_dgpsip;
+	if (write(context->dsock, buf, strlen(buf)) == (ssize_t)strlen(buf))
+	    context->dgnss_service = dgnss_dgpsip;
+	else
+	    gpsd_report(LOG_ERROR, "hello to DGPS server %s failed\n", dgpsserver);
     } else
 	gpsd_report(LOG_ERROR, "can't connect to DGPS server %s, netlib error %d.\n", dgpsserver, context->dsock);
     opts = fcntl(context->dsock, F_GETFL);
@@ -62,8 +66,10 @@ void dgpsip_report(struct gps_device_t *session)
 			   session->gpsdata.fix.latitude, 
 			   session->gpsdata.fix.longitude, 
 			   session->gpsdata.fix.altitude);
-	    (void)write(session->context->dsock, buf, strlen(buf));
-	    gpsd_report(LOG_IO, "=> dgps %s", buf);
+	    if (write(session->context->dsock, buf, strlen(buf)) == (ssize_t)strlen(buf))
+		gpsd_report(LOG_IO, "=> dgps %s", buf);
+	    else
+		gpsd_report(LOG_IO, "write to dgps FAILED");
 	}
     }
 }

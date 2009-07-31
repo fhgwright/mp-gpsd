@@ -23,12 +23,19 @@ to reverse his refusal to send us an eval unit.
 
 ** To do:
 
+*** Command to ship RTCM corrections to a specified device
+
+At the moment, if a GPS accepts RTCM corrections and they are
+available, gpsd ships them to the device from which the GPS is
+reporting fix data.  Some GPSes have auxiliary ports for RTCM; 
+there should be a (privileged) command to redirect RTCM connections.
+
 *** libgps should try to automatically try to reconnect when a poll fails
 
 Petter Reinholdtsen suggests:
 
 At the moment, when a gpsd client using libgps is connected to the
-gpsd server, and the server is restarted, the client looses the
+gpsd server, and the server is restarted, the client loses the
 connection and do not update any more.
 
 It would be nice if the gps_poll() and gps_query() would try to
@@ -61,21 +68,6 @@ implement, but it would change gps_data_t and require a library
 version bump.)
 
 This is Berlios FR #3789.
-
-*** Optimize the use of gpsd_hexdump and gpsd_report
-
-These functions still consume a significant (ie. non-zero) fraction of
-CPU time at -D0 or -D1. Possible solutions include a wrapper around
-gpsd_hexdump to only dump when the debug level is high enough, or
-modifying gpsd_report to handle the hexdump call. This may require (at
-worst) a library version number increment, or at least changing every
-invocation of gpsd_hexdump. Not something to be done lightly.
-
-*** Change O output precision to %.9f for degrees and %.3f for meters
-
-This corresponds to 1mm accuracy, which is better than the horizontal
-accuracy of RTK GPS. This will be revisited; receivers are commercially
-available that claim to have 0.1mm accuracy
 
 *** Full Python wrapper for libgpsd
 
@@ -122,15 +114,6 @@ GPSD_UNITS environment variable and chooses its UI mode depending on
 whether or not it's running under X.  There is controversy about this 
 proposal on the dev list.
 
-*** send/expect for the NMEA driver initializer
-
-We've had one report of a GPS, the Garmin GPS-10, which gpsd puts in a 
-bad state because the device chokes on having all of our NMEA probe strings
-shoved at it without having time to respond.  A simple send-expect
-function (ship given string, wait until specified reply arrives or time
-out) would solve this problem and might help avoid problems with other
-GPSes we haven't encountered yet.
-
 *** SiRF firmware uploader
 
 Chris Kuethe has shipped a 0.0 pre-alpha version.  It is not yet 
@@ -166,26 +149,11 @@ protocol, flexible enough to handle all the quantities required, and it
 is actually in use in production reference networks. RT-IGS is also a
 packet-oriented format, rather than a file-oriented format like RINEX.
 
-*** RTCM support.
+*** RTCM3 support.
 
-We have an RTCM packet decoder, and untested scratch code to serve
-RTCM packets to port 2101.  Here's the plan for the rest of it:
-
-1) Inversion needs to be done somewhere in the encoding logic.
-
-2) Wolfgang's decoder-hardening patches.
-
-3) Test productions.  I have one that tests dumping and one that uses   
-   passthrough mode to test that pack() and repack() are inverse.  We
-   should have an undumping torture test.
-
-4) What about rtcm_output_magnavox() anyway?  Should that be made
-   available as an output mode of rtcmdecode and documented?
-
-5) Extend the test framework so we can verify RTCM service.
-
-6) Generate and broadcast RTCM corrections from an attached device?
-   Might not be possible -- appears to need nanosecond timing.
+Previous plans for more RTCM2 support seem to have been overtaken by
+events, e.g. the world moving to RTCM3.  There is an incomplete
+decoder which needs to be finished.
 
 *** Do the research to figure out just what is going on with status bits
 
@@ -224,25 +192,6 @@ supposed to indicate a valid fix that has a DOP too high or fails
 an elevation test.
 
 ** Future features (?)
-
-*** iTalk support
-
-There is a minimally functional driver for the Fastrax iTalk3 protocol.
-It is still very much a work in progress. It is now compiled in by default
-so that we can collect bug reports. Version 3 of iTalk is not backwards
-compatible; we do not anticipate supporting previous versions unless
-someone requests it and is able to provide us hardware.
-
-*** Navcom support
-
-Initial support for the Navcom binary protocol has been committed to
-allow for in-tree development. It is compiled in by default.
-
-*** UBX support
-
-There is a minimally functional driver for the uBlox UBX protocol. It is
-still very much a work in progress.  It is now compiled in by default so
-that we can collect bug reports.
 
 *** Support for more survey / professional / up-scale receivers.
 

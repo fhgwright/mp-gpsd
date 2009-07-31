@@ -25,7 +25,7 @@ enum isgpsstat_t {
 };
 #define ISGPS_ERRLEVEL_BASE	5
 
-#define RTCM_MAX	(RTCM_WORDS_MAX * sizeof(isgps30bits_t))
+#define RTCM_MAX	(RTCM2_WORDS_MAX * sizeof(isgps30bits_t))
 
 /*
  * The packet buffers need to be as long than the longest packet we
@@ -51,7 +51,8 @@ enum isgpsstat_t {
 struct gps_packet_t {
     /* packet-getter internals */
     int	type;
-#define BAD_PACKET	-1
+#define BAD_PACKET	-2
+#define EMPTY_PACKET	-1
 #define COMMENT_PACKET	0
 #define NMEA_PACKET	1
 #define SIRF_PACKET	2
@@ -59,11 +60,13 @@ struct gps_packet_t {
 #define TSIP_PACKET	4
 #define EVERMORE_PACKET	5
 #define ITALK_PACKET	6
-#define RTCM_PACKET	7
-#define GARMIN_PACKET	8
-#define NAVCOM_PACKET	9
-#define UBX_PACKET	10
-#define GARMINTXT_PACKET	11
+#define GARMIN_PACKET	7
+#define NAVCOM_PACKET	8
+#define RTCM2_PACKET	9
+#define RTCM3_PACKET	10
+#define UBX_PACKET	11
+#define GARMINTXT_PACKET	12
+#define SUPERSTAR2_PACKET	13
     unsigned int state;
     size_t length;
     unsigned char inbuffer[MAX_PACKET_LENGTH*2+1];
@@ -85,16 +88,17 @@ struct gps_packet_t {
 	bool            locked;
 	int             curr_offset;
 	isgps30bits_t   curr_word;
-	isgps30bits_t   buf[RTCM_WORDS_MAX];
+	isgps30bits_t   buf[RTCM2_WORDS_MAX];
 	unsigned int    bufindex;
     } isgps;
 };
 
 extern void packet_reset(struct gps_packet_t *);
 extern void packet_pushback(struct gps_packet_t *);
-extern ssize_t packet_parse(struct gps_packet_t *, size_t);
+extern void packet_parse(struct gps_packet_t *);
 extern ssize_t packet_get(int, struct gps_packet_t *);
 extern int packet_sniff(struct gps_packet_t *);
+#define packet_buffered_input(lexer) ((lexer)->inbuffer + (lexer)->inbuflen - (lexer)->inbufptr)
 
 extern void isgps_init(/*@out@*/struct gps_packet_t *);
 enum isgpsstat_t isgps_decode(struct gps_packet_t *, 
@@ -105,12 +109,15 @@ enum isgpsstat_t isgps_decode(struct gps_packet_t *,
 extern unsigned int isgps_parity(isgps30bits_t);
 extern void isgps_output_magnavox(isgps30bits_t *, unsigned int, FILE *);
 
-extern enum isgpsstat_t rtcm_decode(struct gps_packet_t *, unsigned int);
-extern void rtcm_dump(struct rtcm_t *, /*@out@*/char[], size_t);
-extern int rtcm_undump(/*@out@*/struct rtcm_t *, char *);
-extern void rtcm_unpack(/*@out@*/struct rtcm_t *, char *);
-extern bool rtcm_repack(struct rtcm_t *, isgps30bits_t *);
-extern void rtcm_output_magnavox(isgps30bits_t *, FILE *);
+extern enum isgpsstat_t rtcm2_decode(struct gps_packet_t *, unsigned int);
+extern void rtcm2_dump(struct rtcm2_t *, /*@out@*/char[], size_t);
+extern int rtcm2_undump(/*@out@*/struct rtcm2_t *, char *);
+extern void rtcm2_unpack(/*@out@*/struct rtcm2_t *, char *);
+extern bool rtcm2_repack(struct rtcm2_t *, isgps30bits_t *);
+extern void rtcm2_output_magnavox(isgps30bits_t *, FILE *);
+
+extern void rtcm3_unpack(/*@out@*/struct rtcm3_t *, char *);
+extern void rtcm3_dump(struct rtcm3_t *rtcm, FILE *);
 
 /* Next, declarations for the core library... */
 
@@ -174,8 +181,10 @@ struct gps_device_t;
 struct gps_type_t {
 /* GPS method table, describes how to talk to a particular GPS type */
     /*@observer@*/char *type_name;
+    int packet_type;
     /*@observer@*//*@null@*/char *trigger;
     int channels;
+    /*@null@*/ssize_t (*control_send)(struct gps_device_t *session, char *buf, size_t buflen);
     /*@null@*/bool (*probe_detect)(struct gps_device_t *session);
     /*@null@*/void (*probe_wakeup)(struct gps_device_t *session);
     /*@null@*/void (*probe_subtype)(struct gps_device_t *session, unsigned int seq);
@@ -187,6 +196,8 @@ struct gps_type_t {
     /*@null@*/ssize_t (*rtcm_writer)(struct gps_device_t *session, char *rtcmbuf, size_t rtcmbytes);
     /*@null@*/bool (*speed_switcher)(struct gps_device_t *session, speed_t speed);
     /*@null@*/void (*mode_switcher)(struct gps_device_t *session, int mode);
+#define MODE_NMEA	0
+#define MODE_BINARY	1
     /*@null@*/bool (*rate_switcher)(struct gps_device_t *session, double rate);
     int cycle_chars;
 #ifdef ALLOW_RECONFIGURE 
@@ -267,6 +278,11 @@ struct gps_device_t {
 #endif /* ALLOW_RECONFIGURE */
 	} sirf;
 #endif /* SIRF_ENABLE */
+#ifdef SUPERSTAR2_ENABLE
+	struct {
+	    unsigned short gps_week;
+	} superstar2;
+#endif /* SUPERSTAR2_ENABLE */
 #ifdef TSIP_ENABLE
 	struct {
 	    int16_t gps_week;		/* Current GPS week number */
@@ -318,7 +334,7 @@ struct gps_device_t {
 	    bool            locked;
 	    int             curr_offset;
 	    isgps30bits_t   curr_word;
-	    isgps30bits_t   buf[RTCM_WORDS_MAX];
+	    isgps30bits_t   buf[RTCM2_WORDS_MAX];
 	    unsigned int    bufindex;
 	} isgps;
 #endif /* BINARY_ENABLE */
@@ -342,7 +358,8 @@ extern struct gps_type_t **gpsd_drivers;
 /* gpsd library internal prototypes */
 extern gps_mask_t nmea_parse_input(struct gps_device_t *);
 extern gps_mask_t nmea_parse(char *, struct gps_device_t *);
-extern int nmea_send(int, const char *, ... );
+extern ssize_t nmea_write(struct gps_device_t *session, char *buf, size_t len);
+extern ssize_t nmea_send(struct gps_device_t *session, const char *, ... );
 extern void nmea_add_checksum(char *);
 
 ssize_t generic_get(struct gps_device_t *);
@@ -361,7 +378,7 @@ extern void dgnss_report(struct gps_device_t *);
 extern void dgnss_autoconnect(struct gps_context_t *, double, double);
 
 extern void rtcm_relay(struct gps_device_t *);
-extern void rtcm_output_mag(isgps30bits_t *, FILE *);
+extern void rtcm2_output_mag(isgps30bits_t *, FILE *);
 
 extern int dgpsip_open(struct gps_context_t *, const char *);
 extern void dgpsip_report(struct gps_device_t *);
@@ -383,9 +400,12 @@ extern void gpsd_close(struct gps_device_t *);
 
 extern void gpsd_zero_satellites(/*@out@*/struct gps_data_t *sp)/*@modifies sp@*/;
 extern void gpsd_interpret_subframe(struct gps_device_t *, unsigned int[]);
-extern /*@ observer @*/ char *gpsd_hexdump(const void *, size_t);
-extern int gpsd_hexpack(char *, char *, int);
+extern int gpsd_hexdump_level;
+extern /*@ observer @*/ char *gpsd_hexdump(/*@null@*/const void *, size_t);
+extern /*@ observer @*/ char *gpsd_hexdump_wrapper(/*@null@*/const void *, size_t, int);
+extern int gpsd_hexpack(char *, char *, size_t);
 extern int hex2bin(char *);
+extern ssize_t hex_escapes(/*@out@*/char *cooked, const char *raw);
 extern void ntpd_link_activate(struct gps_device_t *session);
 extern char /*@observer@*/ *gpsd_id(/*@in@*/struct gps_device_t *);
 extern void gpsd_position_fix_dump(struct gps_device_t *, /*@out@*/char[], size_t);
@@ -423,12 +443,31 @@ extern void gpsd_deactivate(struct gps_device_t *);
 extern gps_mask_t gpsd_poll(struct gps_device_t *);
 extern void gpsd_wrap(struct gps_device_t *);
 
+/* exceptional driver methods */
+#ifdef UBX_ENABLE
+extern gps_mask_t ubx_parse(struct gps_device_t *session, 
+			    unsigned char *buf, size_t len);
+extern bool ubx_write(int fd, unsigned int msg_class, unsigned int msg_id, 
+		      /*@null@*/unsigned char *msg, unsigned short data_len);
+extern void ubx_catch_model(struct gps_device_t *session,
+			    unsigned char *buf, size_t len);
+#endif /* UBX_ENABLE */
+
+#ifdef MKT3301_ENABLE
+    extern gps_mask_t processMKT3301(int c UNUSED, char *field[], struct gps_device_t *session);
+#endif /* MKT3301_ENABLE */
+
+
+
 /* caller should supply this */
+# if __GNUC__ >= 3 || (__GNUC__ == 2 && __GNUC_MINOR__ >= 7)
+__attribute__((__format__(__printf__, 2, 3))) void gpsd_report(int, const char *, ...);
+# else /* not a new enough GCC, use the unprotected prototype */
 void gpsd_report(int, const char *, ...);
+#endif
 
 #ifdef S_SPLINT_S
 extern bool finite(double);
-extern int cfmakeraw(struct termios *);
 extern struct protoent *getprotobyname(const char *);
 extern /*@observer@*/char *strptime(const char *,const char *tp,/*@out@*/struct tm *)/*@modifies tp@*/;
 extern struct tm *gmtime_r(const time_t *,/*@out@*/struct tm *tp)/*@modifies tp@*/;
@@ -455,8 +494,7 @@ extern float roundf(float x);
 void cfmakeraw(struct termios *);
 #endif /* defined(__CYGWIN__) */
 
-#endif /* _gpsd_h_ */
-
+#endif /* _GPSD_H_ */
 // Local variables:
 // mode: c
 // end:

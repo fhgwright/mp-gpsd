@@ -3,14 +3,20 @@
 
 #SUBDIRS = contrib
 
-#
-# Build stuff depending on Motif
-#
-if HAVE_MOTIF
-MOTIF_PROGS = xgps xgpsspeed
-endif
-
 XMLTO = xmlto
+
+#
+# Conditionally add programs depending on libraries that may or may not be present.
+#
+if HAVE_NCURSES
+CURSESPROGS = cgps sirfmon
+endif
+if HAVE_MOTIF
+MOTIF_PROGS = xgps
+endif
+if HAVE_XAW
+XAW_PROGS = xgpsspeed
+endif
 
 if HAVE_DBUS
 INCLUDES = $(DBUS_CFLAGS) $(DBUS_GLIB_CFLAGS) -DDBUS_API_SUBJECT_TO_CHANGE=1
@@ -18,22 +24,18 @@ DBUSPROGS = gpxlogger
 gpxlogger_LDADD = $(DBUS_GLIB_LIBS) libgps.la  -lm
 endif
 
-if HAVE_RTCM104
+if HAVE_RTCM104V2
 RTCM104PROGS = rtcmdecode
 RTCM104PAGES = rtcmdecode.1
 endif
 
-
-if HAVE_NCURSES
-CURSESPROGS = cgps sirfmon
-endif
-bin_PROGRAMS = $(DBUSPROGS) $(MOTIF_PROGS) $(RTCM104PROGS) $(CURSESPROGS) gpsctl gpspipe gpsflash cgpxlogger
+bin_PROGRAMS = $(DBUSPROGS) $(MOTIF_PROGS) $(XAW_PROGS) $(RTCM104PROGS) $(CURSESPROGS) gpsctl gpspipe gpsflash cgpxlogger gpsdlcdd
 sbin_PROGRAMS = gpsd
-check_PROGRAMS = bits_test gpsmm_test packet_test mkgmtime_test
+check_PROGRAMS = bits_test gpsmm_test packet_test mkgmtime_test geoid_test
 if HAVE_PYTHON
 dist_bin_SCRIPTS = gpsprof gpsfake gpscat
-python_PYTHON = gps.py gpsfake.py
-nodist_python_PYTHON = gpspacket.so
+python_PYTHON = gps.py gpsfake.py gpscap.py
+nodist_python_PYTHON = gpspacket.so gpslib.so
 PYTHONPAGES = gpsprof.1 gpsfake.1 gpscat.1
 endif
 
@@ -54,13 +56,13 @@ xgpsspeed_c_sources = \
 xgpsspeed_SOURCES = \
 	$(xgpsspeed_c_sources) \
 	xgpsspeed.icon
-xgpsspeed_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(XAW_LIBS) $(XM_LIBS) $(X_LIBS) $(X_PRE_LIBS) libgps.la -lm $(LIBPTHREAD)
+xgpsspeed_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(XAW_LIBS) $(X_LIBS) $(X_PRE_LIBS) libgps.la -lm $(LIBPTHREAD)
 
 #
 # Build cgps
 #
 cgps_SOURCES = cgps.c
-cgps_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) -lncurses libgps.la -lm $(LIBPTHREAD)
+cgps_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(NCURSES_LIBS) libgps.la -lm $(LIBPTHREAD)
 
 #
 # Build cgpxlogger
@@ -88,10 +90,16 @@ gpspipe_SOURCES = gpspipe.c
 gpspipe_LDADD = $(DBUS_LIBS) $(LIBM) libgps.la -lm
 
 #
+# Build gpsdlcdd
+#
+gpsdlcdd_SOURCES = gpsdlcdd.c
+gpsdlcdd_LDADD = $(LIBM) libgps.la -lm
+
+#
 # Build sirfmon
 #
 sirfmon_SOURCES = sirfmon.c
-sirfmon_LDADD = $(LIBM) -lncurses libgps.la -lm $(LIBPTHREAD)
+sirfmon_LDADD = $(LIBM) $(NCURSES_LIBS) libgps.la -lm $(LIBPTHREAD)
 
 #
 # Build rtcmdecode
@@ -126,9 +134,11 @@ libgpsd_c_sources = \
 	dgpsip.c \
 	ntrip.c \
 	sirf.c \
+	superstar2.c \
 	report.c \
 	isgps.c \
-	rtcm.c \
+	rtcm2.c \
+	rtcm3.c \
 	srecord.c \
 	bsd-base64.c \
 	strl.c \
@@ -141,29 +151,31 @@ libgpsd_c_sources = \
 	tsip.c \
 	evermore.c \
 	italk.c \
-	navcom.c
+	navcom.c \
+	bits.c \
+	crc24q.c
 
 libgpsd_h_sources = \
 	italk.h \
 	bsd-base64.h \
 	timebase.h \
 	bits.h \
-	packet_names.h \
-	rtcm.h \
-	gpsd.h
+	rtcm2.h \
+	crc24q.h
 
 BUILT_SOURCES = packet_names.h gpsd.h
+
 packet_names.h: packet_states.h
 	sed -e '/^ *\([A-Z][A-Z0-9_]*\),/s//   "\1",/' -e '/_states/s//_names/' < `test -f 'packet_states.h' || echo '$(srcdir)/'`packet_states.h > packet_names.h
 
 gpsd.h: gpsd.h-head gpsd.h-tail gpsd_config.h
-	cp gpsd.h-head gpsd.h
+	cat $(srcdir)/gpsd.h-head >gpsd.h
 	grep VERSION  gpsd_config.h >>gpsd.h
 	grep ENABLE gpsd_config.h >>gpsd.h
-	cat gpsd.h-tail >>gpsd.h
+	cat $(srcdir)/gpsd.h-tail >>gpsd.h
 
 libgps_la_SOURCES = $(libgpsd_c_sources) $(libgpsd_h_sources) \
-				rtcm.h libgpsmm.cpp packet_states.h
+				rtcm2.h libgpsmm.cpp packet_states.h
 nodist_libgps_la_SOURCES = packet_names.h
 libgps_la_LIBADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(LIBPTHREAD)
 
@@ -173,10 +185,10 @@ libgps_la_LIBADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(LIBPTHREAD)
 # install may require --root depending on what you're doing.
 # python setup.py install --root=$DESTIR --prefix=$PREFIX
 if HAVE_PYTHON
-PYEXTENSIONS = gpspacket.so
-noinst_SCRIPTS = gpspacket.so setup.py
+PYEXTENSIONS = gpspacket.so gpslib.so
+noinst_SCRIPTS = gpspacket.so gpslib.so setup.py
 
-gpspacket.so: gpspacket.c libgps.la
+gpspacket.so gpslib.so: gpspacket.c gpslib.c libgps.la
 	(pwd="`pwd`"; cd $(srcdir) && $(PYTHON) setup.py build_ext --build-lib "$$pwd" --build-temp "$$pwd/build" --include-dirs "$$pwd")
 endif
 # Clean up after Python
@@ -202,7 +214,13 @@ packet_test_SOURCES = packet_test.c
 packet_test_LDADD = $(LIBC) libgps.la -lm
 
 #
-# Build packets tester
+# Build geoid model tester
+#
+geoid_test_SOURCES = geoid_test.c
+geoid_test_LDADD = $(LIBC) libgps.la -lm
+
+#
+# Build time functions tester
 #
 mkgmtime_test_SOURCES = mkgmtime_test.c
 mkgmtime_test_LDADD = $(LIBC) libgps.la -lm
@@ -284,6 +302,7 @@ EXTRA_DIST = \
 	INSTALL \
 	COPYING \
 	TODO \
+	NEWS \
 	AUTHORS \
 	dgpsip-servers \
 	floattest.c \
@@ -314,29 +333,30 @@ EXTRA_DIST = \
 	valgrind-audit \
 	valgrind-suppressions \
 	gpspacket.c \
+	gpslib.c \
 	driver_proto.c \
 	logextract \
 	striplog \
 	setup.py \
 	packet_states.h \
 	libgps.pc.in \
-	libgpsd.pc.in
+	libgpsd.pc.in \
+	gpscap.ini
 
 CLEANFILES = $(BUILT_SOURCES) floattest *.core $(PYEXTENSIONS)
 
 pkgconfig_DATA = libgps.pc libgpsd.pc
 pkgconfigdir = $(libdir)/pkgconfig
 
-# This is not distributed
+# These are not distributed
 libgps: libgps.c .libs/libgps.a
 	$(CC) $(CFLAGS) -o libgps -lm -DTESTMAIN $(LIBPTHREAD) -g libgps.c .libs/libgps.a
 
 # Report splint warnings
-SPLINTOPTS = -I/usr/include/dbus-1.0/
-splint:
+SPLINTOPTS = -I/usr/include/dbus-1.0/ +quiet
+splint: gpsd.h packet_names.h
 	@echo "Running splint on daemon and libraries..."
-	@echo "Expect 'gpsd.c:230:39: Line expects to suppress 1 error, found 0 errors'"
-	-splint $(SPLINTOPTS) -redef $(gpsd_c_sources) $(libgpsd_c_sources)
+	-splint $(SPLINTOPTS) -exportlocal -redef $(gpsd_c_sources) $(libgpsd_c_sources)
 	@echo "Running splint on xgps..."
 	-splint $(SPLINTOPTS) -exportlocal $(xgps_SOURCES)
 	@echo "Running splint on cgps..."
@@ -357,10 +377,12 @@ splint:
 	-splint $(SPLINTOPTS) $(bits_test_SOURCES)
 	@echo "Running splint on packet_test test harness..."
 	-splint $(SPLINTOPTS) $(packet_test_SOURCES)
+	@echo "Running splint on geoid_test test harness..."
+	-splint $(SPLINTOPTS) $(geoid_test_SOURCES)
 
 # Bogon-checking the Python tools
 pychecker:
-	for f in gps.py gpsfake.py; do pychecker $$f; done
+	for f in gps.py gpsfake.py leapsecond.py; do pychecker $$f; done
 
 version:
 	@echo $(VERSION)
@@ -389,11 +411,15 @@ raw-regress:
 gps-makeregress: gpsd
 	$(srcdir)/regress-driver -b $(srcdir)/test/stable/*.log
 
+# To build an individual test for a load named foo.log, put it in
+# test/stable and do this:
+#	regress-driver -b test/stable/foo.log
+
 # Regression-test the RTCM decoder.
 rtcm-regress: rtcmdecode
 	@echo "Testing RTCM decoding..."
 	@mkdir -p test
-	@for f in $(srcdir)/test/*.rtcm; do \
+	@for f in $(srcdir)/test/*.rtcm2; do \
 		echo "Testing $${f}..."; \
 		$(srcdir)/rtcmdecode <$${f} >test/test.chk; \
 		diff -ub $${f}.chk test/test.chk; \
@@ -402,7 +428,7 @@ rtcm-regress: rtcmdecode
 
 # Rebuild the RTCM regression tests.
 rtcm-makeregress: rtcmdecode
-	@for f in $(srcdir)/test/*.rtcm; do \
+	@for f in $(srcdir)/test/*.rtcm2; do \
 		$(srcdir)/rtcmdecode < $${f} > $${f}.chk; \
 	done
 
@@ -416,6 +442,16 @@ packet-makeregress: packet_test
 	@mkdir -p test
 	$(srcdir)/packet_test >test/packet.test.chk
 
+# Regression-test the geoid tester.
+geoid-regress: geoid_test
+	@echo "Testing the geoid model..."
+	@$(srcdir)/geoid_test 37.371192 122.014965 | diff -u $(srcdir)/test/geoid.test.chk -
+
+# Rebuild the packet-getter regression test
+geoid-makeregress: geoid_test
+	@mkdir -p test
+	$(srcdir)/geoid_test 37.371192 122.014965 >test/geoid.test.chk
+
 # Test RTCM encoding using passthrough mode.
 undump-regress: rtcmdecode
 	@echo "Testing RTCM encoding..."
@@ -426,11 +462,17 @@ undump-regress: rtcmdecode
 
 # Regression-test the calendar functions
 time_regress: mkgmtime_test
-	mkgmtime_test
+	./mkgmtime_test
 
 # Do all normal regression tests
 testregress: gps-regress rtcm-regress packet-regress undump-regress time_regress
 	@echo "Regressions complete."
+
+# We would like "${MAKE} check" to run the regression tests.  automake
+# appears to have support for running programs, but not make targets.
+# Perhaps the tests should be moved into scripts, but then it's not
+# clear how to deal with $(srcdir).
+# TESTS=testregress
 
 #
 # Productions for testing unstable drivers.
@@ -448,15 +490,15 @@ unstable-makeregress: gpsd
 # This is how to ship a release to Berlios incomoing.
 # It requires developer access verified via ssh.
 #
-upload-ftp:
-	sha1 gpsd-$(VERSION).tar.gz >gpsd.sum
-	lftp -c "mput gpsd-$(VERSION).tar.gz gpsd.sum" ftp://ftp.berlios.de/incoming
+upload-ftp: dist
+	shasum gpsd-$(VERSION).tar.gz >gpsd.sum
+	lftp -c "open ftp://ftp.berlios.de/incoming; mput gpsd-$(VERSION).tar.gz gpsd.sum"
 
 #
 # This is how to tag a release for the SVN repository.
 # It requires developer access verified via ssh.
 #
-REPO=http://svn.berlios.de/svnroot/repos/gpsd
+REPO=https://svn.berlios.de/svnroot/repos/gpsd
 svn-tag:
 	svn copy $(REPO)/trunk $(REPO)/tags/release-$(VERSION) \
 		-m "Tagged for external release $(VERSION)"

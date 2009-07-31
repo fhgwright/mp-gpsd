@@ -2,7 +2,7 @@
  *
  * A prototype driver.  Doesn't run, doesn't even compile.
  *
- * For new driver authors: replace "PROTO" and "proto" with the name of
+ * For new driver authors: replace "_PROTO_" and "_proto_" with the name of
  * your new driver. That will give you a skeleton with all the required
  * functions defined.
  *
@@ -15,14 +15,16 @@
  * such a protocol you will need to add a decoder function for that
  * message.
  *
- * For anyone hacking this driver skeleton: "PROTO" and "proto" are now
+ * For anyone hacking this driver skeleton: "_PROTO_" and "_proto_" are now
  * reserved tokens. We suggest that they only ever be used as prefixes,
  * but if they are used infix, they must be used in a way that allows a
  * driver author to find-and-replace to create a unique namespace for
  * driver functions.
  *
- * In vi, ":%s/PROTO/MYDRIVER/g" and ":%s/proto/mydriver/g" must produce
- * a source file that can compile, even if it does nothing useful.
+ * If using vi, ":%s/_PROTO_/MYDRIVER/g" and ":%s/_proto_/mydriver/g" should
+ * produce a source file that comes very close to being useful. Other places
+ * for new driver hooks are gpsd.h-tail, packet_states.h, libgpsd_core.c and
+ * packet.c
  *
  */
 
@@ -38,7 +40,7 @@
 
 #include "gpsd_config.h"
 #include "gpsd.h"
-#if defined(PROTO_ENABLE) && defined(BINARY_ENABLE)
+#if defined(_PROTO__ENABLE) && defined(BINARY_ENABLE)
 
 #include "bits.h"
 
@@ -46,42 +48,42 @@
  * These routines are specific to this driver
  */
 
-static	gps_mask_t proto_parse_input(struct gps_device_t *);
-static	gps_mask_t proto_dispatch(struct gps_device_t *, unsigned char *, size_t );
-static	gps_mask_t proto_msg_navsol(struct gps_device_t *, unsigned char *, size_t );
-static	gps_mask_t proto_msg_utctime(struct gps_device_t *, unsigned char *, size_t );
-static	gps_mask_t proto_msg_svinfo(struct gps_device_t *, unsigned char *, size_t );
+static	gps_mask_t _proto__parse_input(struct gps_device_t *);
+static	gps_mask_t _proto__dispatch(struct gps_device_t *, unsigned char *, size_t );
+static	gps_mask_t _proto__msg_navsol(struct gps_device_t *, unsigned char *, size_t );
+static	gps_mask_t _proto__msg_utctime(struct gps_device_t *, unsigned char *, size_t );
+static	gps_mask_t _proto__msg_svinfo(struct gps_device_t *, unsigned char *, size_t );
 
 /*
  * These methods may be called elsewhere in gpsd
  */
-	bool proto_write(int , unsigned char *, size_t );
-	void proto_set_mode(struct gps_device_t *, speed_t ):
-static	bool proto_probe_detect(struct gps_device_t *)
-static	void proto_probe_wakeup(struct gps_device_t *)
-static	void proto_probe_subtype(struct gps_device_t *, unsigned int )
-static	void proto_configurator(struct gps_device_t *, unsigned int )
-static	bool proto_set_speed(struct gps_device_t *, speed_t )
-static	void proto_set_mode(struct gps_device_t *, int )
-static	void proto_revert(struct gps_device_t *)
-static	void proto_wrapup(struct gps_device_t *)
+static	ssize_t _proto__write(struct gps_device_t *, char *, size_t );
+static	bool _proto__probe_detect(struct gps_device_t *);
+static	void _proto__probe_wakeup(struct gps_device_t *);
+static	void _proto__probe_subtype(struct gps_device_t *, unsigned int );
+static	void _proto__configurator(struct gps_device_t *, unsigned int );
+static	bool _proto__set_speed(struct gps_device_t *, speed_t );
+static	void _proto__set_mode(struct gps_device_t *, int );
+static	void _proto__revert(struct gps_device_t *);
+static	void _proto__wrapup(struct gps_device_t *);
 
 /*
  * Decode the navigation solution message
  */
 static gps_mask_t
-proto_msg_navsol(struct gps_device_t *session, unsigned char *buf, size_t data_len)
+_proto__msg_navsol(struct gps_device_t *session, unsigned char *buf, size_t data_len)
 {
     gps_mask_t mask;
     int flags;
     double Px, Py, Pz, Vx, Vy, Vz;
 
-    if (data_len != PROTO_NAVSOL_MSG_LEN)
+    if (data_len != _PROTO__NAVSOL_MSG_LEN)
 	return 0;
 
+    gpsd_report(LOG_IO, "_proto_ NAVSOL - navigation data\n");
     /* if this protocol has a way to test message validity, use it */
     flags = GET_FLAGS();
-    if ((flags & PROTO_SOLUTION_VALID) == 0)
+    if ((flags & _PROTO__SOLUTION_VALID) == 0)
 	return 0;
 
     mask = ONLINE_SET;
@@ -113,19 +115,22 @@ proto_msg_navsol(struct gps_device_t *session, unsigned char *buf, size_t data_l
  * GPS Leap Seconds
  */
 static gps_mask_t
-proto_msg_utctime(struct gps_device_t *session, unsigned char *buf, size_t data_len)
+_proto__msg_utctime(struct gps_device_t *session, unsigned char *buf, size_t data_len)
 {
+    double t;
+
     if (data_len != UTCTIME_MSG_LEN)
 	return 0;
 
+    gpsd_report(LOG_IO, "_proto_ UTCTIME - navigation data\n");
     /* if this protocol has a way to test message validity, use it */
     flags = GET_FLAGS();
-    if ((flags & PROTO_TIME_VALID) == 0)
+    if ((flags & _PROTO__TIME_VALID) == 0)
 	return 0;
 
     tow = GET_MS_TIMEOFWEEK();
     gps_week = GET_WEEKNUMBER();
-    session->context->leap_seconds = GET_GPS_LEAPSECONDS()
+    session->context->leap_seconds = GET_GPS_LEAPSECONDS();
 
     t = gpstime_to_unix(gps_week, tow/1000.0) - session->context->leap_seconds;
     session->gpsdata.sentence_time = session->gpsdata.fix.time = t;
@@ -137,7 +142,7 @@ proto_msg_utctime(struct gps_device_t *session, unsigned char *buf, size_t data_
  * GPS Satellite Info
  */
 static gps_mask_t
-proto_msg_nav_svinfo(struct gps_device_t *session, unsigned char *buf, size_t data_len)
+_proto__msg_nav_svinfo(struct gps_device_t *session, unsigned char *buf, size_t data_len)
 {
     unsigned char i, st, nchan, nsv;
     unsigned int tow;
@@ -145,9 +150,10 @@ proto_msg_nav_svinfo(struct gps_device_t *session, unsigned char *buf, size_t da
     if (data_len != SVINFO_MSG_LEN )
 	return 0;
 
+    gpsd_report(LOG_IO, "_proto_ SVINFO - navigation data\n");
     /* if this protocol has a way to test message validity, use it */
     flags = GET_FLAGS();
-    if ((flags & PROTO_SVINFO_VALID) == 0)
+    if ((flags & _PROTO__SVINFO_VALID) == 0)
 	return 0;
 
     /*
@@ -184,18 +190,17 @@ proto_msg_nav_svinfo(struct gps_device_t *session, unsigned char *buf, size_t da
  * Write data to the device, doing any required padding or checksumming
  */
 /*@ +charint -usedef -compdef @*/
-static bool proto_write(int fd, unsigned char *msg, size_t msglen) 
+static ssize_t _proto__write(struct gps_device_t *session,
+			   char *msg, size_t msglen)
 {
    bool ok;
 
    /* CONSTRUCT THE MESSAGE */
 
    /* we may need to dump the message */
-   gpsd_report(LOG_IO, "writing proto control type %02x:%s\n", 
-	       msg[0], gpsd_hexdump(msg, msglen));
-   ok = (write(fd, msg, msglen) == (ssize_t)msglen);
-   (void)tcdrain(fd);
-   return(ok);
+   gpsd_report(LOG_IO, "writing _proto_ control type %02x:%s\n",
+	       msg[0], gpsd_hexdump_wrapper(msg, msglen, LOG_IO));
+   return gpsd_write(session, msg, msglen);
 }
 /*@ -charint +usedef +compdef @*/
 
@@ -203,11 +208,10 @@ static bool proto_write(int fd, unsigned char *msg, size_t msglen)
  * Parse the data from the device
  */
 /*@ +charint @*/
-gps_mask_t proto_dispatch(struct gps_device_t *session, unsigned char *buf, size_t len)
+gps_mask_t _proto__dispatch(struct gps_device_t *session, unsigned char *buf, size_t len)
 {
     size_t i;
     int type, used, visible;
-    double version;
 
     if (len == 0)
 	return 0;
@@ -215,15 +219,15 @@ gps_mask_t proto_dispatch(struct gps_device_t *session, unsigned char *buf, size
     type = GET_MESSAGE_TYPE();
 
     /* we may need to dump the raw packet */
-    gpsd_report(LOG_RAW, "raw proto packet type 0x%02x length %d: %s\n",
-	buf[0], len, buf2);
+    gpsd_report(LOG_RAW, "raw _proto_ packet type 0x%02x length %d: %s\n",
+	type, len, gpsd_hexdump_wrapper(buf, len, LOG_WARN));
 
    /*
     * XXX The tag field is only 8 bytes; be careful you do not overflow.
     * XXX Using an abbreviation (eg. "italk" -> "itk") may be useful.
-    */ 
+    */
     (void)snprintf(session->gpsdata.tag, sizeof(session->gpsdata.tag),
-	"PROTO%02x", type);
+	"_PROTO_%02x", type);
 
     switch (type)
     {
@@ -232,21 +236,11 @@ gps_mask_t proto_dispatch(struct gps_device_t *session, unsigned char *buf, size
     default:
 	/* XXX This gets noisy in a hurry. Change once your driver works */
 	gpsd_report(LOG_WARN, "unknown packet id %d length %d: %s\n",
-	    type, len, gpsd_hexdump(buf, len));
+	    type, len, gpsd_hexdump_wrapper(buf, len, LOG_WARN));
 	return 0;
     }
 }
 /*@ -charint @*/
-
-/*
- * Switch between NMEA and binary mode, if supported
- */
-static void proto_set_mode(struct gps_device_t *session, speed_t speed)
-{
-    /*
-     * Insert your actual mode switching code here.
-     */
-}
 
 /**********************************************************
  *
@@ -254,7 +248,7 @@ static void proto_set_mode(struct gps_device_t *session, speed_t speed)
  *
  **********************************************************/
 
-static bool proto_probe_detect(struct gps_device_t *session)
+static bool _proto__probe_detect(struct gps_device_t *session)
 {
    /*
     * This method is used to elicit a positively identifying
@@ -270,7 +264,7 @@ static bool proto_probe_detect(struct gps_device_t *session)
    return false;
 }
 
-static void proto_probe_wakeup(struct gps_device_t *session)
+static void _proto__probe_wakeup(struct gps_device_t *session)
 {
    /*
     * Code to make the device ready to communicate. This is
@@ -282,7 +276,7 @@ static void proto_probe_wakeup(struct gps_device_t *session)
     */
 }
 
-static void proto_probe_subtype(struct gps_device_t *session, unsigned int seq)
+static void _proto__probe_subtype(struct gps_device_t *session, unsigned int seq)
 {
     /*
      * Probe for subtypes here. If possible, get the software version and
@@ -292,7 +286,7 @@ static void proto_probe_subtype(struct gps_device_t *session, unsigned int seq)
      */
 }
 
-static void proto_configurator(struct gps_device_t *session, unsigned int seq)
+static void _proto__configurator(struct gps_device_t *session, unsigned int seq)
 {
     /* Change sentence mix and set reporting modes as needed */
 }
@@ -302,46 +296,57 @@ static void proto_configurator(struct gps_device_t *session, unsigned int seq)
  * a packet for this driver, it calls this method which passes the packet to
  * the binary processor or the nmea processor, depending on the session type.
  */
-static gps_mask_t proto_parse_input(struct gps_device_t *session)
+static gps_mask_t _proto__parse_input(struct gps_device_t *session)
 {
     gps_mask_t st;
 
-    if (session->packet_type == PROTO_PACKET){
-	st = proto_dispatch(session, session->outbuffer, session->outbuflen);
-	session->gpsdata.driver_mode = 1;
+    if (session->packet.type == _PROTO__PACKET){
+	st = _proto__dispatch(session, session->packet.outbuffer, session->packet.outbuflen);
+	session->gpsdata.driver_mode = MODE_BINARY;
 	return st;
 #ifdef NMEA_ENABLE
-    } else if (session->packet_type == NMEA_PACKET) {
-	st = nmea_parse((char *)session->outbuffer, session);
-	session->gpsdata.driver_mode = 0;
+    } else if (session->packet.type == NMEA_PACKET) {
+	st = nmea_parse((char *)session->packet.outbuffer, session);
+	session->gpsdata.driver_mode = MODE_NMEA;
 	return st;
 #endif /* NMEA_ENABLE */
     } else
 	return 0;
 }
 
-static bool proto_set_speed(struct gps_device_t *session, speed_t speed)
+static bool _proto__set_speed(struct gps_device_t *session, speed_t speed)
 {
     /* set port operating mode, speed, bits etc. here */
 }
 
-static void proto_set_mode(struct gps_device_t *session, int mode)
+/*
+ * Switch between NMEA and binary mode, if supported
+ */
+static void _proto__set_mode(struct gps_device_t *session, int mode)
 {
-    if (mode == 0) {
-	set_mode(session, session->gpsdata.baudrate);
-	session->gpsdata.driver_mode = 0;
+    if (mode == MODE_NMEA) {
+	// _proto__to_nmea(session->gpsdata.gps_fd,session->gpsdata.baudrate); /* send the mode switch control string */
+	session->gpsdata.driver_mode = MODE_NMEA;
+	/* 
+	 * Anticipatory switching works only when the packet getter is the
+	 * generic one and it recognizes packets of the type this driver 
+	 * is expecting.  This should be the normal case.
+	 */
 	(void)gpsd_switch_driver(session, "Generic NMEA");
+    } else {
+	session->back_to_nmea = false;
+	session->gpsdata.driver_mode = MODE_BINARY;
     }
 }
 
-static void proto_revert(struct gps_device_t *session)
+static void _proto__revert(struct gps_device_t *session)
 {
    /*
     * Reverse what the .configurator method changed.
     */
 }
 
-static void proto_wrapup(struct gps_device_t *session)
+static void _proto__wrapup(struct gps_device_t *session)
 {
    /*
     * Do release actions that are independent of whether the .configurator 
@@ -357,52 +362,56 @@ static void proto_wrapup(struct gps_device_t *session)
 /* you read this and methods could have been added   */
 /* or deleted. Unused methods can be set to NULL.    */
 /*                                                   */
-/* The latest situation can be found by inspecting   */
+/* The latest version can be found by inspecting   */
 /* the contents of struct gps_type_t in gpsd.h.      */
 /*                                                   */
 /* This always contains the correct definitions that */
 /* any driver must use to compile.                   */
 
 /* This is everything we export */
-struct gps_type_t proto_binary = {
+struct gps_type_t _proto__binary = {
     /* Full name of type */
-    .type_name        = "Prototype driver",
+    .type_name        = "_proto_ binary",
+    /* associated lexer packet type */
+    .packet_type    = NMEA_PACKET;
     /* Response string that identifies device (not active) */
     .trigger          = NULL,
     /* Number of satellite channels supported by the device */
     .channels         = 12,
+    /* Control string sender - should provide checksum and trailer */
+    .control_send     = _proto__write,
     /* Startup-time device detector */
-    .probe_detect     = proto_probe_detect,
+    .probe_detect     = _proto__probe_detect,
     /* Wakeup to be done before each baud hunt */
-    .probe_wakeup     = proto_probe_wakeup,
+    .probe_wakeup     = _proto__probe_wakeup,
     /* Initialize the device and get subtype */
-    .probe_subtype    = proto_probe_subtype,
+    .probe_subtype    = _proto__probe_subtype,
 #ifdef ALLOW_RECONFIGURE
     /* Enable what reports we need */
-    .configurator     = proto_configurator,
+    .configurator     = _proto__configurator,
 #endif /* ALLOW_RECONFIGURE */
     /* Packet getter (using default routine) */
     .get_packet       = generic_get,
     /* Parse message packets */
-    .parse_packet     = proto_parse_input,
+    .parse_packet     = _proto__parse_input,
     /* RTCM handler (using default routine) */
     .rtcm_writer      = pass_rtcm,
     /* Speed (baudrate) switch */
-    .speed_switcher   = proto_set_speed,
+    .speed_switcher   = _proto__set_speed,
     /* Switch to NMEA mode */
-    .mode_switcher    = proto_set_mode,
+    .mode_switcher    = _proto__set_mode,
     /* Message delivery rate switcher (not active) */
     .rate_switcher    = NULL,
     /* Number of chars per report cycle (not active) */
     .cycle_chars      = -1,
 #ifdef ALLOW_RECONFIGURE
     /* Undo the actions of .configurator */
-    .revert           = proto_revert,
+    .revert           = _proto__revert,
 #endif /* ALLOW_RECONFIGURE */
     /* Puts device back to original settings */
-    .wrapup           = proto_wrapup,
+    .wrapup           = _proto__wrapup,
     /* Number of updates per second */
     .cycle            = 1
 };
-#endif /* defined(PROTO_ENABLE) && defined(BINARY_ENABLE) */
+#endif /* defined(_PROTO__ENABLE) && defined(BINARY_ENABLE) */
 

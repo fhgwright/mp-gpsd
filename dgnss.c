@@ -2,7 +2,9 @@
 /* dgnss.c -- common interface to a number of Differential GNSS services */
 
 #include <sys/types.h>
+#ifndef S_SPLINT_S
 #include <sys/socket.h>
+#endif /* S_SPLINT_S */
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -19,7 +21,7 @@
 bool dgnss_url(char *name)
 /* is given string a valid URL for DGPS service? */
 {
-    return 
+    return
 	strncmp(name,DGNSS_PROTO_NTRIP,strlen(DGNSS_PROTO_NTRIP))==0
 	|| strncmp(name,DGNSS_PROTO_DGPSIP,strlen(DGNSS_PROTO_DGPSIP))==0;
 }
@@ -31,11 +33,11 @@ int dgnss_open(struct gps_context_t *context, char *dgnss_service)
 {
 #ifdef NTRIP_ENABLE
     if (strncmp(dgnss_service,DGNSS_PROTO_NTRIP,strlen(DGNSS_PROTO_NTRIP))==0)
-        return ntrip_open(context, dgnss_service + strlen(DGNSS_PROTO_NTRIP));
+	return ntrip_open(context, dgnss_service + strlen(DGNSS_PROTO_NTRIP));
 #endif
 
     if (strncmp(dgnss_service,DGNSS_PROTO_DGPSIP,strlen(DGNSS_PROTO_DGPSIP))==0)
-        return dgpsip_open(context, dgnss_service + strlen(DGNSS_PROTO_DGPSIP));
+	return dgpsip_open(context, dgnss_service + strlen(DGNSS_PROTO_DGPSIP));
 
 #ifndef REQUIRE_DGNSS_PROTO
     return dgpsip_open(context, dgnss_service);
@@ -84,17 +86,17 @@ void dgnss_autoconnect(struct gps_context_t *context, double lat, double lon)
 void rtcm_relay(struct gps_device_t *session)
 /* pass a DGNSS connection report to a session */
 {
-    if (session->gpsdata.gps_fd !=-1 
+    if (session->gpsdata.gps_fd !=-1
 	&& session->context->rtcmbytes > -1
 	&& session->rtcmtime < session->context->rtcmtime
 	&& session->device_type->rtcm_writer != NULL) {
-	if (session->device_type->rtcm_writer(session, 
-					      session->context->rtcmbuf, 
+	if (session->device_type->rtcm_writer(session,
+					      session->context->rtcmbuf,
 					      (size_t)session->context->rtcmbytes) == 0)
-	    gpsd_report(LOG_ERROR, "Write to rtcm sink failed\n");
-	else { 
+	    gpsd_report(LOG_ERROR, "Write to RTCM sink failed\n");
+	else {
 	    session->rtcmtime = timestamp();
-	    gpsd_report(LOG_IO, "<= DGPS: %d bytes of RTCM relayed.\n", session->context->rtcmbytes);
+	    gpsd_report(LOG_IO, "<= DGPS: %zd bytes of RTCM relayed.\n", session->context->rtcmbytes);
 	}
     }
 }

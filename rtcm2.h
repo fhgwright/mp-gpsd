@@ -1,7 +1,10 @@
 /* $Id$ */
+#ifndef _GPSD_RTCM2_H_
+#define _GPSD_RTCM2_H_
+
 /*****************************************************************************
 
-This is a decoder for RTCM-104, an obscure and complicated serial
+This is a decoder for RTCM-104 2.x, an obscure and complicated serial
 protocol used for broadcasting pseudorange corrections from
 differential-GPS reference stations.  The applicable
 standard is
@@ -11,24 +14,26 @@ RTCM PAPER 194-93/SC 104-STD
 
 Ordering instructions are accessible from <http://www.rtcm.org/>
 under "Publications".  This describes version 2.1 of the RTCM specification.
+RTCM-104 was later incrementally revised up to a 2.3 level before being 
+completely redesigned as level 3.0.
 
 Also applicable is ITU-R M.823: "Technical characteristics of
 differential transmissions for global navigation satellite systems
 from maritime radio beacons in the frequency band 283.5 - 315 kHz in
 region 1 and 285 - 325 kHz in regions 2 & 3."
 
-The RTCM protocol uses as a transport layer the GPS satellite downlink
-protocol described in IS-GPS-200, the Navstar GPS Interface
+The RTCM 2.x protocol uses as a transport layer the GPS satellite
+downlink protocol described in IS-GPS-200, the Navstar GPS Interface
 Specification.  This code relies on the lower-level packet-assembly
 code for that protocol in isgps.c.
 
 The lower layer's job is done when it has assembled a message of up to
 33 words of clean parity-checked data.  At this point this upper layer
-takes over.  struct rtcm_msg_t is overlaid on the buffer and the bitfields
+takes over.  struct rtcm2_msg_t is overlaid on the buffer and the bitfields
 are used to extract pieces of it.  Those pieces are copied and (where
-necessary) reassembled into a struct rtcm_t.
+necessary) reassembled into a struct rtcm2_t.
 
-This code and the contents of isgps.c are evolved from code by Wolgang
+This code and the contents of isgps.c are evolved from code by Wolfgang
 Rupprecht.  Wolfgang's decoder was loosely based on one written by
 John Sager in 1999 (in particular the dump function emits a close
 descendant of Sager's dump format).  Here are John Sager's original
@@ -49,11 +54,19 @@ Starlink's website.
 *****************************************************************************/
 
 /*
- * Structures for interpreting words in an RTCM-104 message (after
- * parity checking and removing inversion).
+ * Structures for interpreting words in an RTCM-104 2.x message (after
+ * parity checking and removing inversion).  Note, these structures
+ * are overlayed on the raw data in order to decode them into
+ * bitfields; this will fail horribly if your C compiler ever
+ * introduces padding between or before bit fields, or between
+ * 8-bit-aligned bitfields and character arrays.
  *
- * The RTCM standard is less explicit than it should be about signed-integer
- * representations.  Two's compliment is specified for prc and rrc (msg1wX),
+ * (In practice, the only class of machines on which this is likely
+ * to fail are word-aligned architectures without barrel shifters.
+ * Very few of these are left in 2008.)
+ *
+ * The RTCM 2.1 standard is less explicit than it should be about signed-integer
+ * representations.  Two's complement is specified for prc and rrc (msg1wX),
  * but not everywhere.
  */
 
@@ -79,8 +92,8 @@ Starlink's website.
 
 #ifndef WORDS_BIGENDIAN	/* little-endian, like x86 */
 
-struct rtcm_msg_t {
-    struct rtcm_msghw1 {			/* header word 1 */
+struct rtcm2_msg_t {
+    struct rtcm2_msghw1 {			/* header word 1 */
 	uint            parity:6;
 	uint            refstaid:10;	/* reference station ID */
 	uint            msgtype:6;		/* RTCM message type */
@@ -88,7 +101,7 @@ struct rtcm_msg_t {
 	uint            _pad:2;
     } w1;
 
-    struct rtcm_msghw2 {			/* header word 2 */
+    struct rtcm2_msghw2 {			/* header word 2 */
 	uint            parity:6;
 	uint            stathlth:3;		/* station health */
 	uint            frmlen:5;
@@ -99,7 +112,7 @@ struct rtcm_msg_t {
 
     union {
 	/* msg 1 - differential gps corrections */
-	struct rtcm_msg1 {
+	struct rtcm2_msg1 {
 	    struct b_correction_t {
 		struct {			/* msg 1 word 3 */
 		    uint            parity:6;
@@ -144,11 +157,11 @@ struct rtcm_msg_t {
 		    uint            pc3_l:8;		/* NOTE: uint for low byte */
 		    uint            _pad:2;
 		} w7;
-	    } corrections[(RTCM_WORDS_MAX - 2) / 5];
+	    } corrections[(RTCM2_WORDS_MAX - 2) / 5];
 	} type1;
 
 	/* msg 3 - reference station parameters */
-	struct rtcm_msg3 {
+	struct rtcm2_msg3 {
 	    struct {
 		uint        parity:6;
 		uint	    x_h:24;
@@ -175,7 +188,7 @@ struct rtcm_msg_t {
 	} type3;
 
 	/* msg 4 - reference station datum */
-	struct rtcm_msg4 {
+	struct rtcm2_msg4 {
 	    struct {
 		uint        parity:6;
 		uint	    datum_alpha_char2:8;
@@ -207,7 +220,7 @@ struct rtcm_msg_t {
 	} type4;
 
 	/* msg 5 - constellation health */
-	struct rtcm_msg5 {
+	struct rtcm2_msg5 {
 	    struct b_health_t {
 		uint        parity:6;
 		uint	    unassigned:2;
@@ -227,7 +240,7 @@ struct rtcm_msg_t {
 	/* msg 6 - null message */
 
 	/* msg 7 - beacon almanac */
-	struct rtcm_msg7 {
+	struct rtcm2_msg7 {
 	    struct b_station_t {
 		struct {
 		    uint            parity:6;
@@ -260,22 +273,22 @@ struct rtcm_msg_t {
 		    uint	    freq_l:6;
 		    uint            _pad:2;
 		} w5;
-	    } almanac[(RTCM_WORDS_MAX - 2)/3];
+	    } almanac[(RTCM2_WORDS_MAX - 2)/3];
 	} type7;
 
 	/* msg 16 - text msg */
-	struct rtcm_msg16 {
+	struct rtcm2_msg16 {
 	    struct {
 		uint        parity:6;
 		uint	    byte3:8;
 		uint	    byte2:8;
 		uint	    byte1:8;
 		uint        _pad:2;
-	    } txt[RTCM_WORDS_MAX-2];
+	    } txt[RTCM2_WORDS_MAX-2];
 	} type16;
 
 	/* unknown message */
-	isgps30bits_t	rtcm_msgunk[RTCM_WORDS_MAX-2];
+	isgps30bits_t	rtcm2_msgunk[RTCM2_WORDS_MAX-2];
     } msg_type;
 };
 
@@ -285,8 +298,8 @@ struct rtcm_msg_t {
 /* This struct was generated from the above using invert-bitfields.pl */
 #ifndef S_SPLINT_S	/* splint thinks it's a duplicate definition */
 
-struct rtcm_msg_t {
-    struct rtcm_msghw1 {			/* header word 1 */
+struct rtcm2_msg_t {
+    struct rtcm2_msghw1 {			/* header word 1 */
 	uint            _pad:2;
 	uint            preamble:8;		/* fixed at 01100110 */
 	uint            msgtype:6;		/* RTCM message type */
@@ -294,7 +307,7 @@ struct rtcm_msg_t {
 	uint            parity:6;
     } w1;
 
-    struct rtcm_msghw2 {			/* header word 2 */
+    struct rtcm2_msghw2 {			/* header word 2 */
 	uint            _pad:2;
 	uint            zcnt:13;
 	uint            sqnum:3;
@@ -305,7 +318,7 @@ struct rtcm_msg_t {
 
     union {
 	/* msg 1 - differential gps corrections */
-	struct rtcm_msg1 {
+	struct rtcm2_msg1 {
 	    struct b_correction_t {
 		struct {			/* msg 1 word 3 */
 		    uint            _pad:2;
@@ -350,11 +363,11 @@ struct rtcm_msg_t {
 		    uint            issuedata3:8;
 		    uint            parity:6;
 		} w7;
-	    } corrections[(RTCM_WORDS_MAX - 2) / 5];
+	    } corrections[(RTCM2_WORDS_MAX - 2) / 5];
 	} type1;
 
 	/* msg 3 - reference station parameters */
-	struct rtcm_msg3 {
+	struct rtcm2_msg3 {
 	    struct {
 		uint        _pad:2;
 		uint	    x_h:24;
@@ -381,7 +394,7 @@ struct rtcm_msg_t {
 	} type3;
 
 	/* msg 4 - reference station datum */
-	struct rtcm_msg4 {
+	struct rtcm2_msg4 {
 	    struct {
 		uint        _pad:2;
 		uint	    dgnss:3;
@@ -413,7 +426,7 @@ struct rtcm_msg_t {
 	} type4;
 
 	/* msg 5 - constellation health */
-	struct rtcm_msg5 {
+	struct rtcm2_msg5 {
 	    struct b_health_t {
 		uint        _pad:2;
 		uint	    reserved:1;
@@ -433,7 +446,7 @@ struct rtcm_msg_t {
 	/* msg 6 - null message */
 
 	/* msg 7 - beacon almanac */
-	struct rtcm_msg7 {
+	struct rtcm2_msg7 {
 	    struct b_station_t {
 		struct {
 		    uint            _pad:2;
@@ -460,24 +473,25 @@ struct rtcm_msg_t {
 		    uint	    encoding:1;
 		    uint            parity:6;
 		} w5;
-	    } almanac[(RTCM_WORDS_MAX - 2)/3];
+	    } almanac[(RTCM2_WORDS_MAX - 2)/3];
 	} type7;
 
 	/* msg 16 - text msg */
-	struct rtcm_msg16 {
+	struct rtcm2_msg16 {
 	    struct {
 		uint        _pad:2;
 		uint	    byte1:8;
 		uint	    byte2:8;
 		uint	    byte3:8;
 		uint        parity:6;
-	    } txt[RTCM_WORDS_MAX-2];
+	    } txt[RTCM2_WORDS_MAX-2];
 	} type16;
 
 	/* unknown message */
-	isgps30bits_t	rtcm_msgunk[RTCM_WORDS_MAX-2];
+	isgps30bits_t	rtcm2_msgunk[RTCM2_WORDS_MAX-2];
     } msg_type;
 };
 
 #endif /* S_SPLINT_S */
 #endif /* BIG ENDIAN */
+#endif /* _GPSD_RTCM2_H_ */

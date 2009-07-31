@@ -45,10 +45,7 @@ run with -N, so the output will go to stderr (along with, for example,
 Valgrind notifications).
 
 Each FakeGPS instance tries to packetize the data from the logfile it
-is initialized with.  It looks for packet headers associated with common
-packet types such as NMEA, SiRF, TSIP, and Zodiac.  Additionally, the Type
-header in a logfile can be used to force the packet type, notably to RTCM
-which is fed to the daemon character by character,
+is initialized with. It uses the same packet-getter as the daeomon.
 
 The TestSession code maintains a run queue of FakeGPS and gps.gs (client-
 session) objects. It repeatedly cycles through the run queue.  For each
@@ -69,7 +66,7 @@ the run method in a subthread, with locking of critical regions.
 """
 import sys, os, time, signal, pty, termios # fcntl, array, struct
 import exceptions, threading, socket
-import gps
+import gps, gpspacket
 
 # Define a per-character delay on writes so we won't spam the buffers
 # in the pty layer or gpsd itself.  The magic number here has to be
@@ -78,7 +75,7 @@ import gps
 # failures that usually look like lines missing from the end of the
 # test output relative to the check file.  This number might have to
 # be adusted upward on faster machines.
-WRITE_PAD = 15.0
+WRITE_PAD = 0.033
 
 class TestLoadError(exceptions.Exception):
     def __init__(self, msg):
@@ -87,25 +84,27 @@ class TestLoadError(exceptions.Exception):
 class TestLoad:
     "Digest a logfile into a list of sentences we can cycle through."
     def __init__(self, logfp, predump=False):
-        self.sentences = []	# This and .packtype are the interesting bits
+        self.sentences = []	# This is the interesting part
         self.logfp = logfp
         self.predump = predump
         self.logfile = logfp.name
         self.type = None
         self.serial = None
-        # Skip the comment header
+        # Grab the packets
+        getter = gpspacket.new()
+        #gpspacket.register_report(reporter)
+        type_latch = None
         while True:
-            first = logfp.read(1)
-            self.first = first;
-            if first == "#":
-                line = logfp.readline()
-                if line.strip().startswith("Type:"):
-                    if line.find("RTCM") > -1:
-                        self.type = "RTCM"
-                if "Serial:" in line:
-                    line = line[1:].strip()
+            (ptype, packet) = getter.get(logfp.fileno())
+            if ptype == gpspacket.BAD_PACKET:
+                break
+            elif ptype == gpspacket.EMPTY_PACKET:
+                break
+            elif ptype == gpspacket.COMMENT_PACKET:
+                if "Serial:" in packet:
+                    packet = packet[1:].strip()
                     try:
-                        (xx, baud, params) = line.split()
+                        (xx, baud, params) = packet.split()
                         baud = int(baud)
                         if params[0] in ('7', '8'):
                             databits = int(params[0])
@@ -125,135 +124,17 @@ class TestLoad:
                     
                     self.serial = (baud, databits, parity, stopbits)
             else:
-                break
-        # Grab the packets
-        while True:
-            packet = self.packet_get()
-            if self.predump:
-                print `packet`
-            if not packet or packet == "\n":
-                break
-            else:
+                if type_latch is None:
+                    type_latch = ptype
+                if self.predump:
+                    print `packet`
                 self.sentences.append(packet)
         # Look at the first packet to grok the GPS type
-        if self.sentences[0][0] == '$':
-            self.packtype = "NMEA"
+        self.textual = (type_latch == gpspacket.NMEA_PACKET)
+        if self.textual:
             self.legend = "gpsfake: line %d: "
-            self.idoffset = None
-            self.textual = True
-        elif self.sentences[0][0] == '\xff':
-            self.packtype = "Zodiac binary"
-            self.legend = "gpsfake: packet %d: "
-            self.idoffset = None
-            self.textual = True
-        elif self.sentences[0][0] == '\xa0':
-            self.packtype = "SiRF binary"
-            self.legend = "gpsfake: packet %d: "
-            self.idoffset = 3
-            self.textual = False
-        elif self.sentences[0][0] == '\x02':
-            self.packtype = "Navcom binary"
+        else:
             self.legend = "gpsfake: packet %d"
-            self.textual = False
-        elif self.sentences[0][0] == '\x10':
-            self.packtype = "TSIP binary"
-            self.legend = "gpsfake: packet %d: "
-            self.idoffset = 1
-            self.textual = False
-        elif self.sentences[0][0] == '\xb5':
-            self.packtype = "uBlox"
-            self.legend = "gpsfake: packet %d: "
-            self.idoffset = None
-            self.textual = False
-        elif self.sentences[0][0] == '\x3c':
-            self.packtype = "iTrax"
-            self.legend = "gpsfake: packet %d: "
-            self.idoffset = None
-            self.textual = False
-        elif self.type == "RTCM":
-            self.packtype = "RTCM"
-            self.legend = None
-            self.idoffset = None
-            self.textual = False
-        else:
-            sys.stderr.write("gpsfake: unknown log type (not NMEA or SiRF) can't handle it!\n")
-            self.sentences = None
-    def packet_get(self):
-        "Grab a packet.  Unlike the daemon's state machine, this assumes no noise."
-        if self.first == '':
-            first = self.logfp.read(1)
-        else:
-            first=self.first
-            self.first=''
-        if not first:
-            return None
-        elif self.type == "RTCM":
-            return first
-        elif first == '$':					# NMEA packet
-            return "$" + self.logfp.readline()
-        second = self.logfp.read(1)
-        if first == '\xa0' and second == '\xa2':		# SiRF packet
-            third = self.logfp.read(1)
-            fourth = self.logfp.read(1)
-            length = (ord(third) << 8) | ord(fourth)
-            return "\xa0\xa2" + third + fourth + self.logfp.read(length+4)
-        elif first == '\xff' and second == '\x81':		# Zodiac
-            third = self.logfp.read(1)
-            fourth = self.logfp.read(1)
-            fifth = self.logfp.read(1)
-            sixth = self.logfp.read(1)
-            #id = ord(third) | (ord(fourth) << 8)
-            ndata = ord(fifth) | (ord(sixth) << 8)
-            return "\xff\x81" + third + fourth + fifth + sixth + self.logfp.read(2*ndata+6)
-        elif first == '\x02' and second == '\x99':		# Navcom
-            third = self.logfp.read(1)
-	    fourth = self.logfp.read(1)
-            fifth = self.logfp.read(1)
-            sixth = self.logfp.read(1)
-            #id = ord(fourth)
-            ndata = ord(fifth) | (ord(sixth) << 8)
-            return "\x02\x99\x66" + fourth + fifth + sixth + self.logfp.read(ndata-2)
-        elif first == '\x10':					# TSIP
-            packet = first + second
-            delcnt = 0
-            while True:
-                next = self.logfp.read(1)
-                if not next:
-                    return ''
-                packet += next
-                if next == '\x10':
-                    delcnt += 1
-                elif next == '\x03':
-                    if delcnt % 2:
-                        break
-                else:
-                    delcnt = 0
-            return packet
-        elif first == '\xb5' and second == '\x62':		# ubx
-            third = self.logfp.read(1)
-            fourth = self.logfp.read(1)
-            fifth = self.logfp.read(1)
-            sixth = self.logfp.read(1)
-            # classid = third
-            # messageid = fourth
-            ndata = ord(fifth) | (ord(sixth) << 8)
-            return "\xb5\x62" + third + fourth + fifth + sixth + self.logfp.read(ndata+2)
-        elif first == '\x3c' and second == '\x21':		# italk
-            third = self.logfp.read(1)
-            fourth = self.logfp.read(1)
-            fifth = self.logfp.read(1)
-            sixth = self.logfp.read(1)
-            seventh = self.logfp.read(1)
-            # srcnode = third
-            # dstnode = fourth
-            # messageid = fifth
-            # transaction = sixth
-            ndata = (ord(seventh)+1)*2 + 1
-            return "\x3c\x21" + third + fourth + fifth + sixth + seventh + self.logfp.read(ndata)
-        elif first == "\n":	# Use this to ignore trailing EOF on logs
-            return "\n"
-        else:
-            raise PacketError("unknown packet type, leader %s (0x%x)" % (`first`, ord(first)))
 
 class PacketError(exceptions.Exception):
     def __init__(self, msg):
@@ -263,12 +144,13 @@ class FakeGPS:
     "A fake GPS is a pty with a test log ready to be cycled to it."
     def __init__(self, logfp,
                  speed=4800, databits=8, parity='N', stopbits=1,
-                 verbose=False, predump=False):
-        self.verbose = verbose
+                 predump=False, progress=None):
+        self.progress = progress
         self.go_predicate = lambda: True
         self.readers = 0
         self.index = 0
         self.speed = speed
+        self.name = None
         baudrates = {
             0: termios.B0,
             50: termios.B50,
@@ -293,34 +175,35 @@ class FakeGPS:
         speed = baudrates[speed]	# Throw an error if the speed isn't legal
         if type(logfp) == type(""):
             logfp = open(logfp, "r");            
+        self.name = logfp.name
         self.testload = TestLoad(logfp, predump)
+        self.progress("gpsfake: %s provides %d sentences\n" % (self.name, len(self.testload.sentences)))
         # FIXME: explicit arguments should probably override this
         #if self.testload.serial:
         #    (speed, databits, parity, stopbits) = self.testload.serial
         (self.master_fd, self.slave_fd) = pty.openpty()
         self.slave = os.ttyname(self.slave_fd)
-        ttyfp = open(self.slave, "rw")
-        (iflag, oflag, cflag, lflag, ispeed, ospeed, cc) = termios.tcgetattr(ttyfp.fileno())
+        (iflag, oflag, cflag, lflag, ispeed, ospeed, cc) = termios.tcgetattr(self.slave_fd)
         cc[termios.VMIN] = 1
-	cflag &= ~(termios.PARENB | termios.PARODD | termios.CRTSCTS)
-	cflag |= termios.CREAD | termios.CLOCAL
+        cflag &= ~(termios.PARENB | termios.PARODD | termios.CRTSCTS)
+        cflag |= termios.CREAD | termios.CLOCAL
         iflag = oflag = lflag = 0
- 	iflag &=~ (termios.PARMRK | termios.INPCK)
- 	cflag &=~ (termios.CSIZE | termios.CSTOPB | termios.PARENB | termios.PARODD)
+        iflag &=~ (termios.PARMRK | termios.INPCK)
+        cflag &=~ (termios.CSIZE | termios.CSTOPB | termios.PARENB | termios.PARODD)
         if databits == 7:
             cflag |= termios.CS7
         else:
             cflag |= termios.CS8
         if stopbits == 2:
             cflag |= termios.CSTOPB
- 	if parity == 'E':
- 	    iflag |= termios.INPCK
- 	    cflag |= termios.PARENB
- 	elif parity == 'O':
- 	    iflag |= termios.INPCK
- 	    cflag |= termios.PARENB | termios.PARODD
+        if parity == 'E':
+            iflag |= termios.INPCK
+            cflag |= termios.PARENB
+        elif parity == 'O':
+            iflag |= termios.INPCK
+            cflag |= termios.PARENB | termios.PARODD
         ispeed = ospeed = speed
-        termios.tcsetattr(ttyfp.fileno(), termios.TCSANOW,
+        termios.tcsetattr(self.slave_fd, termios.TCSANOW,
                           [iflag, oflag, cflag, lflag, ispeed, ospeed, cc])
     def read(self):
         "Discard control strings written by gpsd."
@@ -339,8 +222,14 @@ class FakeGPS:
         "Feed a line from the contents of the GPS log to the daemon."
         line = self.testload.sentences[self.index % len(self.testload.sentences)]
         os.write(self.master_fd, line)
-        time.sleep((WRITE_PAD * len(line)) / self.speed)
+        if self.progress:
+            self.progress("gpsfake: %s feeds %d=%s\n" % (self.name, len(line), `line`))
+        time.sleep(WRITE_PAD)
         self.index += 1
+
+    def drain(self):
+        "Wait for the associated device to drain (e.g. before closing)."
+        termios.tcdrain(self.master_fd)
 
 class DaemonError(exceptions.Exception):
     def __init__(self, msg):
@@ -447,7 +336,7 @@ class TestSessionError(exceptions.Exception):
 class TestSession:
     "Manage a session including a daemon with fake GPSes and clients."
     CLOSE_DELAY = 1
-    def __init__(self, prefix=None, port=None, options=None, verbose=False, predump=False):
+    def __init__(self, prefix=None, port=None, options=None, verbose=0, predump=False):
         "Initialize the test session by launching the daemon."
         self.verbose = verbose
         self.predump = predump
@@ -478,7 +367,8 @@ class TestSession:
         "Add a simulated GPS being fed by the specified logfile."
         self.progress("gpsfake: gps_add(%s, %d)\n" % (logfile, speed))
         if logfile not in self.fakegpslist:
-            newgps = FakeGPS(logfile, speed=speed, verbose=self.verbose, predump=self.predump)
+            newgps = FakeGPS(logfile, speed=speed, predump=self.predump,
+                             progress=self.progress)
             if pred:
                 newgps.go_predicate = pred
             elif self.default_predicate:
@@ -491,13 +381,14 @@ class TestSession:
     def gps_remove(self, name):
         "Remove a simulated GPS from the daemon's search list."
         self.progress("gpsfake: gps_remove(%s)\n" % name)
+        self.fakegpslist[name].drain()
         self.remove(self.fakegpslist[name])
         self.daemon.remove_device(name)
         del self.fakegpslist[name]
     def client_add(self, commands):
         "Initiate a client session and force connection to a fake GPS."
         self.progress("gpsfake: client_add()\n")
-        newclient = gps.gps(port=self.port)
+        newclient = gps.gps(port=self.port, verbose=self.verbose)
         self.append(newclient)
         newclient.id = self.client_id + 1 
         self.client_id += 1
@@ -542,6 +433,7 @@ class TestSession:
     def run(self):
         "Run the tests."
         try:
+            self.progress("gpsfake: test loop begins\n")
             while self.daemon:
                 # We have to read anything that gpsd might have tried
                 # to send to the GPS here -- under OpenBSD the
@@ -552,8 +444,8 @@ class TestSession:
                 had_output = False
                 chosen = self.choose()
                 if isinstance(chosen, FakeGPS):
-                    # Delay a few seconds after a GPS source is exhauseted
-                    # to remove it.  This should give its subscribers time
+                    # Delay a few seconds after a GPS source is exhausted
+                    # before removing it.  This should give its subscribers time
                     # to get gpsd's response before we call cleanup()
                     if chosen.exhausted and (time.time() - chosen.exhausted > TestSession.CLOSE_DELAY):
                         self.remove(chosen)
@@ -575,7 +467,9 @@ class TestSession:
                 else:
                     raise TestSessionError("test object of unknown type")
                 if not self.writers and not had_output:
+                    self.progress("gpsfake: no writers and no output\n")
                     break
+            self.progress("gpsfake: test loop ends\n")
         finally:
             self.cleanup()
 

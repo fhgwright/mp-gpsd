@@ -64,6 +64,9 @@
  */
 
 #include <sys/types.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <unistd.h>
 #include "gpsd_config.h"
 #include "gpsd.h"
 #include "gpsflash.h"
@@ -78,12 +81,36 @@
 #define BOOST_57600 1
 #define BOOST_115200 2
 
+static void 
+nmea_lowlevel_send(int fd, const char *fmt, ... )
+/* ship a command to the GPS, adding * and correct checksum */
+{
+    /*@ -compdef @*/
+    char buf[BUFSIZ];
+    va_list ap;
+    size_t l;
+
+    va_start(ap, fmt) ;
+#ifdef HAVE_VSNPRINTF
+    (void)vsnprintf(buf + strlen(buf), sizeof(buf)-strlen(buf), fmt, ap);
+#else
+    (void)vsprintf(buf + strlen(buf), fmt, ap);
+#endif
+    va_end(ap);
+    strncat(buf, "*", 1);
+    nmea_add_checksum(buf + 1);
+    l = strlen(buf);
+    if (write(fd, buf, l) != (ssize_t)l)
+	(void)fputs("sirfflash: write to device failed\n", stderr);
+    /*@ +compdef @*/
+}
+
 static int
 sirfSendUpdateCmd(int pfd){
 	bool status;
 	/*@ +charint @*/
 	static unsigned char msg[] =	{
-	    			0xa0,0xa2,	/* header */
+				0xa0,0xa2,	/* header */
 				0x00,0x01,	/* message length */
 				0x94,		/* 0x94: firmware update */
 				0x00,0x00,	/* checksum */
@@ -170,13 +197,13 @@ sirfSetProto(int pfd, struct termios *term, unsigned int speed, unsigned int pro
 
 	/* send at whatever baud we're currently using */
 	(void)sirf_write(pfd, sirf);
-	(void)nmea_send(pfd, "$PSRF100,%u,%u,8,1,0", speed, proto);
+	nmea_lowlevel_send(pfd, "$PSRF100,%u,%u,8,1,0", speed, proto);
 
 	/* now spam the receiver with the config messages */
 	for(i = 0; i < (int)(sizeof(spd)/sizeof(spd[0])); i++) {
 		(void)serialSpeed(pfd, term, spd[i]);
 		(void)sirf_write(pfd, sirf);
-		(void)nmea_send(pfd, "$PSRF100,%u,%u,8,1,0", speed, proto);
+		nmea_lowlevel_send(pfd, "$PSRF100,%u,%u,8,1,0", speed, proto);
 		(void)tcdrain(pfd);
 		(void)usleep(100000);
 	}
@@ -212,7 +239,7 @@ static int sirfProbe(int fd, char **version)
     want = 0;
     if (expect(fd,"\xa0\xa2\x00\x15\x06", 5, 1))
 	want = 21;
-    else if (expect(fd,"\xa0\xa2\x00\x51\x06", 5, 1)) 
+    else if (expect(fd,"\xa0\xa2\x00\x51\x06", 5, 1))
 	want = 81;
 
     if (want) {
@@ -223,7 +250,7 @@ static int sirfProbe(int fd, char **version)
 	    if (status == -1)
 		return -1;
 	}
-	gpsd_report(LOG_PROG, "%d bytes = %s\n", len, gpsd_hexdump(buf, (size_t)len));
+	gpsd_report(LOG_PROG, "%zd bytes = %s\n", len, gpsd_hexdump(buf, (size_t)len));
 	*version = strdup(buf);
 	return 0;
     } else {

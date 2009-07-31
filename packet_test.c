@@ -1,13 +1,13 @@
 /* $Id$ */
-#include <sys/types.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <string.h>
 #include <errno.h>
 #include <stdarg.h>
-#include <getopt.h>
+#ifndef S_SPLINT_S
+#include <unistd.h>
+#endif /* S_SPLINT_S */
 #include "gpsd_config.h"
 #include "gpsd.h"
 
@@ -197,21 +197,51 @@ static struct map tests[] = {
 	.garbage_offset = 3,
 	.type = EVERMORE_PACKET,                         
     },
+    {
+	.legend = "RTCM104V3 type 1005 packet",
+	/*
+	 * Reference Station Id = 2003
+	 * GPS Service supported, but not GLONASS or Galileo
+	 * ARP ECEF-X = 1114104.5999 meters
+	 * ARP ECEF-Y = -4850729.7108 meters
+	 * ARP ECEF-Z = 3975521.4643 meters
+	 */
+	.test = {
+	    0xD3, 0x00, 0x13, 0x3E, 0xD7, 0xD3, 0x02, 0x02, 
+	    0x98, 0x0E, 0xDE, 0xEF, 0x34, 0xB4, 0xBD, 0x62,
+	    0xAC, 0x09, 0x41, 0x98, 0x6F, 0x33, 0x36, 0x0B, 
+	    0x98,
+	    },
+	.testlen = 25,
+	.garbage_offset = 0,
+	.type = RTCM3_PACKET,                         
+    },
+    {
+	.legend = "RTCM104V3 type 1005 packet with 4th byte garbled",
+	.test = {
+	    0xD3, 0x00, 0x13, 0x3F, 0xD7, 0xD3, 0x02, 0x02, 
+	    0x98, 0x0E, 0xDE, 0xEF, 0x34, 0xB4, 0xBD, 0x62,
+	    0xAC, 0x09, 0x41, 0x98, 0x6F, 0x33, 0x36, 0x0B, 
+	    0x98,
+	    },
+	.testlen = 25,
+	.garbage_offset = 0,
+	.type = BAD_PACKET,                         
+    },
 };
 /*@ +initallelements -charint +usedef @*/
 
 static int packet_test(struct map *mp)
 {
     struct gps_packet_t packet;
-    ssize_t st;
     int failure = 0;
 
     packet.type = BAD_PACKET;
     packet.state = 0;
-    packet.inbuflen = 0;
     /*@i@*/memcpy(packet.inbufptr = packet.inbuffer, mp->test, mp->testlen);
+    packet.inbuflen = mp->testlen;
     /*@ -compdef -uniondef -usedef -formatcode @*/
-    st = packet_parse(&packet, mp->testlen);
+    packet_parse(&packet);
     if (packet.type != mp->type)
 	printf("%2zi: %s test FAILED (packet type %d wrong).\n", mp-tests+1, mp->legend, packet.type);
     else if (memcmp(mp->test + mp->garbage_offset, packet.outbuffer, packet.outbuflen)) {
@@ -223,7 +253,7 @@ static int packet_test(struct map *mp)
     for (cp = packet.outbuffer; 
 	 cp < packet.outbuffer + packet.outbuflen; 
 	 cp++) {
-	if (st != NMEA_PACKET)
+	if (lexer->type != NMEA_PACKET)
 	    (void)printf(" 0x%02x", *cp);
 	else if (*cp == '\r')
 	    (void)fputs("\\r", stdout);

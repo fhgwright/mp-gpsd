@@ -19,9 +19,6 @@
  *      Ctrl-S -- freeze display.
  *      Ctrl-Q -- unfreeze display.
  *
- * Note: one of the goals of sirfmon.c is *not* to use the gpsdata structure.  
- * sirfmon is intended to be an independent sanity check on SiRF decoding,
- * so it deliberately doesn't use much of the library. 
  */
 #include <sys/types.h>
 #include <stdio.h>
@@ -29,8 +26,12 @@
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
+#ifndef S_SPLINT_S
 #include <unistd.h>
+#endif /* S_SPLINT_S */
 #include <assert.h>
+#include <signal.h>
+#include <setjmp.h>
 /* Cygwin has only _timezone and not timezone unless the following is set */
 #if defined(__CYGWIN__)
 #define timezonevar
@@ -47,7 +48,7 @@
 #else
 #include <curses.h>
 #endif /* HAVE_NCURSES_H */
-#include "gps.h"	/* for DEFAULT_GPSD_PORT; brings in PI as well */
+#include "gpsd.h"
 
 #define PUT_ORIGIN	-4
 #include "bits.h"
@@ -72,8 +73,6 @@ extern int netlib_connectsock(const char *, const char *, const char *);
 #define END1		0xb0
 #define END2		0xb3
 
-#define RAD2DEG (180.0/PI)
-
 /* how many characters to look at when trying to find baud rate lock */
 #define SNIFF_RETRIES	1200
 
@@ -83,6 +82,10 @@ static int gmt_offset;
 static bool dispmode = false;
 static bool serial, subframe_enabled = false;
 static unsigned int stopbits, bps;
+static int debuglevel = 0;
+
+static struct gps_context_t	context;
+static struct gps_device_t	session;
 
 /*@ -nullassign @*/
 static char *verbpat[] =
@@ -112,10 +115,6 @@ static WINDOW *mid2win, *mid4win, *mid6win, *mid7win, *mid9win, *mid13win;
 static WINDOW *mid19win, *mid27win, *cmdwin, *debugwin;
 static FILE *logfile;
 
-#define NO_PACKET	0
-#define SIRF_PACKET	1
-#define NMEA_PACKET	2
-
 #define display	(void)mvwprintw
 
 /*****************************************************************************
@@ -124,7 +123,7 @@ static FILE *logfile;
  *
  *****************************************************************************/
 
-static void nmea_add_checksum(char *sentence)
+static void local_nmea_add_checksum(char *sentence)
 /* add NMEA checksum to a possibly  *-terminated sentence */
 {
     unsigned char sum = '\0';
@@ -141,7 +140,7 @@ static void nmea_add_checksum(char *sentence)
     }
 }
 
-static int nmea_send(int fd, const char *fmt, ... )
+static int local_nmea_send(int fd, const char *fmt, ... )
 /* ship a command to the GPS, adding * and correct checksum */
 {
     size_t status;
@@ -152,13 +151,14 @@ static int nmea_send(int fd, const char *fmt, ... )
     (void)vsnprintf(buf, sizeof(buf)-5, fmt, ap);
     va_end(ap);
     (void)strlcat(buf, "*", BUFLEN);
-    nmea_add_checksum(buf);
+    local_nmea_add_checksum(buf);
+    (void)fputs("Sending: ", stderr);
     (void)fputs(buf, stderr);		/* so user can watch the baud hunt */
     status = (size_t)write(fd, buf, strlen(buf));
     if (status == strlen(buf)) {
 	return (int)status;
     } else {
-	perror("nmea_send");
+	perror("local_nmea_send");
 	return -1;
     }
 }
@@ -200,13 +200,13 @@ static void decode_ecef(double x, double y, double z,
     double lambda,p,theta,phi,n,h,vnorth,veast,vup,speed,heading;
 
     lambda = atan2(y,x);
-    /*@ -evalorder @*/ 
+    /*@ -evalorder @*/
     p = sqrt(pow(x,2) + pow(y,2));
     theta = atan2(z*a,p*b);
     phi = atan2(z + e_2*b*pow(sin(theta),3),p - e2*a*pow(cos(theta),3));
     n = a / sqrt(1.0 - e2*pow(sin(phi),2));
     h = p / cos(phi) - n;
-    h -= wgs84_separation((double)(RAD2DEG*phi),(double)(RAD2DEG*lambda));
+    h -= wgs84_separation((double)(RAD_2_DEG*phi),(double)(RAD_2_DEG*lambda));
     vnorth = -vx*sin(phi)*cos(lambda)-vy*sin(phi)*sin(lambda)+vz*cos(phi);
     veast = -vx*sin(lambda)+vy*cos(lambda);
     vup = vx*cos(phi)*cos(lambda)+vy*cos(phi)*sin(lambda)+vz*sin(phi);
@@ -214,11 +214,11 @@ static void decode_ecef(double x, double y, double z,
     heading = atan2(veast,vnorth);
     /*@ +evalorder @*/
     if (heading < 0)
-	heading += 2 * PI;
+	heading += 2 * GPS_PI;
 
     (void)wmove(mid2win, 1,40);
-    (void)wprintw(mid2win, "%9.5f %9.5f",(double)(RAD2DEG*phi),
-				   (double)(RAD2DEG*lambda));
+    (void)wprintw(mid2win, "%9.5f %9.5f",(double)(RAD_2_DEG*phi),
+				   (double)(RAD_2_DEG*lambda));
     (void)mvwaddch(mid2win, 1, 49, ACS_DEGREE);
     (void)mvwaddch(mid2win, 1, 59, ACS_DEGREE);
     (void)wmove(mid2win, 1,61);
@@ -230,28 +230,30 @@ static void decode_ecef(double x, double y, double z,
     (void)wprintw(mid2win, "%8.1f",vup);
 
     (void)wmove(mid2win, 3,54);
-    (void)wprintw(mid2win, "%5.1f",(double)(RAD2DEG*heading));
+    (void)wprintw(mid2win, "%5.1f",(double)(RAD_2_DEG*heading));
     (void)mvwaddch(mid2win, 3, 59, ACS_DEGREE);
     (void)wmove(mid2win, 3,61);
     (void)wprintw(mid2win, "%8.1f",speed);
 }
 
-static void decode_sirf(unsigned char buf[], int len)
+static void decode_sirf(unsigned char buf[], size_t len)
 {
     int i,j,ch,off,cn;
 
     assert(mid27win != NULL);
+    buf += 4;
+    len -= 8;
     switch (buf[0])
     {
     case 0x02:		/* Measured Navigation Data */
 	(void)wmove(mid2win, 1,6);	/* ECEF position */
-	(void)wprintw(mid2win, "%8d %8d %8d",getsl(buf, 1),getsl(buf, 5),getsl(buf, 9));
+	(void)wprintw(mid2win, "%8d %8d %8d",getbesl(buf, 1),getbesl(buf, 5),getbesl(buf, 9));
 	(void)wmove(mid2win, 2,6);	/* ECEF velocity */
 	(void)wprintw(mid2win, "%8.1f %8.1f %8.1f",
-		(double)getsw(buf, 13)/8,(double)getsw(buf, 15)/8,(double)getsw(buf, 17)/8);
-	decode_ecef((double)getsl(buf, 1),(double)getsl(buf, 5),(double)getsl(buf, 9),
-		(double)getsw(buf, 13)/8,(double)getsw(buf, 15)/8,(double)getsw(buf, 17)/8);
-	decode_time((int)getuw(buf, 22),getsl(buf, 24));
+		(double)getbesw(buf, 13)/8,(double)getbesw(buf, 15)/8,(double)getbesw(buf, 17)/8);
+	decode_ecef((double)getbesl(buf, 1),(double)getbesl(buf, 5),(double)getbesl(buf, 9),
+		(double)getbesw(buf, 13)/8,(double)getbesw(buf, 15)/8,(double)getbesw(buf, 17)/8);
+	decode_time((int)getbeuw(buf, 22),getbesl(buf, 24));
 	/* line 4 */
 	(void)wmove(mid2win, 4,49);
 	(void)wprintw(mid2win, "%4.1f",(double)getub(buf, 20)/5);	/* HDOP */
@@ -272,7 +274,7 @@ static void decode_sirf(unsigned char buf[], int len)
 	break;
 
     case 0x04:		/* Measured Tracking Data */
-	decode_time((int)getuw(buf, 1),getsl(buf, 3));
+	decode_time((int)getbeuw(buf, 1),getbesl(buf, 3));
 	ch = (int)getub(buf, 7);
 	for (i = 0; i < ch; i++) {
 	    int sv,st;
@@ -282,10 +284,10 @@ static void decode_sirf(unsigned char buf[], int len)
 	    sv = (int)getub(buf, off);
 	    (void)wprintw(mid4win, " %3d",sv);
 
-	    (void)wprintw(mid4win, " %3d%3d %04x",((int)getub(buf, off+1)*3)/2,(int)getub(buf, off+2)/2,(int)getsw(buf, off+3));
+	    (void)wprintw(mid4win, " %3d%3d %04x",((int)getub(buf, off+1)*3)/2,(int)getub(buf, off+2)/2,(int)getbesw(buf, off+3));
 
 	    st = ' ';
-	    if ((int)getuw(buf, off+3) == 0xbf)
+	    if ((int)getbeuw(buf, off+3) == 0xbf)
 		st = 'T';
 	    for (j = 0; j < nfix; j++)
 		if (sv == fix[j]) {
@@ -309,7 +311,7 @@ static void decode_sirf(unsigned char buf[], int len)
 #ifdef __UNUSED__
     case 0x05:		/* raw track data */
 	for (off = 1; off < len; off += 51) {
-	    ch = getul(buf, off);
+	    ch = getbeul(buf, off);
 	    (void)wmove(mid4win, ch+2, 19);
 	    cn = 0;
 
@@ -318,9 +320,9 @@ static void decode_sirf(unsigned char buf[], int len)
 
 	    printw("%5.1f",(double)cn/10);
 
-	    printw("%9d%3d%5d",getul(buf, off+8),(int)getuw(buf, off+12),(int)getuw(buf, off+14));
+	    printw("%9d%3d%5d",getbeul(buf, off+8),(int)getbeuw(buf, off+12),(int)getbeuw(buf, off+14));
 	    printw("%8.5f %10.5f",
-	    	(double)getul(buf, off+16)/65536,(double)getul(buf, off+20)/1024);
+	    	(double)getbeul(buf, off+16)/65536,(double)getbeul(buf, off+20)/1024);
 	}
 	(void)wprintw(debugwin, "RTD 0x05=");
     	break;
@@ -332,11 +334,11 @@ static void decode_sirf(unsigned char buf[], int len)
     	break;
 
     case 0x07:		/* Response - Clock Status Data */
-	decode_time((int)getuw(buf, 1),getsl(buf, 3));
+	decode_time((int)getbeuw(buf, 1),getbesl(buf, 3));
 	display(mid7win, 1, 5,  "%2d", getub(buf, 7));	/* SVs */
-	display(mid7win, 1, 16, "%lu", getul(buf, 8));	/* Clock drift */
-	display(mid7win, 1, 29, "%lu", getul(buf, 12));	/* Clock Bias */
-	display(mid7win, 2, 21, "%lu", getul(buf, 16));	/* Estimated Time */
+	display(mid7win, 1, 16, "%lu", getbeul(buf, 8));	/* Clock drift */
+	display(mid7win, 1, 29, "%lu", getbeul(buf, 12));	/* Clock Bias */
+	display(mid7win, 2, 21, "%lu", getbeul(buf, 16));	/* Estimated Time */
 	(void)wprintw(debugwin, "CSD 0x07=");
 	break;
 
@@ -348,10 +350,10 @@ static void decode_sirf(unsigned char buf[], int len)
     	break;
 
     case 0x09:		/* Throughput */
-	display(mid9win, 1, 6,  "%.3f",(double)getuw(buf, 1)/186);	/*SegStatMax*/
-	display(mid9win, 1, 18, "%.3f",(double)getuw(buf, 3)/186);	/*SegStatLat*/
-	display(mid9win, 1, 31, "%.3f",(double)getuw(buf, 5)/186);	/*SegStatTime*/
-	display(mid9win, 1, 42, "%3d",(int)getuw(buf, 7));	/* Last Millisecond */
+	display(mid9win, 1, 6,  "%.3f",(double)getbeuw(buf, 1)/186);	/*SegStatMax*/
+	display(mid9win, 1, 18, "%.3f",(double)getbeuw(buf, 3)/186);	/*SegStatLat*/
+	display(mid9win, 1, 31, "%.3f",(double)getbeuw(buf, 5)/186);	/*SegStatTime*/
+	display(mid9win, 1, 42, "%3d",(int)getbeuw(buf, 7));	/* Last Millisecond */
 	(void)wprintw(debugwin, "THR 0x09=");
     	break;
 
@@ -380,30 +382,32 @@ static void decode_sirf(unsigned char buf[], int len)
 #define YESNO(n)	(((int)getub(buf, n) != 0)?'Y':'N')
 	display(mid19win, 1, 20, "%d", getub(buf, 5));	/* Alt. hold mode */
 	display(mid19win, 2, 20, "%d", getub(buf, 6));	/* Alt. hold source*/
-	display(mid19win, 3, 20, "%dm", (int)getuw(buf, 7));	/* Alt. source input */
-	display(mid19win, 4, 20, "%d", getub(buf, 9));	/* Degraded mode*/
-	display(mid19win, 5, 20, "%dsec", getub(buf, 10));	/* Degraded timeout*/
-	display(mid19win, 6, 20, "%dsec",getub(buf, 11));	/* DR timeout*/
-	display(mid19win, 7, 20, "%c", YESNO(12));/* Track smooth mode*/
-	display(mid19win, 8, 20, "%c", YESNO(13)); /* Static Nav.*/
-	display(mid19win, 9, 20, "0x%x", getub(buf, 14));	/* 3SV Least Squares*/
-	display(mid19win, 10,20, "0x%x", getub(buf, 19));	/* DOP Mask mode*/
-	display(mid19win, 11,20, "0x%x", (int)getuw(buf, 20));	/* Nav. Elev. mask*/
-	display(mid19win, 12,20, "0x%x", getub(buf, 22));	/* Nav. Power mask*/
-	display(mid19win, 13,20, "0x%x", getub(buf, 27));	/* DGPS Source*/
-	display(mid19win, 14,20, "0x%x", getub(buf, 28));	/* DGPS Mode*/
-	display(mid19win, 15,20, "%dsec",getub(buf, 29));	/* DGPS Timeout*/
+	display(mid19win, 3, 20, "%dm", (int)getbeuw(buf, 7));	/* Alt. source input */
+	if (getub(buf, 9) != (unsigned char)'\0')
+	    display(mid19win, 4, 20, "%dsec", getub(buf, 10));	/* Degraded timeout*/
+	else
+	    display(mid19win, 4, 20, "N/A   ");
+	display(mid19win, 5, 20, "%dsec",getub(buf, 11));	/* DR timeout*/
+	display(mid19win, 6, 20, "%c", YESNO(12));/* Track smooth mode*/
+	display(mid19win, 7, 20, "%c", YESNO(13)); /* Static Nav.*/
+	display(mid19win, 8, 20, "0x%x", getub(buf, 14));	/* 3SV Least Squares*/
+	display(mid19win, 9 ,20, "0x%x", getub(buf, 19));	/* DOP Mask mode*/
+	display(mid19win, 10,20, "0x%x", (int)getbeuw(buf, 20));	/* Nav. Elev. mask*/
+	display(mid19win, 11,20, "0x%x", getub(buf, 22));	/* Nav. Power mask*/
+	display(mid19win, 12,20, "0x%x", getub(buf, 27));	/* DGPS Source*/
+	display(mid19win, 13,20, "0x%x", getub(buf, 28));	/* DGPS Mode*/
+	display(mid19win, 14,20, "%dsec",getub(buf, 29));	/* DGPS Timeout*/
 	display(mid19win, 1, 42, "%c", YESNO(34));/* LP Push-to-Fix */
-	display(mid19win, 2, 42, "%dms", getul(buf, 35));	/* LP On Time */
-	display(mid19win, 3, 42, "%d", getul(buf, 39));	/* LP Interval */
+	display(mid19win, 2, 42, "%dms", getbeul(buf, 35));	/* LP On Time */
+	display(mid19win, 3, 42, "%d", getbeul(buf, 39));	/* LP Interval */
 	display(mid19win, 4, 42, "%c", YESNO(43));/* User Tasks enabled */
-	display(mid19win, 5, 42, "%d", getul(buf, 44));	/* User Task Interval */
+	display(mid19win, 5, 42, "%d", getbeul(buf, 44));	/* User Task Interval */
 	display(mid19win, 6, 42, "%c", YESNO(48));/* LP Power Cycling Enabled */
-	display(mid19win, 7, 42, "%d", getul(buf, 49));/* LP Max Acq Search Time */
-	display(mid19win, 8, 42, "%d", getul(buf, 53));/* LP Max Off Time */
+	display(mid19win, 7, 42, "%d", getbeul(buf, 49));/* LP Max Acq Search Time */
+	display(mid19win, 8, 42, "%d", getbeul(buf, 53));/* LP Max Off Time */
 	display(mid19win, 9, 42, "%c", YESNO(57));/* APM Enabled */
-	display(mid19win,10, 42, "%d", (int)getuw(buf, 58));/* # of fixes */
-	display(mid19win,11, 42, "%d", (int)getuw(buf, 60));/* Time Between fixes */
+	display(mid19win,10, 42, "%d", (int)getbeuw(buf, 58));/* # of fixes */
+	display(mid19win,11, 42, "%d", (int)getbeuw(buf, 60));/* Time Between fixes */
 	display(mid19win,12, 42, "%d", getub(buf, 62));/* H/V Error Max */
 	display(mid19win,13, 42, "%d", getub(buf, 63));/* Response Time Max */
 	display(mid19win,14, 42, "%d", getub(buf, 64));/* Time/Accu & Duty Cycle Priority */
@@ -452,16 +456,17 @@ static void decode_sirf(unsigned char buf[], int len)
 
 	total               3 x 12 = 36 bytes
 	******************************************************************/
-	(void)touchwin(mid27win);
-	display(mid27win, 1, 14, "                                                                                     ");
-	display(mid27win, 1, 14, "%s", dgpsvec[(int)getub(buf, 1)]);
+	display(mid27win, 1, 14, "%d (%s)", 
+		getub(buf, 1), dgpsvec[(int)getub(buf, 1)]);
+	/*@ -type @*/
+	//(void) wmove(mid27win, 2, 0);
 	for (i = j = 0; i < 12; i++) {
-	    (void)touchwin(mid27win);
-	    if (/*@i1@*/getub(buf, 16+3*i) != '\0') {
-		(void)wprintw(mid27win, "  %d=%d", getub(buf, 16+3*i), getsw(buf, 16+3*i+1));
+	    if (getub(buf, 16+3*i) != '\0') {
+		//(void)wprintw(mid27win, " %d=%d", getub(buf, 16+3*i), getbesw(buf, 16+3*i+1));
 		j++;
 	    }
 	}
+	/*@ +type @*/
 	display(mid27win, 1, 44, "%d", j);
 	(void)wprintw(debugwin, "DST 0x1b=");
 	break;
@@ -486,18 +491,18 @@ static void decode_sirf(unsigned char buf[], int len)
     case 0x62:
 	attrset(A_BOLD);
 	move(2,40);
-	printw("%9.5f %9.5f",(double)(RAD2DEG*1e8*getsl(buf, 1)),
-			     (double)(RAD2DEG*1e8*getsl(buf, 5)));
+	printw("%9.5f %9.5f",(double)(RAD_2_DEG*1e8*getbesl(buf, 1)),
+			     (double)(RAD_2_DEG*1e8*getbesl(buf, 5)));
 	move(2,63);
-	printw("%8d",getsl(buf, 9)/1000);
+	printw("%8d",getbesl(buf, 9)/1000);
 
 	move(3,63);
 
-	printw("%8.1f",(double)getsl(buf, 17)/1000);
+	printw("%8.1f",(double)getbesl(buf, 17)/1000);
 
 	move(4,54);
-	if (getul(buf, 13) > 50) {
-	    double heading = RAD2DEG*1e8*getsl(buf, 21);
+	if (getbeul(buf, 13) > 50) {
+	    double heading = RAD_2_DEG*1e8*getbesl(buf, 21);
 	    if (heading < 0)
 		heading += 360;
 	    printw("%5.1f",heading);
@@ -505,14 +510,14 @@ static void decode_sirf(unsigned char buf[], int len)
 	    printw("  0.0");
 
 	move(4,63);
-	printw("%8.1f",(double)getsl(buf, 13)/1000);
+	printw("%8.1f",(double)getbesl(buf, 13)/1000);
 	attrset(A_NORMAL);
 
 	move(5,13);
 	printw("%04d-%02d-%02d %02d:%02d:%02d.%02d",
-		(int)getuw(buf, 26),getub(buf, 28),getub(buf, 29),getub(buf, 30),getub(buf, 31),
-		(unsigned short)getuw(buf, 32)/1000,
-		((unsigned short)getuw(buf, 32)%1000)/10);
+		(int)getbeuw(buf, 26),getub(buf, 28),getub(buf, 29),getub(buf, 30),getub(buf, 31),
+		(unsigned short)getbeuw(buf, 32)/1000,
+		((unsigned short)getbeuw(buf, 32)%1000)/10);
 	{
 	    struct timeval clk,gps;
 	    struct tm tm;
@@ -520,15 +525,15 @@ static void decode_sirf(unsigned char buf[], int len)
 	    gettimeofday(&clk,NULL);
 
 	    memset(&tm,0,sizeof(tm));
-	    tm.tm_sec = (unsigned short)getuw(buf, 32)/1000;
+	    tm.tm_sec = (unsigned short)getbeuw(buf, 32)/1000;
 	    tm.tm_min = (int)getub(buf, 31);
 	    tm.tm_hour = (int)getub(buf, 30);
 	    tm.tm_mday = (int)getub(buf, 29);
 	    tm.tm_mon = (int)getub(buf, 28) - 1;
-	    tm.tm_year = (int)getuw(buf, 26) - 1900;
+	    tm.tm_year = (int)getbeuw(buf, 26) - 1900;
 
 	    gps.tv_sec = mkgmtime(&tm);
-	    gps.tv_usec = (((unsigned short)getuw(buf, 32)%1000)/10) * 10000;
+	    gps.tv_usec = (((unsigned short)getbeuw(buf, 32)%1000)/10) * 10000;
 
 	    move(5,2);
 	    printw("           ");
@@ -565,12 +570,14 @@ static void decode_sirf(unsigned char buf[], int len)
 	break;
 
     default:
-	(void)wprintw(debugwin, "    0x%02x=", buf[0]);
+	(void)wprintw(debugwin, "    0x%02x=", buf[4]);
 	break;
     }
 
+    buf -= 4;
+    len += 8;
     (void)wprintw(debugwin, "(%d) ", len);
-    for (i = 1; i < len; i++)
+    for (i = 0; i < (int)len; i++)
 	(void)wprintw(debugwin, "%02x",buf[i]);
     (void)wprintw(debugwin, "\n");
 }
@@ -636,10 +643,10 @@ static int set_speed(unsigned int speed, unsigned int stopbits)
     ttyset.c_cflag &=~ CSIZE;
     ttyset.c_cflag |= (CSIZE & (stopbits==2 ? CS7 : CS8));
     if (tcsetattr(devicefd, TCSANOW, &ttyset) != 0)
-	return NO_PACKET;
+	return BAD_PACKET;
     (void)tcflush(devicefd, TCIOFLUSH);
 
-    (void)fprintf(stderr, "Hunting at speed %u, %dN%u\n",
+    (void)fprintf(stderr, "Hunting at speed %u, %uN%u\n",
 	    get_speed(&ttyset), 9-stopbits, stopbits);
 
     /* sniff for NMEA or SiRF packet */
@@ -680,7 +687,7 @@ static int set_speed(unsigned int speed, unsigned int stopbits)
 	/*@ -charint @*/
     }
     
-    return NO_PACKET;
+    return BAD_PACKET;
 }
 
 static unsigned int *ip, rates[] = {0, 4800, 9600, 19200, 38400, 57600};
@@ -706,8 +713,12 @@ static unsigned int hunt_open(unsigned int *pstopbits)
 		return get_speed(&ttyset);
 	    else if (st == NMEA_PACKET) {
 		(void)fprintf(stderr, "Switching to SiRF mode...\n");
-		(void)nmea_send(controlfd,"$PSRF100,0,%d,8,1,0", *ip);
-		return *ip;
+		if (*ip == 0)
+		    bps = get_speed(&ttyset);
+		else
+		    bps = *ip;
+		(void)local_nmea_send(controlfd,"$PSRF100,0,%d,8,1,0", bps);
+		return bps;
 	    }
 	}
     }
@@ -735,100 +746,58 @@ static void serial_initialize(char *device)
  *
  ******************************************************************************/
 
-static int readbyte(void)
+void gpsd_report(int errlevel UNUSED, const char *fmt, ... )
+/* our version of the logger */
 {
-    /*@ -type -shiftnegative -compdef -nullpass @*/
-    static int cnt = 0,pos = 0;
-    static unsigned char inbuf[BUFLEN];
-    struct timeval timeval;
-
-    if (pos >= cnt) {
-	fd_set select_set;
-
-	FD_ZERO(&select_set);
-	FD_SET(devicefd,&select_set);
-	if (controlfd < -1)
-	    FD_SET(controlfd,&select_set);
-	timeval.tv_sec = 0;
-	timeval.tv_usec = 500000;
-	if (select(devicefd + 1,&select_set,NULL,NULL,&timeval) < 0)
-	    return EOF;
-
-	if (!FD_ISSET(devicefd,&select_set))
-	    return EOF;
-
-	(void)usleep(100000);
-
-	if ((cnt = (int)read(devicefd,inbuf,BUFLEN)) <= 0)
-	    return EOF;
-
-	pos = 0;
+    if (errlevel <= debuglevel) {
+	char buf[BUFSIZ];
+	va_list ap;
+	va_start(ap, fmt);
+	(void)vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+	(void)wprintw(debugwin, fmt, ap);
     }
-    /*@ +type +shiftnegative +compdef +nullpass @*/
-
-    return (int)inbuf[pos++];
-}
-
-static int readword(void)
-{
-    int byte1,byte2;
-
-    if ((byte1 = readbyte()) == EOF || (byte2 = readbyte()) == EOF)
-	return EOF;
-
-    /*@i@*/return (byte1 << 8) | byte2;
 }
 
 /*@ -globstate @*/
-static int readpkt(unsigned char *buf, size_t buflen)
+static ssize_t readpkt(void)
 {
-    int byte,len,csum,cnt;
-    unsigned char *cp = buf;
+    /*@ -type -shiftnegative -compdef -nullpass @*/
+    struct timeval timeval;
+    fd_set select_set;
+    ssize_t len;
 
-    do {
-	while ((byte = readbyte()) != START1)
-	    if (byte == EOF)
-		return EOF;
-    } while ((byte = readbyte()) != START2);
-
-    if ((len = readword()) == EOF || len > BUFLEN)
+    FD_ZERO(&select_set);
+    FD_SET(devicefd,&select_set);
+    if (controlfd < -1)
+	FD_SET(controlfd,&select_set);
+    timeval.tv_sec = 0;
+    timeval.tv_usec = 500000;
+    if (select(devicefd + 1,&select_set,NULL,NULL,&timeval) < 0)
 	return EOF;
 
-    csum = 0;
-    assert(len < (int)buflen);
-    cnt = len;
-
-    while (cnt-- > 0) {
-	if ((byte = readbyte()) == EOF)
-	    return EOF;
-	*cp++ = (unsigned char)byte;
-	csum += byte;
-    }
-
-    csum &= 0x7fff;
-
-    if (readword() != csum)
+    if (!FD_ISSET(devicefd,&select_set))
 	return EOF;
 
-    if (readbyte() != END1 || readbyte() != END2)
+    (void)usleep(100000);
+
+    len = packet_get(devicefd, &session.packet);
+    if (len <= 0)
 	return EOF;
 
     if (logfile != NULL) {
-	/*@ -shiftimplementation @*/
-	(void)fwrite("\xa0\xa2", (size_t)2,  sizeof(char), logfile);
-	(void)fputc(len >> 8, logfile);
-	(void)fputc(len & 0xff, logfile);
-	(void)fwrite(buf, (size_t)len, sizeof(char), logfile);
-	(void)fputc(csum >> 8, logfile);
-	(void)fputc(csum & 0xff, logfile);
-	(void)fwrite("\xb0\xb3", (size_t)2,  sizeof(char), logfile);
-	/*@ +shiftimplementation @*/
+	/*@ -shiftimplementation -sefparams +charint @*/
+	assert(fwrite(session.packet.outbuffer, 
+		      sizeof(char), session.packet.outbuflen, 
+		      logfile) >= 1);
+	/*@ +shiftimplementation +sefparams -charint @*/
     }
     return len;
+    /*@ +type +shiftnegative +compdef +nullpass @*/
 }
 /*@ +globstate @*/
 
-static bool sendpkt(unsigned char *buf, size_t len, char *device)
+static bool sendpkt(unsigned char *buf, size_t len)
 {
     unsigned int csum;
     ssize_t st;
@@ -836,14 +805,14 @@ static bool sendpkt(unsigned char *buf, size_t len, char *device)
 
     putbyte(buf, -4, START1);			/* start of packet */
     putbyte(buf, -3, START2);
-    putword(buf, -2, len);			/* length */
+    putbeword(buf, -2, len);			/* length */
 
     csum = 0;
     for (i = 0; i < len; i++)
 	csum += (int)buf[4 + i];
 
     csum &= 0x7fff;
-    putword(buf, len, csum);			/* checksum */
+    putbeword(buf, len, csum);			/* checksum */
     putbyte(buf, len + 2,END1);			/* end of packet */
     putbyte(buf, len + 3,END2);
     len += 8;
@@ -857,13 +826,18 @@ static bool sendpkt(unsigned char *buf, size_t len, char *device)
 	return false;
     else {
 	if (!serial) {
-	    (void)write(controlfd, "!", 1);
-	    (void)write(controlfd, device, strlen(device));
-	    (void)write(controlfd, "=", 1);
+	    /*@ -sefparams @*/
+	    assert(write(controlfd, "!", 1) != -1);
+	    assert(write(controlfd, session.gpsdata.gps_device, strlen(session.gpsdata.gps_device)) != -1);
+	    assert(write(controlfd, "=", 1) != -1);
+	    /*@ +sefparams @*/
 	}
 	st = write(controlfd, buf,len);
 	if (!serial)
-	    (void)read(controlfd, buf, 8);	/* enough room for "ERROR\r\n\0" */
+	    /* enough room for "ERROR\r\n\0" */
+	    /*@ -sefparams @*/
+	    assert(read(controlfd, buf, 8) != -1);
+	    /*@ +sefparams @*/
 	return ((size_t)st == len);
     }
 }
@@ -922,7 +896,7 @@ static void command(char buf[], size_t len, const char *fmt, ... )
     (void)vsnprintf(buf, len, fmt, ap);
     va_end(ap);
 
-    (void)write(devicefd, buf, strlen(buf));
+    /*@i1@*/assert(write(devicefd, buf, strlen(buf)) != -1);
     n = read(devicefd, buf, len);
     if (n >= 0) {
 	buf[n] = '\0';
@@ -931,10 +905,18 @@ static void command(char buf[], size_t len, const char *fmt, ... )
     }
 }
 
+static jmp_buf assertbuf;
+
+static void onsig(int sig UNUSED)
+{
+    longjmp(assertbuf, 1);
+}
+
 int main (int argc, char **argv)
 {
     unsigned int i, v;
-    int len, option;
+    int option;
+    ssize_t len;
     char *p, *arg = NULL, *colon1 = NULL, *colon2 = NULL, *slash = NULL;
     char *server=NULL, *port = DEFAULT_GPSD_PORT, *device = NULL;
     char *controlsock = "/var/run/gpsd.sock";
@@ -945,8 +927,11 @@ int main (int argc, char **argv)
     gmt_offset = (int)tzoffset();
 
     /*@ -branchstate @*/
-    while ((option = getopt(argc, argv, "F:Vh")) != -1) {
+    while ((option = getopt(argc, argv, "D:F:Vh")) != -1) {
 	switch (option) {
+	case 'D':
+	    debuglevel = atoi(optarg);
+	    break;
 	case 'F':
 	    controlsock = optarg;
 	    break;
@@ -981,12 +966,13 @@ int main (int argc, char **argv)
 	    }
 	}
     }
-    /*@ +nullpass +branchstate @*/
 
     /*@ -boolops */
     if (!arg || (arg && !slash) || (arg && colon1 && slash)) {	
 	if (!server)
 	    server = "127.0.0.1";
+	if (!port)
+	    port = DEFAULT_GPSD_PORT;
 	devicefd = netlib_connectsock(server, port, "tcp");
 	if (devicefd < 0) {
 	    (void)fprintf(stderr, 
@@ -1010,6 +996,21 @@ int main (int argc, char **argv)
 	serial = true;
     }
     /*@ +boolops */
+    /*@ +nullpass +branchstate @*/
+
+    assert(device != NULL);
+    gpsd_init(&session, &context, device);
+    packet_reset(&session.packet);
+
+    /* quit cleanly if an assertion fails */
+    (void)signal(SIGABRT, onsig);
+    if (setjmp(assertbuf) > 0) {
+	if (logfile)
+	    (void)fclose(logfile);
+	(void)endwin();
+	(void)fputs("sirfmon: assertion failure, probable I/O error\n", stderr);
+	exit(1);
+    }
 
     (void)initscr();
     (void)cbreak();
@@ -1024,8 +1025,8 @@ int main (int argc, char **argv)
     mid7win   = newwin(4,  50, 10, 30);
     mid9win   = newwin(3,  50, 14, 30);
     mid13win  = newwin(3,  50, 17, 30);
-    mid19win  = newwin(17, 50,  7, 30);
-    mid27win  = newwin(4,  50, 20, 30);
+    mid19win  = newwin(16, 50,  7, 30);
+    mid27win  = newwin(3,  50, 20, 30);
     cmdwin    = newwin(2,  30, 22, 0);
     if (mid2win==NULL || mid4win==NULL || mid6win==NULL || mid9win==NULL
 	|| mid13win==NULL || mid19win==NULL || mid27win==NULL || cmdwin==NULL)
@@ -1074,18 +1075,17 @@ int main (int argc, char **argv)
     display(mid19win, 1, 1, "Alt. hold mode:");
     display(mid19win, 2, 1, "Alt. hold source:");
     display(mid19win, 3, 1, "Alt. source input:");
-    display(mid19win, 4, 1, "Degraded mode:");
-    display(mid19win, 5, 1, "Degraded timeout:");
-    display(mid19win, 6, 1, "DR timeout:");
-    display(mid19win, 7, 1, "Track smooth mode:");
-    display(mid19win, 8, 1, "Static Navigation:");
-    display(mid19win, 9, 1, "3SV Least Squares:");
-    display(mid19win, 10,1, "DOP Mask mode:");
-    display(mid19win, 11,1, "Nav. Elev. mask:");
-    display(mid19win, 12,1, "Nav. Power mask:");
-    display(mid19win, 13,1, "DGPS Source:");
-    display(mid19win, 14,1, "DGPS Mode:");
-    display(mid19win, 15,1, "DGPS Timeout:");
+    display(mid19win, 4, 1, "Degraded timeout:");
+    display(mid19win, 5, 1, "DR timeout:");
+    display(mid19win, 6, 1, "Track smooth mode:");
+    display(mid19win, 7, 1, "Static Navigation:");
+    display(mid19win, 8, 1, "3SV Least Squares:");
+    display(mid19win, 9 ,1, "DOP Mask mode:");
+    display(mid19win, 10,1, "Nav. Elev. mask:");
+    display(mid19win, 11,1, "Nav. Power mask:");
+    display(mid19win, 12,1, "DGPS Source:");
+    display(mid19win, 13,1, "DGPS Mode:");
+    display(mid19win, 14,1, "DGPS Timeout:");
     display(mid19win, 1, 26,"LP Push-to-Fix:");
     display(mid19win, 2, 26,"LP On Time:");
     display(mid19win, 3, 26,"LP Interval:");
@@ -1101,7 +1101,7 @@ int main (int argc, char **argv)
     display(mid19win,13, 26,"Rsp Time Max:");
     display(mid19win,14, 26,"Time/Accu:");
 
-    display(mid19win, 16, 8, " Packet type 19 (0x13) ");
+    display(mid19win, 15, 8, " Packet type 19 (0x13) ");
     (void)wattrset(mid19win, A_NORMAL);
 
     (void)wborder(mid6win, 0, 0, 0, 0, 0, 0, 0, 0),
@@ -1139,14 +1139,14 @@ int main (int argc, char **argv)
     (void)wattrset(mid27win, A_BOLD);
     display(mid27win, 1, 1, "DGPS source: ");
     display(mid27win, 1, 31, "Corrections: ");
-    display(mid27win, 3, 8, " Packet type 27 (0x1B) ");
+    display(mid27win, 2, 8, " Packet type 27 (0x1B) ");
     (void)wattrset(mid27win, A_NORMAL);
 
     (void)wattrset(cmdwin, A_BOLD);
     if (serial)
-    	display(cmdwin, 1, 0, "%s %4d N %d", device, bps, stopbits);
+    	display(cmdwin, 1, 0, "%s %4d N %d", session.gpsdata.gps_device, bps, stopbits);
     else
-	display(cmdwin, 1, 0, "%s:%s:%s", server, port, device);
+	display(cmdwin, 1, 0, "%s:%s:%s", server, port, session.gpsdata.gps_device);
     (void)wattrset(cmdwin, A_NORMAL);
 
     (void)wmove(debugwin,0, 0);
@@ -1157,7 +1157,7 @@ int main (int argc, char **argv)
     putbyte(buf, 0, 0x84);
     putbyte(buf, 1, 0x0);
     /*@ -compdef @*/
-    (void)sendpkt(buf, 2, device);
+    (void)sendpkt(buf, 2);
     /*@ +compdef @*/
 
     for (;;) {
@@ -1167,7 +1167,7 @@ int main (int argc, char **argv)
 	(void)refresh();
 	(void)wrefresh(mid2win);
 	(void)wrefresh(mid4win);
-	if (dispmode == 0) {
+	if (!dispmode) {
 	    refresh_rightpanel1();
 	} else {
 	    (void)touchwin(mid19win);
@@ -1195,7 +1195,7 @@ int main (int argc, char **argv)
 	    //(void)refresh();
 	    (void)wrefresh(mid2win);
 	    (void)wrefresh(mid4win);
-	    if (dispmode == 0) {
+	    if (!dispmode) {
 		refresh_rightpanel1();
 	    } else {
 		(void)touchwin(mid19win);
@@ -1227,7 +1227,7 @@ int main (int argc, char **argv)
 		putbyte(buf, 0, 0x80);
 		putbyte(buf, 23, 12);
 		putbyte(buf, 24, subframe_enabled ? 0x00 : 0x10);
-		(void)sendpkt(buf, 25, device);
+		(void)sendpkt(buf, 25);
 		break;
 
 	    case 'b':
@@ -1239,26 +1239,30 @@ int main (int argc, char **argv)
 		    break;
 		goodspeed:
 		    putbyte(buf, 0, 0x86);
-		    putlong(buf, 1, v);		/* new baud rate */
+		    putbelong(buf, 1, v);		/* new baud rate */
 		    putbyte(buf, 5, 8);		/* 8 data bits */
 		    putbyte(buf, 6, stopbits);	/* 1 stop bit */
 		    putbyte(buf, 7, 0);		/* no parity */
 		    putbyte(buf, 8, 0);		/* reserved */
-		    (void)sendpkt(buf, 9, device);
+		    (void)sendpkt(buf, 9);
 		    (void)usleep(50000);
 		    (void)set_speed(bps = v, stopbits);
-		    display(cmdwin, 1, 0, "%s %d N %d", device,bps,stopbits);
+		    display(cmdwin, 1, 0, "%s %d N %d", 
+			    session.gpsdata.gps_device,bps,stopbits);
 		} else {
 		    line[0] = 'b';
-		    (void)write(devicefd, line, strlen(line));
-		    (void)read(devicefd, buf, sizeof(buf));	/* discard response */
+		    /*@ -sefparams @*/
+		    assert(write(devicefd, line, strlen(line)) != -1);
+		    /* discard response */
+		    assert(read(devicefd, buf, sizeof(buf)) != -1);
+		    /*@ +sefparams @*/
 		}
 		break;
 
 	    case 'c':				/* static navigation */
 		putbyte(buf, 0,0x8f);			/* id */
 		putbyte(buf, 1, atoi(line+1));
-		(void)sendpkt(buf, 2, device);
+		(void)sendpkt(buf, 2);
 		break;
 
 	    case 'd':		/* MID 4 rate change -- not documented */
@@ -1273,7 +1277,7 @@ int main (int argc, char **argv)
 		putbyte(buf, 5, 0);
 		putbyte(buf, 6, 0);
 		putbyte(buf, 7, 0);
-		(void)sendpkt(buf, 8, device);
+		(void)sendpkt(buf, 8);
 		break;
 
 	    case 'l':				/* open logfile */
@@ -1309,8 +1313,8 @@ int main (int argc, char **argv)
 		putbyte(buf, 19,0x01);
 		putbyte(buf, 20,0x00);
 		putbyte(buf, 21,0x01);
-		putword(buf, 22,bps);
-		(void)sendpkt(buf, 24, device);
+		putbeword(buf, 22,bps);
+		(void)sendpkt(buf, 24);
 		goto quit;
 
 	    case 't':				/* poll navigation params */
@@ -1324,7 +1328,7 @@ int main (int argc, char **argv)
 		len = 0;
 		while (*p != '\0')
 		{
-		    /*@i1@*/(void)sscanf(p,"%x",&v);
+		    (void)sscanf(p,"%x",&v);
 		    putbyte(buf, len,v);
 		    len++;
 		    while (*p != '\0' && !isspace(*p))
@@ -1333,19 +1337,20 @@ int main (int argc, char **argv)
 			p++;
 		}
 
-		(void)sendpkt(buf, (size_t)len, device);
+		(void)sendpkt(buf, (size_t)len);
 		break;
 	    }
 	}
 
+	/* refresh navigation parameters */
 	if (dispmode && (time(NULL) % 10 == 0)){
 	    putbyte(buf, 0,0x98);
 	    putbyte(buf, 1,0x00);
-	    (void)sendpkt(buf, 2, device);
+	    (void)sendpkt(buf, 2);
 	}
 
-	if ((len = readpkt(buf, sizeof(buf))) != EOF) {
-	    decode_sirf(buf,len);
+	if ((len = readpkt()) > 0 && session.packet.outbuflen > 0) {
+	    decode_sirf(session.packet.outbuffer,session.packet.outbuflen);
 	}
     }
     /*@ +nullpass @*/

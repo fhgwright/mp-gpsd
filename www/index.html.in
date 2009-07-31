@@ -100,11 +100,11 @@ href="http://viking.sf.net">viking</a>,
 and <a href="http://gaia.serezhkin.com/">gaia</a>.</p>
 
 <p>Under Linux, <code>gpsd</code> normally runs with zero
-configuration.  The RPM installs hotplug scripts that do the right
-thing when a USB device goes active, launching <code>gpsd</code> if
-needed and telling <code>gpsd</code> which device to read data from.
-Then, <code>gpsd</code> deduces a baud rate and GPS type by looking at
-the data stream.</p>
+configuration.  Binary packages for this program install hotplug
+scripts that do the right thing when a USB device goes active,
+launching <code>gpsd</code> if needed and telling <code>gpsd</code>
+which device to read data from.  Then, <code>gpsd</code> deduces a
+baud rate and GPS type by looking at the data stream.</p>
 
 <p><code>gpsd</code> is high-quality, carefully-audited code.  It is
 regularly checked with the standard mode of <a
@@ -142,7 +142,7 @@ buying <a href="wishlist.html"> test hardware and standards</a>.</p>
 <h1 id='news'>News</h1>
 
 <p>This web page was last updated on @DATE@.  You can browse the
-project's <a href='CHANGES'>change log</a> or <a href='TODO'>to-do
+project's <a href='NEWS'>news file</a> or <a href='TODO'>to-do
 list</a> here.</p>
 
 <h1 id='downloads'>Downloads and packages</h1>
@@ -182,7 +182,7 @@ href="https://lists.berlios.de/mailman/listinfo/gpsd-commit-watch">gpsd-commit-w
 sends automatic broadcast notifications of commits to the <code>gpsd</code>
 repository.</li>
 
-<li>We also have archives at <a href="http://marc.info">MARC</a>:
+<li>We also have searchable archives at <a href="http://marc.info">MARC</a>:
 <a href="http://marc.info/?l=gpsd-users">gpsd-users</a>,
 <a href="http://marc.info/?l=gpsd-dev">gpsd-dev</a> and 
 <a href="http://marc.info/?l=gpsd-commit-watch">gpsd-commit-watch</a>.</li>
@@ -297,8 +297,14 @@ by Holux that may result in <code>gpsd</code> bricking your GPS.  See this
 <a href="upstream-bugs.html#bluetooth">bug warning</a> for a description 
 of the problem.</p>
 
+<p>The <a href="http://gpsdproxy.sourceforge.net/">gGPSDproxy
+project</a> is a small program which reads GPS data from a running
+gpsd process and forwards it to a remote server via an UDP
+connection. GPSDproxy is intended to be run on GPS enabled mobile
+devices.</p>
+
 <p>Diego Berge has written a prototype <a
-href="http://www.nippur.net/survey/gpsd/">Qt-based client</a>,
+href="http://www.navlost.eu/survey/gpsd/">Qt-based client</a>,
 basically <code>xgps</code> with a more modern look and feel.
 
 <p>We supply a Gentoo Linux ebuild script in the source distribution.</p>

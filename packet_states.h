@@ -1,4 +1,5 @@
 /* $Id$ */
+/* edit packet_states.h to add new packet types. */
    GROUND_STATE,	/* we don't know what packet type to expect */
 
    COMMENT_BODY,	/* pound comment for a test load */
@@ -126,10 +127,27 @@
    GARMIN_RECOGNIZED,	/* found end of Garmin packet */
 #endif /* TSIP_ENABLE GARMIN_ENABLE */
 
-#ifdef RTCM104_ENABLE
-   RTCM_SYNC_STATE,	/* we have sync lock */
-   RTCM_SKIP_STATE,	/* we have sync lock, but this character is bad */
-   RTCM_RECOGNIZED,	/* we have an RTCM packet */
-#endif /* RTCM104_ENABLE */
+#ifdef SUPERSTAR2_ENABLE
+   SUPERSTAR2_LEADER,	/* leading SOH */
+   SUPERSTAR2_ID1,	/* message type */
+   SUPERSTAR2_ID2,	/* message type xor 0xff */
+   SUPERSTAR2_PAYLOAD,	/* length of the actual packet data */
+   SUPERSTAR2_CKSUM1,
+   SUPERSTAR2_CKSUM2,
+   SUPERSTAR2_RECOGNIZED,
+#endif
+
+#ifdef RTCM104V2_ENABLE
+   RTCM2_SYNC_STATE,	/* we have sync lock */
+   RTCM2_SKIP_STATE,	/* we have sync lock, but this character is bad */
+   RTCM2_RECOGNIZED,	/* we have an RTCM packet */
+#endif /* RTCM104V2_ENABLE */
+
+#ifdef RTCM104V3_ENABLE
+   RTCM3_LEADER_1,      /* constant leader byte found */
+   RTCM3_LEADER_2,      /* second leader byte found (high 6 bits zero) */
+   RTCM3_PAYLOAD,       /* gathering payload */
+   RTCM3_RECOGNIZED,    /* RTCM3 packet recognized */
+#endif
 
 /* end of packet_states.h */

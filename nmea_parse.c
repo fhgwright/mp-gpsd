@@ -13,6 +13,10 @@
 #include "gpsd.h"
 #include "timebase.h"
 
+#ifdef MKT3301_ENABLE
+extern gps_mask_t processMKT3301(int c UNUSED, char *field[], struct gps_device_t *session);
+#endif /* MKT3301_ENABLE */
+
 #ifdef NMEA_ENABLE
 /**************************************************************************
  *
@@ -122,7 +126,7 @@ static gps_mask_t processGPRMC(int count, char *field[], struct gps_device_t *se
      5,6   12311.12,W   Longitude 123 deg. 11.12 min West
      7     000.5	Speed over ground, Knots
      8     054.7	Course Made Good, True north
-     9     191194       Date of fix  19 November 1994
+     9     181194       Date of fix  18 November 1994
      10,11 020.3,E      Magnetic variation 20.3 deg East
      12    A	    FAA mode indicator (NMEA 2.3 and later)
 			A=autonomous, D=differential, E=Estimated,
@@ -147,8 +151,8 @@ static gps_mask_t processGPRMC(int count, char *field[], struct gps_device_t *se
 	mask |= ONLINE_SET;
     } else if (strcmp(field[2], "A")==0) {
 	if (count > 9) {
-	    merge_ddmmyy(field[9], session);
 	    merge_hhmmss(field[1], session);
+	    merge_ddmmyy(field[9], session);
 	    mask |= TIME_SET;
 	    session->gpsdata.fix.time = (double)mkgmtime(&session->driver.nmea.date)+session->driver.nmea.subseconds;
 	    if (!GPS_TIME_EQUAL(session->gpsdata.sentence_time, session->gpsdata.fix.time)) {
@@ -185,28 +189,37 @@ static gps_mask_t processGPRMC(int count, char *field[], struct gps_device_t *se
 static gps_mask_t processGPGLL(int count, char *field[], struct gps_device_t *session)
 /* Geographic position - Latitude, Longitude */
 {
-    /* Introduced in NMEA 3.0.  Here are the fields:
-     *
-     * 1,2 Latitude, N (North) or S (South)
-     * 3,4 Longitude, E (East) or W (West)
-     * 5 UTC of position
-     * 6 A=Active, V=Void
-     * 7 Mode Indicator
-     *   A = Autonomous mode
-     *   D = Differential Mode
-     *   E = Estimated (dead-reckoning) mode
-     *   M = Manual Input Mode
-     *   S = Simulated Mode
-     *   N = Data Not Valid
-     *
-     * I found a note at <http://www.secoh.ru/windows/gps/nmfqexep.txt>
-     * indicating that the Garmin 65 does not return time and status.
-     * SiRF chipsets don't return the Mode Indicator.
-     * This code copes gracefully with both quirks.
-     *
-     * Unless you care about the FAA indicator, this sentence supplies nothing
-     * that GPRMC doesn't already.  But at least one Garmin GPS -- the 48
-     * actually ships updates in GPLL that aren't redundant.
+    /* Introduced in NMEA 3.0.
+
+       $GPGLL,4916.45,N,12311.12,W,225444,A,A*5C
+
+       1,2: 4916.46,N    Latitude 49 deg. 16.45 min. North
+       3,4: 12311.12,W   Longitude 123 deg. 11.12 min. West
+       5:   225444       Fix taken at 22:54:44 UTC
+       6:   A            Data valid
+       7:   A            Autonomous mode
+       8:   *5C          Mandatory NMEA checksum
+
+     1,2 Latitude, N (North) or S (South)
+     3,4 Longitude, E (East) or W (West)
+     5 UTC of position
+     6 A=Active, V=Void
+     7 Mode Indicator
+       A = Autonomous mode
+       D = Differential Mode
+       E = Estimated (dead-reckoning) mode
+       M = Manual Input Mode
+       S = Simulated Mode
+       N = Data Not Valid
+     
+     I found a note at <http://www.secoh.ru/windows/gps/nmfqexep.txt>
+     indicating that the Garmin 65 does not return time and status.
+     SiRF chipsets don't return the Mode Indicator.
+     This code copes gracefully with both quirks.
+     
+     Unless you care about the FAA indicator, this sentence supplies nothing
+     that GPRMC doesn't already.  But at least one Garmin GPS -- the 48
+     actually ships updates in GPLL that aren't redundant.
      */
     char *status = field[7];
     gps_mask_t mask = ERROR_SET;
@@ -498,7 +511,8 @@ static gps_mask_t processPGRME(int c UNUSED, char *field[], struct gps_device_t 
      * Garmin won't say, but the general belief is that these are 50% CEP.
      * We follow the advice at <http://gpsinformation.net/main/errors.htm>.
      * If this assumption changes here, it should also change in garmin.c
-     * where we scale error estimates from Garmin binary packets.
+     * where we scale error estimates from Garmin binary packets, and
+     * in libgpsd_core.c wgere we fenerate $PGRME.
      */
     if ((strcmp(field[2], "M")!=0) ||
 	(strcmp(field[4], "M")!=0) ||
@@ -599,6 +613,65 @@ static gps_mask_t processTNTHTM(int c UNUSED, char *field[], struct gps_device_t
 }
 #endif /* TNT_ENABLE */
 
+#ifdef OCEANSERVER_ENABLE
+static gps_mask_t processOHPR(int c UNUSED, char *field[], struct gps_device_t *session)
+{
+    /*
+     * Proprietary sentence for OceanServer Magnetic Compass.
+
+	OHPR,x.x,x.x,x.x,x.x,x.x,x.x,x.x,x.x,x.x,x.x,x.x,x.x,x.x,x.x,x.x,x.x,x.x,x.x*hh<cr><lf>
+	Fields in order:
+	1. Azimuth
+	2. Pitch Angle
+	3. Roll Angle
+	4. Temperature
+	5. Depth (feet)
+	6. Magnetic Vector Length
+	7-9. 3 axis Magnetic Field readings x,y,z
+	10. Acceleration Vector Length
+	11-13. 3 axis Acceleration Readings x,y,z
+	14. Reserved
+	15-16. 2 axis Gyro Output, X,y
+	17. Reserved
+	18. Reserved
+	*hh	  mandatory nmea_checksum
+     */
+    gps_mask_t mask;
+    mask = ONLINE_SET;
+
+    //gpsd_zero_satellites(&session->gpsdata);
+
+    /*
+     * Heading maps to track.
+     * Pitch maps to climb.
+     * Roll maps to speed.
+     * Depth maps to altitude.
+     */
+    session->gpsdata.fix.time = timestamp();
+    session->gpsdata.fix.track = atof(field[1]);
+    session->gpsdata.fix.climb = atof(field[2]);
+    session->gpsdata.fix.speed = atof(field[3]);
+    session->gpsdata.temperature = atof(field[4]);
+    session->gpsdata.fix.altitude = atof(field[5]);
+    session->gpsdata.magnetic_length = atof(field[6]);
+    session->gpsdata.magnetic_field_x = atof(field[7]);
+    session->gpsdata.magnetic_field_y = atof(field[8]);
+    session->gpsdata.magnetic_field_z = atof(field[9]);
+    session->gpsdata.acceleration_length = atof(field[10]);
+    session->gpsdata.acceleration_field_x = atof(field[11]);
+    session->gpsdata.acceleration_field_y = atof(field[12]);
+    session->gpsdata.acceleration_field_z = atof(field[13]);
+    session->gpsdata.gyro_output_x = atof(field[15]);
+    session->gpsdata.gyro_output_y = atof(field[16]);
+    session->gpsdata.fix.mode = MODE_3D;
+    mask |= (STATUS_SET | MODE_SET | TRACK_SET | SPEED_SET | CLIMB_SET | ALTITUDE_SET);
+    session->gpsdata.status = STATUS_FIX;	/* could be DGPS_FIX */
+
+    gpsd_report(LOG_RAW, "Heading %lf.\n", session->gpsdata.fix.track);
+    return mask;
+}
+#endif /* OCEANSERVER_ENABLE */
+
 #ifdef ASHTECH_ENABLE
 static gps_mask_t processPASHR(int c UNUSED, char *field[], struct gps_device_t *session)
 {
@@ -686,9 +759,10 @@ gps_mask_t nmea_parse(char *sentence, struct gps_device_t *session)
     typedef gps_mask_t (*nmea_decoder)(int count, char *f[], struct gps_device_t *session);
     static struct {
 	char *name;
-	int nf;		/* minimum number of fields required to parse */
+	int nf;			/* minimum number of fields required to parse */
 	nmea_decoder decoder;
     } nmea_phrase[] = {
+	/*@ -nullassign @*/
 	{"RMC", 8,	processGPRMC},
 	{"GGA", 13,	processGPGGA},
 	{"GLL", 7, 	processGPGLL},
@@ -705,7 +779,11 @@ gps_mask_t nmea_parse(char *sentence, struct gps_device_t *session)
 #endif /* TNT_ENABLE */
 #ifdef ASHTECH_ENABLE
 	{"PASHR", 3,	processPASHR},	/* general handler for Ashtech */
-#endif /* TNT_ENABLE */
+#endif /* ASHTECH_ENABLE */
+#ifdef OCEANSERVER_ENABLE
+	{"OHPR", 18,	processOHPR},
+#endif /* OCEANSERVER_ENABLE */
+	/*@ +nullassign @*/
     };
     volatile unsigned char buf[NMEA_MAX+1];
 
@@ -790,6 +868,10 @@ gps_mask_t nmea_parse(char *sentence, struct gps_device_t *session)
 	    break;
 	}
     }
+#ifdef MKT3301_ENABLE
+    if (strncmp("PMTK", field[0], 4) == 0) /* general handler for MKT3301 vendor specifics */
+	retval = processMKT3301(count, field, session);	
+#endif /* MKT3301_ENABLE */
     /*@ +usedef @*/
     return retval;
 }
@@ -814,28 +896,33 @@ void nmea_add_checksum(char *sentence)
     (void)snprintf(p, 5, "%02X\r\n", (unsigned)sum);
 }
 
-int nmea_send(int fd, const char *fmt, ... )
+ssize_t nmea_write(struct gps_device_t *session, char *buf, size_t len UNUSED)
 /* ship a command to the GPS, adding * and correct checksum */
 {
-    int status;
-    char buf[BUFSIZ];
-    va_list ap;
-
-    va_start(ap, fmt) ;
-    (void)vsnprintf(buf, sizeof(buf)-5, fmt, ap);
-    va_end(ap);
-    if (fmt[0] == '$') {
+    ssize_t status;
+    if (buf[0] == '$') {
 	(void)strlcat(buf, "*", BUFSIZ);
 	nmea_add_checksum(buf);
     } else
 	(void)strlcat(buf, "\r\n", BUFSIZ);
-    status = (int)write(fd, buf, strlen(buf));
-    (void)tcdrain(fd);
-    if (status == (int)strlen(buf)) {
+    status = write(session->gpsdata.gps_fd, buf, strlen(buf));
+    (void)tcdrain(session->gpsdata.gps_fd);
+    if (status == (ssize_t)strlen(buf)) {
 	gpsd_report(LOG_IO, "=> GPS: %s\n", buf);
 	return status;
     } else {
 	gpsd_report(LOG_WARN, "=> GPS: %s FAILED\n", buf);
 	return -1;
     }
+}
+
+ssize_t nmea_send(struct gps_device_t *session, const char *fmt, ... )
+{
+    char buf[BUFSIZ];
+    va_list ap;
+
+    va_start(ap, fmt) ;
+    (void)vsnprintf(buf, sizeof(buf)-5, fmt, ap);
+    va_end(ap);
+    return nmea_write(session, buf, strlen(buf));
 }

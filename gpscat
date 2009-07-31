@@ -8,6 +8,9 @@ import gpspacket
 # The spec says 82, but some receivers (TN-200, GSW 2.3.2) output 86 characters
 NMEA_MAX = 86
 
+# Lowest debug level at which packet getter begins to emit messages, minus one
+BASELEVEL = gpspacket.LOG_IO
+
 def hexdump(str):
     dmp = ""
     for (i, ch) in enumerate(str):
@@ -21,11 +24,17 @@ def hexdump(str):
             dmp += "\\x%02x" % ord(ch)
     return dmp
 
+debuglevel = 0
+
+def reporter(errlevel, msg):
+    if errlevel <= debuglevel:
+        sys.stdout.write(msg)
+
 if __name__ == '__main__':
     buf = ""
     try:
         try:
-            (options, arguments) = getopt.getopt(sys.argv[1:], "hps:V")
+            (options, arguments) = getopt.getopt(sys.argv[1:], "hps:tv:V")
         except getopt.GetoptError, msg:
             print "gpscat: " + str(msg)
             raise SystemExit, 1
@@ -44,9 +53,11 @@ if __name__ == '__main__':
                     stopbits = int(val[-1])
                     val = val[:-2]
                 speed = int(val)
-            elif switch == 't':
+            elif switch == '-t':
                 typeflag = True
                 rawmode = False
+            elif switch == '-v':
+                debuglevel = BASELEVEL + int(val)
             elif switch == '-h':
                 sys.stderr.write("usage: gpscat [-s speed] serial-port\n")
                 raise SystemExit, 0
@@ -86,6 +97,8 @@ if __name__ == '__main__':
         buf = ""
         if not rawmode:
             getter = gpspacket.new()
+            gpspacket.register_report(reporter)
+        seqno = 0
         while True:
             (fd, event) = poller.poll()[0]
             if fd == tty and event == select.POLLIN:
@@ -95,11 +108,21 @@ if __name__ == '__main__':
                         sys.stdout.write(hexdump(buf))
                         buf = ""
                 else:
-                    (type, packet) = getter.get(tty)
-                    if packet == '':
+                    (ptype, packet) = getter.get(tty)
+                    length = len(packet)
+                    seqno += 1
+                    # Don't crap out if the first packet is bad, we might
+                    # be seeing an incomplete read from a tty.
+                    if ptype == gpspacket.BAD_PACKET and seqno >= 2:
+                        if debuglevel >= BASELEVEL:
+                            sys.stdout.write("gpscat: terminating on bad packet\n")
                         break
+                    elif length == 0:
+                        continue
                     if typeflag:
-                        sys.stdout.write(`type` + ": " + hexdump(packet) + "\n")
+                        sys.stdout.write(`ptype` + " (" + `length` + "): " + hexdump(packet))
+                        if ptype not in (gpspacket.COMMENT_PACKET, gpspacket.NMEA_PACKET,  gpspacket.GARMINTXT_PACKET):
+                            sys.stdout.write("\n")
                     else:
                         sys.stdout.write(hexdump(packet) + "\n")
     except KeyboardInterrupt:

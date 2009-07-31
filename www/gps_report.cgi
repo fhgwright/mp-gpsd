@@ -11,7 +11,7 @@ use MIME::Base64;
 $query = new CGI;
 print $query->header;
 print $query->start_html(-title=>"GPS Reporting Form",
-			 -background=>"../htdocs/paper.gif");
+			 -background=>"../paper.gif");
 
 $output_sample_file = $query->param('output_sample');
 $output_sample_body = $query->param('output_sample_body');
@@ -26,17 +26,20 @@ do {
 if (hasNeededElements($query) && $query->param("action") eq "Send Report"){
 	# handle successful upload...
 	$ENV{'PATH'} = '/usr/bin:/bin';
-	open(M, '|mail -s "new gps report" ckuethe') ||
+#	my $t = time();
+#	open(M, "|mail -s 'new gps report $t' chris.kuethe\@gmail.com") ||
+	open(M, '|mail -s "new gps report" chris.kuethe@gmail.com gpsd-dev@berlios.de') ||
 		die "can't run mail: $!\n";
-	print M "Remote: ${ENV{'REMOTE_ADDR'}}:${ENV{'REMOTE_PORT'}}\n";
-	foreach $var ( qw(submitter vendor model techdoc chipset firmware nmea
-			interface testversion rating notes location date
-			interval leader sample_notes)){
+	print M "Remote: ${ENV{'REMOTE_ADDR'}}:${ENV{'REMOTE_PORT'}}\n\n";
+	printf M ("[%s]\n", $query->param('model'));
+	foreach $var ( sort qw(submitter vendor packaging techdoc chipset
+                        firmware nmea interface tested rating noconfigure notes 
+                        location date interval leader sample_notes)){
 		$val = $query->param($var);
-		printf M ("%s: %s\n", $var, $val) if (defined($val) && $val);
+		printf M ("\t%s = %s\n", $var, $val) if (defined($val) && $val);
 	}
 	$output = encode_base64(decode_base64($output_sample_body));
-	printf M ("output_sample (base64 encoded):\n%s\n", $output);
+	printf M ("\noutput_sample (base64 encoded):\n%s\n", $output);
 	close(M);
 	print "new gps report accepted...\n";
 	exit(0);
@@ -62,9 +65,12 @@ support for it more reliable.</p>
 <hr/>
 <h2>Contact information</h2>
 
-<p><em style='color: #ff0000;'>Important!</em> We need a valid email
+<p><em style='color: #ff0000;'>Important!</em> We prefer a valid email
 address for you in case we need to ask you followup questions about
-the device.  We won't give your address to anyone.
+the device.  While we won't use your address for anything other than
+asking you questions about your receiver, and maybe asking you to test
+specific changes, this gps report will be sent to the gpsd-dev list
+which is publicly archived.
 <br/>Example: <code>Eric Raymond &lt;esr&#x40;thyrsus.com&gt;</code></p>
 
 EOF
@@ -106,6 +112,30 @@ main page.
 EOF
 
 print $query->textfield(-name=>"techdoc", -size=>72);
+
+print <<EOF;
+<p>It is useful to have an indication of how the GPS is packaged.
+
+<ul>
+<li>A "GPS mouse" is a standalone sensor in a display-less case designed 
+be used as an outbard peripheral to a computer.</li>
+<li>A "handset" is a standalone GPS with a display and human-usable controls.</li>
+<li>A "handsfree" is a hands-free unit with display designed for mounting 
+on a car windshield or boat dash.</li>
+<li>A "survey" GPS is packaged for field-survey use.</li> 
+<li>An "OEM module" is an un-cased circuit board with edge connectors.</li>
+<li>"chipset" is a bare chip or chips packaged for surface mount.</li>
+</ul>
+
+<p><em>Packaging:</em><br>
+EOF
+
+print $query->radio_group(-name=>'packaging',
+			  -values=>['GPS mouse', 'handset', 'handsfree',
+				'survey', 'OEM module', 'chipset', 'other'],
+			  -default=>"GPS mouse",
+			  -linebreak=>'false');
+
 
 print <<EOF;
 <p>Please identify the GPS chipset and firmware version, if possible.  You
@@ -173,7 +203,7 @@ like <code>r4595</code>.</p>
 
 EOF
 
-print "<em>Tested with:</em>",$query->textfield(-name=>"testversion",
+print "<em>Tested with:</em>",$query->textfield(-name=>"tested",
 						-size=>6);
 
 print <<EOF;
@@ -202,6 +232,11 @@ print $query->radio_group(-name=>'rating',
 			  -labels=>\%labels,
 			  -linebreak=>'true');
 
+print "Does the device break if probed or speed switched? " .
+	$query->checkbox_group(-name=>'noconfigure',
+			     -values=>['yes'],
+			     -defaults=>[]);
+
 print <<EOF;
 <hr/>
 <h2>Technical notes</h2>
@@ -226,12 +261,13 @@ print <<EOF;
 <p><em style='color: #ff0000;'>Important!</em> We need a sample of the
 output from your GPS.  We'll use this for mechanical regression testing,
 which is your best guarantee that support for your device won't get
-broken in a future release.</p>
+broken in a future release. Please be advised that these logs will be
+sent to a publicly archived mailing list, and will be available in the
+public SVN repository.</p>
 
-<p>All SiRF-based and almost all NMEA GPSes will simply start throwing
-data to your port immediately when they're plugged in. You should
-normally be able to capture this output to a file with the
-<code>gpscat</code> utility.</p>
+<p>Almost all GPS receivers will simply start throwing data to your port
+immediately when they're plugged in. You should normally be able to capture
+this output to a file with the <code>gpscat</code> utility.</p>
 
 <p>There will be some unusual cases in which this isn't possible,
 because the device needs some kind of activation sequence written to
@@ -333,6 +369,11 @@ if ($query->param("vendor")) {
 } else {
     print "<span style='color:#ff0000;'>No vendor.</span><br/>\n";
 }
+if ($query->param("packaging")) {
+    print "Packaging type is <code>". escapeHTML($query->param("packaging")) ."</code><br/>\n";
+} else {
+    print "No packaging type specified.<br/>\n";
+}
 if ($query->param("model")) {
     print "Model is <code>". escapeHTML($query->param("model")) ."</code><br/>\n";
 } else {
@@ -378,19 +419,29 @@ if ($query->param("interface")) {
 } else {
     print "No interface type specified.<br/>\n";
 }
-if ($query->param("testversion")) {
-    print "Tested with GPSD version <code>". escapeHTML($query->param("testversion")) ."</code><br/>\n";
+if ($query->param("tested")) {
+    print "Tested with GPSD version <code>". escapeHTML($query->param("tested")) ."</code><br/>\n";
 } else {
     print "No GPSD version specified.<br/>\n";
 }
+if ($query->param("rating")) {
+    print "GPSD compatibility is <code>". escapeHTML($query->param("rating")) ."</code><br/>\n";
+} else {
+    print "No GPSD compatiblity specified.<br/>\n";
+}
+if ($query->param("noconfigure")) {
+    print "Device can be sent catatonic by baud-rate changes<br>\n";
+} else {
+    print "Device handles baud-rate changes correctly<br>\n";
+}
+
+print "</td><td align='center'>";
+
 if ($query->param("notes")) {
     print "Technical notes have been entered.";
 } else {
     print "No technical notes.<br/>\n";
 }
-
-print "</td><td align='center'>";
-
 if ($query->param("location")) {
     print "Sample location <code>". escapeHTML($query->param("location")) ."</code><br/>\n";
 } else {

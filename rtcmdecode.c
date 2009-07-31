@@ -1,6 +1,8 @@
 /* $Id$ */
 #include <sys/types.h>
+#ifndef S_SPLINT_S
 #include <unistd.h>
+#endif /* S_SPLINT_S */
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -12,7 +14,7 @@
 #include "gpsd_config.h"
 #include "gpsd.h"
 
-static int verbose = ISGPS_ERRLEVEL_BASE;
+static int verbose = 0;
 
 void gpsd_report(int errlevel, const char *fmt, ... )
 /* assemble command in printf(3) style, use stderr or syslog */
@@ -29,33 +31,32 @@ void gpsd_report(int errlevel, const char *fmt, ... )
     }
 }
 
-/*@ -compdestroy @*/
+/*@ -compdestroy -compdef -usedef @*/
 static void decode(FILE *fpin, FILE *fpout)
 /* RTCM-104 bits on fpin to dump format on fpout */
 {
-    int             c;
     struct gps_packet_t lexer;
-    struct rtcm_t rtcm;
-    enum isgpsstat_t res;
-    off_t count;
+    struct rtcm2_t rtcm2;
+    struct rtcm3_t rtcm3;
     char buf[BUFSIZ];
 
-    isgps_init(&lexer);
+    packet_reset(&lexer);
 
-    count = 0;
-    while ((c = fgetc(fpin)) != EOF) {
-	res = rtcm_decode(&lexer, (unsigned int)c);
-	if (verbose >= ISGPS_ERRLEVEL_BASE + 3) 
-	    fprintf(fpout, "%08lu: '%c' [%02x] -> %d\n", 
-		   (unsigned long)count++, (isprint(c)?c:'.'), (unsigned)(c & 0xff), res);
-	if (res == ISGPS_MESSAGE) {
-	    rtcm_unpack(&rtcm, (char *)lexer.isgps.buf);
-	    rtcm_dump(&rtcm, buf, sizeof(buf));
+    for (;;) {
+	if (packet_get(fileno(fpin), &lexer) <= 0 && packet_buffered_input(&lexer) <= 0)
+	    break;
+	else if (lexer.type == RTCM2_PACKET) {
+	    rtcm2_unpack(&rtcm2, (char *)lexer.isgps.buf);
+	    rtcm2_dump(&rtcm2, buf, sizeof(buf));
 	    (void)fputs(buf, fpout);
+	}
+	else if (lexer.type == RTCM3_PACKET) {
+	    rtcm3_unpack(&rtcm3, (char *)lexer.outbuffer);
+	    rtcm3_dump(&rtcm3, stdout);
 	}
     }
 }
-/*@ +compdestroy @*/
+/*@ +compdestroy +compdef +usedef @*/
 
 /*@ -compdestroy @*/
 static void pass(FILE *fpin, FILE *fpout)
@@ -63,7 +64,7 @@ static void pass(FILE *fpin, FILE *fpout)
 {
     char buf[BUFSIZ];
     struct gps_packet_t lexer;
-    struct rtcm_t rtcm;
+    struct rtcm2_t rtcm;
 
     memset(&lexer, 0, sizeof(lexer));
     memset(&rtcm, 0, sizeof(rtcm));
@@ -74,14 +75,18 @@ static void pass(FILE *fpin, FILE *fpout)
 	if (buf[0] == '#') {
 	    (void)fputs(buf, fpout);
 	    continue;
-	} 
-	status = rtcm_undump(&rtcm, buf);
+	}
+	/* ignore trailer lines as we'll regenerate these */
+	else if (buf[0] == '.')
+	    continue;
+
+	status = rtcm2_undump(&rtcm, buf);
 
 	if (status == 0) {
 	    (void)memset(lexer.isgps.buf, 0, sizeof(lexer.isgps.buf));
-	    (void)rtcm_repack(&rtcm, lexer.isgps.buf);
-	    (void)rtcm_unpack(&rtcm, (char *)lexer.isgps.buf);
-	    (void)rtcm_dump(&rtcm, buf, sizeof(buf));
+	    (void)rtcm2_repack(&rtcm, lexer.isgps.buf);
+	    (void)rtcm2_unpack(&rtcm, (char *)lexer.isgps.buf);
+	    (void)rtcm2_dump(&rtcm, buf, sizeof(buf));
 	    (void)fputs(buf, fpout);
 	    memset(&lexer, 0, sizeof(lexer));
 	    memset(&rtcm, 0, sizeof(rtcm));
@@ -99,20 +104,21 @@ static void encode(FILE *fpin, FILE *fpout)
 {
     char buf[BUFSIZ];
     struct gps_packet_t lexer;
-    struct rtcm_t rtcm;
+    struct rtcm2_t rtcm;
 
     memset(&lexer, 0, sizeof(lexer));
     while (fgets(buf, (int)sizeof(buf), fpin) != NULL) {
 	int status;
 
-	status = rtcm_undump(&rtcm, buf);
+	status = rtcm2_undump(&rtcm, buf);
 
 	if (status == 0) {
 	    (void)memset(lexer.isgps.buf, 0, sizeof(lexer.isgps.buf));
-	    (void)rtcm_repack(&rtcm, lexer.isgps.buf);
-	    (void)fwrite(lexer.isgps.buf, 
-			 sizeof(isgps30bits_t), 
-			 (size_t)rtcm.length, fpout);
+	    (void)rtcm2_repack(&rtcm, lexer.isgps.buf);
+	    if (fwrite(lexer.isgps.buf, 
+		       sizeof(isgps30bits_t), 
+		       (size_t)rtcm.length, fpout) != (size_t)rtcm.length)
+		(void) fprintf(stderr, "rtcmdecode: report write failed.\n");
 	    memset(&lexer, 0, sizeof(lexer));
 	} else if (status < 0) {
 	    (void) fprintf(stderr, "rtcmdecode: bailing out with status %d\n", status);
@@ -148,7 +154,7 @@ int main(int argc, char **argv)
 	    break;
 
 	case 'v':
-	    verbose = ISGPS_ERRLEVEL_BASE + atoi(optarg);
+	    verbose = atoi(optarg);
 	    break;
 
 	case 'V':
@@ -167,7 +173,8 @@ int main(int argc, char **argv)
     /* strip lines with leading # */
     if (striphdr) {
 	while ((c = getchar()) == '#')
-	    (void)fgets(buf, (int)sizeof(buf), stdin);
+	    if (fgets(buf, (int)sizeof(buf), stdin) == NULL)
+		(void)fputs("rtcmdecode: read failed\n", stderr);
 	(void)ungetc(c, stdin);
     }
 

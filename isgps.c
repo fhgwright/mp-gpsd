@@ -3,13 +3,14 @@
 
 This is a decoder for the unnamed protocol described in IS-GPS-200,
 the Navstar GPS Interface Specification, and used as a transport layer
-for both GPS satellite downlink transmissions and the RTCM104 format
-for broadcasting differential-GPS corrections.
+for both GPS satellite downlink transmissions and the RTCM104 version 2 
+format for broadcasting differential-GPS corrections.
 
-This lower layer just handles synchronizing with the incoming
-bitstream and parity checking; all it does is assemble message
-packets.  It needs an upper layer to analyze the packets into
-bitfields and then assemble the bitfields into usable data.  
+The purpose of this protocol is to support analyzing a serial bit
+stream without byte framing into parity-checked packets.
+Interpretation of the packets is left to an upper layer. Note that
+RTCM104 version 3 does *not* use this code; it assumes a byte-oriented
+underlayer.
 
 The upper layer must supply a preamble_match() hook to tell our
 decoder when it has a legitimate start of packet, and a length_check()
@@ -49,7 +50,9 @@ Shift 6 bytes of RTCM data in as such:
 The code was originally by Wolfgang Rupprecht.  ESR severely hacked
 it, with Wolfgang's help, in order to separate message analysis from
 message dumping and separate this lower layer from the upper layer 
-handing RTCM decoding.  You are not expected to understand any of this.
+handing GPS and RTCM decoding.  
+
+You are not expected to understand any of this.
 
 *****************************************************************************/
 
@@ -106,7 +109,7 @@ unsigned int isgps_parity(isgps30bits_t th)
 #define	PARITY_28	0x5763e680u
 #define	PARITY_29	0x6bb1f340u
 #define	PARITY_30	0x8b7a89c0u
-    isgps30bits_t        t;
+    isgps30bits_t   t;
     unsigned int    p;
 
     /*
@@ -179,8 +182,8 @@ void isgps_init(/*@out@*/struct gps_packet_t *session)
 /*@ -usereleased -compdef @*/
 enum isgpsstat_t isgps_decode(struct gps_packet_t *session, 
 				     bool (*preamble_match)(isgps30bits_t *),
-				     bool (*length_check)(struct gps_packet_t *),
-			      size_t maxlen,
+				     bool (*length_check)(struct gps_packet_t*),
+			      	     size_t maxlen,
 				     unsigned int c)
 {
     enum isgpsstat_t res;
@@ -188,7 +191,7 @@ enum isgpsstat_t isgps_decode(struct gps_packet_t *session,
     /* ASCII characters 64-127, @ through DEL */
     if ((c & MAG_TAG_MASK) != MAG_TAG_DATA) {
 	gpsd_report(ISGPS_ERRLEVEL_BASE+1, 
-		    "ISGPS word tag not correct, skipping\n");
+		    "ISGPS word tag not correct, skipping byte\n");
 	return ISGPS_SKIP;
     }
 
@@ -206,17 +209,17 @@ enum isgpsstat_t isgps_decode(struct gps_packet_t *session,
 	    } else {
 		session->isgps.curr_word |= c >> -(session->isgps.curr_offset);
 	    }
-	    gpsd_report(ISGPS_ERRLEVEL_BASE+2, "ISGPS syncing at byte %d: %0x%08x\n", session->char_counter, session->isgps.curr_word);
+	    gpsd_report(ISGPS_ERRLEVEL_BASE+2, "ISGPS syncing at byte %lu: 0x%08x\n", session->char_counter, session->isgps.curr_word);
 
 	    if (preamble_match(&session->isgps.curr_word)) {
 		if (isgps_parityok(session->isgps.curr_word)) {
-		    gpsd_report(ISGPS_ERRLEVEL_BASE+1, 
+		    gpsd_report(ISGPS_ERRLEVEL_BASE+1,
 				"ISGPS preamble ok, parity ok -- locked\n");
 		    session->isgps.locked = true;
 		    /* session->isgps.curr_offset;  XXX - testing */
 		    break;
 		}
-		gpsd_report(ISGPS_ERRLEVEL_BASE+1, 
+		gpsd_report(ISGPS_ERRLEVEL_BASE+1,
 			    "ISGPS preamble ok, parity fail\n");
 	    }
 	    session->isgps.curr_offset++;
@@ -294,14 +297,14 @@ enum isgpsstat_t isgps_decode(struct gps_packet_t *session,
 	    }
 	}
 	session->isgps.curr_offset -= 6;
-	gpsd_report(ISGPS_ERRLEVEL_BASE+2, "residual %d\n", session->isgps.curr_offset);
+	gpsd_report(ISGPS_ERRLEVEL_BASE+2, "ISGPS residual %d\n", session->isgps.curr_offset);
 	return res;
     }
     /*@ +shiftnegative @*/
 
     /* never achieved lock */
     gpsd_report(ISGPS_ERRLEVEL_BASE+1, 
-		"lock never achieved\n");
+		"ISGPS lock never achieved\n");
     return ISGPS_NO_SYNC;
 }
 /*@ +usereleased +compdef @*/
