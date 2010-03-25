@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="ISO-8859-1"?>
 <!DOCTYPE article PUBLIC 
    "-//OASIS//DTD DocBook XML V4.1.2//EN"
-   "docbook/docbookx.dtd" [
+   "http://www.oasis-open.org/docbook/xml/4.1.2/docbookx.dtd" [
 <!ENTITY homepage      "http://gpsd.berlios.de">
 ]>
 <article>
@@ -15,6 +15,65 @@
 </author>
 
 <revhistory>
+   <revision>
+      <revnumber>1.8</revnumber>
+      <date>16 Sep 2009</date>
+      <authorinitials>er</authorinitials>
+      <revremark>
+	 Updated by esr; major rearrangement of driver event set.
+      </revremark>
+   </revision>
+   <revision>
+      <revnumber>1.8</revnumber>
+      <date>9 Aug 2009</date>
+      <authorinitials>er</authorinitials>
+      <revremark>
+	 Updated by esr; the device_class experiment failed.
+      </revremark>
+   </revision>
+   <revision>
+      <revnumber>1.7</revnumber>
+      <date>24 Jul 2009</date>
+      <authorinitials>er</authorinitials>
+      <revremark>
+	 Updated by esr; Added the device_class member.
+      </revremark>
+   </revision>
+   <revision>
+      <revnumber>1.6</revnumber>
+      <date>9 Mar 2009</date>
+      <authorinitials>er</authorinitials>
+      <revremark>
+	 Updated by esr; libgpsd_core.c no longr requires modification
+	 when you add a driver.
+      </revremark>
+   </revision>
+   <revision>
+      <revnumber>1.6</revnumber>
+      <date>1 Mar 2009</date>
+      <authorinitials>er</authorinitials>
+      <revremark>
+	 Updated by esr to reflect removal of the cycle member.
+      </revremark>
+   </revision>
+   <revision>
+      <revnumber>1.5</revnumber>
+      <date>1 Mar 2009</date>
+      <authorinitials>er</authorinitials>
+      <revremark>
+	 Updated by esr to reflect the parity/stopbits
+         extension of the sopeed_switcher method.
+      </revremark>
+   </revision>
+   <revision>
+      <revnumber>1.4</revnumber>
+      <date>17 February 2009</date>
+      <authorinitials>er</authorinitials>
+      <revremark>
+	 Updated by esr to reflect the renaming of sirfmon to gpsmon,
+         and document the control_send method.
+      </revremark>
+   </revision>
    <revision>
       <revnumber>1.3</revnumber>
       <date>14 November 2006</date>
@@ -47,7 +106,7 @@ gpsd version 2.34 compiled from SVN revision 3884 of November 14th
 this, but the broad principles should still apply. Check what version
 you are using.</para>
 
-<para><application>gpsd</application> supports auto detection, so
+<para><application>gpsd</application> supports autodetection, so
 connect your device and try it; you may be lucky and find it is
 already supported. If you are unlucky, you have to be prepared to do a
 lot of work and research on your own.</para>
@@ -366,11 +425,6 @@ files:</para>
 <entry><para>data type definitions</para></entry>
 </row>
 <row>
-<entry><filename>libgpsd_core.c</filename></entry>
-<entry><para>library to access GPSs at low
-level</para></entry>
-</row>
-<row>
 <entry><filename>packet.c</filename></entry>
 <entry><para>packet sniffing state machine</para></entry>
 </row>
@@ -414,17 +468,18 @@ an existing entry.</para>
 some basic stuff for the NMEA driver and tries to wake up many of the
 other drivers. It needed four small modifications to integrate my
 code. The first was a copy of an existing entry in the generic NMEA
-handler <quote><function>nmea_parse_input</function></quote> to generate
-a debug error if one of my packets was detected when the NMEA driver
-had been selected and switch to my driver instead. The second was a
-pointer to simple command to send a Jupiter-T specific string to the
-GPS at detection time to test if it is a Jupiter-T in <quote>
+handler <quote><function>nmea_parse_input</function></quote> to
+generate a debug error if one of my packets was detected when the NMEA
+driver had been selected and switch to my driver instead (this is no
+longer needed in versions beyond 2,38). The second was a pointer to
+simple command to send a Jupiter-T specific string to the GPS at
+detection time to test if it is a Jupiter-T in <quote>
 <function>nmea_initializer</function></quote>. If it returns the right
 answer (in my case, the manufacturer's PROM header), then the packet
 sniffer should see this and select my driver. The third was a
 (copied/modified) declaration entry in the list of structs known to
-<application>gpsd</application> which is located immediately before and
-is used by the fourth location,
+<application>gpsd</application> which is located immediately before
+and is used by the fourth location,
 <quote>
 <userinput>*gpsd_driver_array[]</userinput></quote>, to
 give the address of the entry point table in my driver.</para>
@@ -450,16 +505,6 @@ existing list. The last two changes are two <quote>extern</quote>
 declarations of prototypes in <quote>
 <userinput>**gpsd_drivers</userinput></quote> that the new driver
 needs to interface to the rest of the code.</para>
-
-<para>The function of <quote><filename>libgpsd_core.c</filename>
-</quote> is to provide some low-level entries into <application>
-gpsd</application> from external client software since these cannot
-directly access the GPS or its port when the daemon is running.
-The change is again quite small. It is just an extra entry in the
-<quote><function>gpsd_poll</function></quote> code to include a
-packet switch to the Jupiter-T driver if the packet sniffer finds
-a matching packet.</para>
-
 
 <para>The file <quote><filename>packet.c</filename></quote> is
 the state engine which scans packets as they arrive and tries to
@@ -527,6 +572,13 @@ uniquely identifies your driver. The first few characters are also
 output in some of the monitor output as generated by <filename>
 cgps</filename> or <filename>xgps</filename>.</para>
 
+<!-- added by ESR, 2009 -->
+<para><structfield>.packet_type</structfield> What packet type this
+driver expects to see. This value must be one of those produced by the
+packet sniffer and <emphasis>must be unique to each
+driver</emphasis>. It is used internally to dispatch to the correct
+driver when it collects a complete packet.</para>
+
 <para><structfield>.trigger</structfield> is the unique string that,
 when seen, will confirm your device is present. This will be detected
 in <quote><filename>drivers.c</filename></quote> and will probably
@@ -549,28 +601,64 @@ original settings for later restoration, probably by
 <structfield>.wrapup</structfield> mentioned below. Later in this
 document I discuss my work to implement this function.</para>
 
-<para><structfield>.probe_wakeup</structfield> points to a block of code
-that wakes up the device when the main auto-baud hunt loop in
-the daemon offers a new speed to probe at.</para>
+<para><structfield>.event_hook</structfield> points to a block of code
+that will be executed on and after various events, distinguished by a
+second argument that specifies the event type.  The event_hook hook is
+called in the following circumstances:</para>
 
-<para><structfield>.probe_subtype</structfield> points to a block of
-code that will be executed whenever the device-driver type is switched
-(with second argument 0) or whenever a full packet is received (with
-second argument being the sequence number of the packet).  It is
-normally used to send probe strings that are expected to elicit a
-later response that will reveal the subtype of the driver.  If this
-function fetches driver subtype information immediately, it should
-store information about the software version in member
+<itemizedlist>
+
+<listitem><para>When the main auto-baud hunt loop in the daemon offers
+a new speed to probe at, with event argument 'event_wakeup'.</para></listitem>
+
+<listitem><para> 
+Whenever <application>gpsd</application> first achieves packet lock
+with a device, with event type 'identified'.  
+</para></listitem>
+
+<listitem><para> Whenever a full packet is received, with event type
+'event_configure'.  On the first such packet, thepacket sequence
+number is zeroed, then 'event_identify' fires, then 'event_configure'
+fires. On later packets, 'event_configure fires with the packet
+sequence number as its argument.  </para></listitem>
+
+<listitem><para> Whenever a call to gpsd_switch_driver() sets a
+device's driver to a different type, with event type
+'event_switch_driver'.</para></listitem>
+
+<listitem><para>When the device is closed, with event type
+'event_deactivate'.  (Closes happen when all clients have disconnected
+and the <quote><option>-n</option> </quote> switch is not active.) The
+premise is that there may be a special mode you initialized the device
+into for <application>gpsd</application> operation which should be
+turned off otherwise. It allows for changing the device to a low power
+mode, for instance.  Any changes you made when 'event_configure' fired
+should be undone here. This is also where you should undo any port
+parameter changes you made in
+<structfield>.probe_detect</structfield>above.</para></listitem>
+
+<listitem><para>When a device is reactivated &mdash; that is, reopened
+after being been closed because no clients were listening to it, with
+event type 'event_reactivate' </para></listitem>
+
+</itemizedlist>
+
+<para>The 'event_identify' event is normally used to send probe
+strings that are expected to elicit a later response that will reveal
+the subtype of the driver.  Such responses are expected to store
+information about the software version in member
 <quote><filename>subtype</filename></quote> of the driver data
 structure <userinput>struct gps_device_t *session</userinput>.</para>
 
-<para><structfield>.configurator</structfield> points to a block of code
-that should set up the device to deliver the correct set of sentences
-to supply the parser with the data needed by 
-<filename>gpsd</filename>. Like the
-<structfield>.probe_subtype</structfield> method, a second sequence
-number argument allows you to intersperse your configuration sends 
-with early packet receipts.</para>
+<para>The 'event_configure' event should set up the device to deliver
+the correct set of sentences to supply the parser with the data needed
+by <filename>gpsd</filename>.</para>
+
+<para>When writing hook code, it is useful to bear in mind that the
+<structfield>.packet.counter</structfield> member of the session
+structure is available; it is often useful to take action only
+when this counter is zero.  It is zeroed when the device is activated
+or someting triggers a device change.</para>
 
 <para><structfield>.get_packet</structfield> points to a block of code
 that actually gets the packets from the serial stream. You will
@@ -591,7 +679,10 @@ write of the data, which is provided by the default routine
 accept differential data, the value is NULL.</para>
 
 <para><structfield>.speed_switcher</structfield> points to a block of
-code to change baud rate (if supported).</para>
+code to change baud rate, parity, and stop bits (if supported). If
+your device can support some speed/parity/stopbits combinations but
+not others, it should return false on a mode-change request it can't
+handle.</para>
 
 <para><structfield>.mode_switcher</structfield> points to a block of code
 to change the mode (if supported) between NMEA (mode 0) and our
@@ -599,49 +690,23 @@ binary mode (1).</para>
 
 <para><structfield>.rate_switcher</structfield> points to a block of code
 to change the maximum number of fixes your device can generate
-in 1 second.</para>
+in 1 second. If this method is present, you should also fill in 
+<structfield>.min_cycle</structfield> to indicate the device's 
+minimum cycle time in seconds; a 0 value indicates that it is limited
+only by the data throughput of the reporting channel.</para>
 
-<para><structfield>.cycle_chars</structfield> is explained in
-<quote>Throughput computation for baud rate changes</quote> in the
-<quote>Hacker's Guide to GPSD</quote> in the general
-documentation. It's only necessary to fill this in if you have
-<structfield>.rate_switcher</structfield> capability</para>
+<para><structfield>.control_send</structfield> points to a block of
+code that can take a buffer full of message payload, wrap iit in
+appropriate headers and trailers and checksumming, and ship it to the
+device.  This entry point is not used by gpsd itself; it's for
+diagnotic tools like gpsctl and gpsmon.  Once you've written it,
+though, you may find it useful for implementing the other switcher
+methods and whatever other probe strings you need to send.  Note: if
+possible, assemble your packet in
+<structfield>session->msgbuf</structfield> and put the length in
+<structfield>session->msgbuflen</structfield>; this will allow 
+gpsmon to display the control messages it sends for you.</para>
 
-<para><structfield>.revert</structfield> points to a block of
-code that is conditionally run each time the device is closed if
-device reconfiguration was enabled.  (Closes happen when all clients
-have disconnected and the <quote><option>-n</option> </quote> switch
-is not active.) The premise is that there may be a special mode you
-initialized the device into for <application>gpsd</application>
-operation which should be turned off otherwise. It allows for changing
-the device to a low power mode, for instance.  Any changes you made in
-the <structfield>.configurator</structfield> method should be undone 
-here.</para>
-
-<para><structfield>.wrapup</structfield> points to a block of code
-which is run unconditionally each time the device is to be closed.
-(Closes happen when all clients have disconnected and the
-<quote><option>-n</option> </quote> switch is not active.) This is
-also where you should undo any port parameter changes you made in
-<structfield>.probe_detect</structfield>above.</para>
-
-<para><structfield>.cycle</structfield> is a number giving the number of
-fixes per second you can get. Gets updated if you can rate-switch
-and user gives a <application>gpsd</application> 'C' command.</para>
-
-<para>The connection between some of the above was confirmed with Eric
-Raymond as follows.</para> <para>The inter-relationship between
-<structfield>.speed_switcher</structfield>,
-<structfield>.rate_switcher</structfield>,
-<structfield>.cycle_chars</structfield> and
-<structfield>.cycle</structfield> is:-</para> <para>If we can change
-baud rate (<structfield>.speed_switcher</structfield>) and we can
-alter the rate at which fixes are delivered
-(<structfield>.rate_switcher</structfield>), then we need to know the
-number of characters in a fix string
-(<structfield>.cycle_chars</structfield>) so that we can compute the
-number of fixes/second (<structfield>.cycle</structfield>) we can ask
-for.</para>
 </sect1>
 
 <sect1><title>Details of the driver parser</title>
@@ -725,10 +790,11 @@ working virtually directly with the system hardware. I have documented
 this process in some detail in the hope that it may save some other
 poor soul the trials I went through.</para>
 
+<!-- Mick actually looked at sirfmon -->
 <para>I looked at the code in 
 <quote><filename>serial.c</filename></quote>, 
 <quote><filename>garmin.c</filename></quote> and 
-<quote><filename>sirfmon.c</filename></quote> for inspiration
+<quote><filename>gpsmon.c</filename></quote> for inspiration
 and noticed some important things:</para>
 
 <itemizedlist>

@@ -13,6 +13,12 @@
   comparison with the NTP time service and reported by
   <code>gpsd</code>.</p>
 
+  <p>Note that a direct RS-232 connection is required for optimal PPS timing.  Typical
+  gpsd/PPS users report ntp clock stability on the order of 1uS.  GPS that
+  use a RS-232 to USB converter that passes the PPS signal are reported to be stable on the order
+  of 1mS.  GPS that are native USB are not PPS capable but gpsd can still extract time 
+  information from the serial data accurate to about 250mS.</p>
+
 <div>&nbsp;</div>
 
 <table border='1'>
@@ -41,7 +47,7 @@
 <td align="center">-</td>
 </tr>
 <tr>
-<td>Motorola<br>iLotus<br/>Synergy-GPS M12M</td>
+<td>Motorola<br/>iLotus<br/>Synergy-GPS M12M</td>
 <td align="center">20ns<br/>6ns corrected</td>
 <td align="center">-</td>
 <td align="center">-</td>
@@ -90,7 +96,7 @@
 </tr>
 <tr>
 <td>ublox Antaris4T</td>
-<td align="center">50ns<br>15ns compensated</td>
+<td align="center">50ns<br/>15ns compensated</td>
 <td align="center">-</td>
 <td align="center">-</td>
 </tr>
@@ -107,16 +113,10 @@
 <td align="center">-</td>
 </tr>
 <tr>
-<td>Garmin GPS18/USB</td>
-<td align="center">1usec</td>
-<td align="center">0.100sec</td>
-<td align="center">-</td>
-</tr>
-<tr>
 <td>Garmin GPS18/LVC</td>
 <td align="center">1usec</td>
 <td align="center">0.125sec</td>
-<td align="center">At 19200bps; drops to 0.525 at 4800bps</td>
+<td align="center">Must be outside with a clear sky view.<br>At 19200bps; drops to 0.525 at 4800bps</td>
 </tr>
 <tr>
 <td>Rockwell Jupiter</td>
@@ -131,10 +131,64 @@
 <td align="center">-</td>
 </tr>
 <tr>
-<td>SiRFstar3</td>
+<td>SiRFstar3<br>(GlobalSat MR-350P)</td>
 <td align="center">1usec</td>
 <td align="center">-</td>
-<td align="center">-</td>
+<td align="center">May work inside wood frame buildings.</td>
+</tr>
+</table>
+
+<a name="raw"></a>
+<h2>Raw Measurements and GPSD:</h2>
+
+<p>All gpses require "raw" measurements internally to compute a navigation
+  solution. The ability for users to postprocess these measurements is then
+  a function of firmware and protocol support.</p>
+
+<div>&nbsp;</div>
+
+<table border='1'>
+<tr>
+<th>Receiver</th>
+<th>Raw</th>
+<th>Notes</th>
+</tr>
+<tr>
+<td>NavSync</td>
+<td align="center">No</td>
+<td>I asked them about raw measurements and they told me that a custom firmware build ($$$!) would be required, and that I probably wasn't authorized to get that data.</td>
+</tr>
+<tr>
+<td>SiRF</td>
+<td align="center">Partial</td>
+<td>sirfstar1 has raw data in message 5, sirfstar2 has raw data in message 28, sirfstar3 has some raw data in message 28 but carrier phase is not available. rumor has it that carrier phase is available as a premium feature in superstar3.</td>
+</tr>
+<tr>
+<tr>
+<td>ublox</td>
+<td align="center">Partial</td>
+<td>The RXM-RAW message contains raw data. This is implemented in all Antaris chips. This is only implemented in the timing versions of Antaris4. In ublox5 it is "only available with premium feature raw data".
+</td>
+</tr>
+<tr>
+<td>Novatel SuperStarII</td>
+<td align="center">Partial</td>
+<td>Message #23 contains raw measurements in carrier-phase-enabled firmwares.</td>
+</tr>
+<tr>
+<td>Fastrax</td>
+<td align="center">Yes</td>
+<td>The "PSEUDO" message contains raw measurements</td>
+</tr>
+<tr>
+<td>Trimble</td>
+<td align="center">Yes</td>
+<td>Packet 0x5a contains raw measurements</td>
+</tr>
+<tr>
+<td>Thales AC12</td>
+<td align="center">Yes</td>
+<td>The PASHR,MCA message contains raw measurements.</td>
 </tr>
 </table>
 

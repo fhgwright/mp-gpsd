@@ -10,26 +10,28 @@
 </head>
 <body>
 <div id="Header">Bugs GPSD Exposes In Other Software</div>
-<div id="Menu"> <img src="gpsd-logo-small.png"><br>
-<a href="index.html">Home</a><br>
-<a href="index.html#news">News</a><br>
-<a href="index.html#downloads">Downloads</a><br>
-<a href="index.html#mailing-lists">Mailing lists</a><br>
-<a href="index.html#documentation">Documentation</a><br>
-<a href="faq.html">FAQ</a><br>
-<a href="xgps-sample.html">Screenshots</a><br>
-<a href="index.html#recipes">Recipes</a><br>
-<a href="index.html#others">Other GPSDs</a><br>
-<a href="hardware.html">Hardware</a><br>
-<a href="for-vendors.html">For GPS Vendors</a><br>
-<a href="hall-of-shame.html">Hall of Shame</a><br>
-<a href="hacking.html">Hacker's Guide</a><br>
-<a href="references.html">References</a><br>
-<a href="history.html">History</a><br>
-Wish List<br>
+<div id="Menu"> <img src="gpsd-logo-small.png"><br/>
+<a href="index.html">Home</a><br/>
+<a href="index.html#news">News</a><br/>
+<a href="index.html#downloads">Downloads</a><br/>
+<a href="index.html#mailing-lists">Mailing lists</a><br/>
+<a href="index.html#documentation">Documentation</a><br/>
+<a href="faq.html">FAQ</a><br/>
+<a href="xgps-sample.html">Screenshots</a><br/>
+<a href="index.html#recipes">Recipes</a><br/>
+<a href="index.html#others">Other GPSDs</a><br/>
+<a href="hardware.html">Hardware</a><br/>
+<a href="for-vendors.html">For GPS Vendors</a><br/>
+<a href="hall-of-shame.html">Hall of Shame</a><br/>
+<a href="hacking.html">Hacker's Guide</a><br/>
+<a href="protocol-transition.html">Application Compatibility</a>
+<a href="references.html">References</a><br/>
+<a href="history.html">History</a><br/>
+<a href="future.html">Future</a><br/>
+
 <div>&nbsp;</div>
 <a href="http://www.catb.org/hacker-emblem/"><img
- src="http://www.catb.org/hacker-emblem/glider.png" alt="hacker emblem"></a><br>
+ src="http://www.catb.org/hacker-emblem/glider.png" alt="hacker emblem"></a><br/>
 <hr>
 <script type="text/javascript"><!--
     google_ad_client = "pub-1458586455084261";
@@ -56,16 +58,18 @@ maintainer, we've tried to kick these upstream.</p>
 <h1>Links to Open User-Visible Problems</h1>
 
 <ul>
+<li><a href="#select">Buggy pl2303 drivers on Mac OS X can make select(2) look broken</a></li>
 <li><a href="#bluetooth">Firmware problems in some Bluetooth and USB devices can hang them</a></li>
 <li><a href="#pl2303">Linux pl2303 driver on openwrt 2.4 kernel can hang when device is read at unexpected speed</a></li>
 <li><a href="#pthread_create">pthread_create() fails to return when called in background</a></li>
+<li><a href="#shm_damage">NTPSHM clobbers altitude under 2.4 Linux</a></li>
+<li><a href="#udev">Linux kernel doesn't generate udev close events</a></li>
 </ul>
 
 <h1>Links to Open Toolchain Bugs</h1>
 
 <ul>
 <li><a href="#libtool">Multiple definitions of symbol _gpsd_report due to libtool bug</a></li>
-<li><a href="#macxlibs">Mac OS 10.5 X library packaging problem</a></li>
 <li><a href="#pyinstall">Defective Python installation in SuSE 10.3rc</a></li>
 </ul>
 
@@ -73,7 +77,6 @@ maintainer, we've tried to kick these upstream.</p>
 
 <ul>
 <li><a href="#startup">Distro-dependent problems with gpsd startup</a></li>
-<li><a href="#select">Buggy pl2303 drivers on Maxc OS X can make select(2) look broken</a></li>
 <li><a href="#openmotif">The 2.3.0-beta version of OpenMotif shipped
 with Fedora Core 5 was buggy.</a></li>
 <li><a href="#pysocket">Python socket library barfs on IPV6 notation in the /etc/hosts file</a></li>
@@ -86,6 +89,19 @@ with Fedora Core 5 was buggy.</a></li>
 
 <h1>Open User-Visible Problems</h1>
 
+<h2 id="select">Buggy pl2303 drivers on Mac OS X can make select(2) look broken</h2>
+
+<p>When the fd set being polled includes tty devices (as opposed to
+sockets), select(2) can return 0 and shows no fd with input waiting
+even when data is in fact ready to be read from some of the devices.</p>
+
+<p>The most recent incarnation of this problem was due to a buggy pl2303
+USB-to-serial driver. OS X users should ensure that all their drivers are
+up to date. As of January 2009, this is still a problem - the most recent
+report being a failure of the drivers from osx-pl2303.sourceforge.net on
+OS X 10.5.6. Please try the latest drivers from www.prolific.com.tw before
+reporting hangs on OS X.</p>
+
 <h2 id="bluetooth">Firmware problems in some Bluetooth and USB devices can hang them</h2>
 
 <p>The baudrate-hunting code in <code>gpsd</code> tickles a serious
@@ -94,8 +110,8 @@ Holux and including the GPSlim-236.  This bug may render these GPSes
 catatonic.  The problem seems to be that buggy firmware inside these
 receivers doesn't necessarily keep the Bluetooth serial-port emulation
 and the GPS chip talking at the same baud rate. This problem is not
-unique to <code>gpsd</code> - windows users are warned against using
-SiRFdemo's "Synchronize Protocol/Baud Rate" option on bluetooth devices.</p>
+unique to <code>gpsd</code> &mdash; Windows users are warned against using
+SiRFdemo's "Synchronize Protocol/Baud Rate" option on Bluetooth devices.</p>
 
 <p>If this happens, you can sometimes recover by repeatedly sending
 reset messages using <code>gpsctl</p>.  The only guaranteed fix is to
@@ -104,11 +120,11 @@ may have to open the case and unsolder the backup battery so the chip
 forgets its configuration settings.</p>
 
 <p>A separate bug with less severe symptoms afflicts some USB devices.
-The probe strings <tt>gpsd</tt> sends in orderv to determuine device
+The probe strings <tt>gpsd</tt> sends in orderv to determine device
 type and subtype may be more than a device can handle, causing it to
 hang; power-cycling should fix this.  Newer versions of <tt>gpsd</tt>
 break up the probe writes into smaller pieces, interleaving them with
-the first few packet reads, so they are far less likely to ttrigger
+the first few packet reads, so they are far less likely to trigger
 this bug.</p>
 
 <p>Use the -b option of gpsd to prevent it from trying to reconfigure
@@ -138,6 +154,29 @@ but it may return!  That freezes the main loop of gpsd. There is a <a
 href="http://marc.info/?l=gpsd-dev&m=120124952704634&w=2">workaround</a>,
 but the nature of the workaround only makes ther bug more mysterious.</p>
 
+<h2 id="shm_damage">NTPSHM clobbers altitude under 2.4 Linux</h2>
+
+<p>We've had one report (in march 2009) of the NTPSHM feature
+clobbering altitude reports, on a Technologic TS-5500 board running a
+customized 2.4.34 kernel using a <code>gpsd</code> built with 2.95.3.
+When NTPSHM was disabled, altitude was reported correctly.</p>
+
+<p>Shared memory was bug-plagued on older Linux kernels; one notorious
+symptom of this was that the emulation of System V IPC worked poorly,
+and we suspect our corruption bug is another symptom.  No such
+misbehavior has been reported from our NTPSHM-using developers under
+2.6.  It is also possible that this is due to some obscure bug in GCC
+or elsewhere in Technologic's cross-development toolchain.</p>
+
+<h2 id="udev">Linux kernel doesn't generate udev close events</h2>
+
+<p>One user has reported that the GPSD hotplug wrapper is not being
+invoked on unplug of a USB receiver, because the kernel never actually
+generates a remove event when closing an open serial device.
+Apparently this is a <a
+href="http://www.linuxquestions.org/questions/programming-9/udev-not-called-to-remove-open-usb-serial-device-585603/">well-known
+bug</a> that will <a href="http://lkml.indiana.edu/hypermail/linux/kernel/0907.2/01845.html">not be easily fixed</a>.</p>
+
 <h1>Open Toolchain Bugs</h1>
 
 <p><code>gpsd</code> is distressingly good at tickling bugs in
@@ -154,22 +193,6 @@ it should generate -lgps and <em>all</em> instances (rather than just
 the first to be incorporated by other linkage demands) are linked
 in.</p>
 
-<h2 id="macxlibs">Mac OS 10.5 X library packaging problem</h2>
-
-<p>Building <code>xgpsspeed</code> will fail under MacOS 10.5.6
-because the X SDK libraries and include files are not installed to
-the canonical places.  The workaround is to configure like this:</p>
-
-<pre>
-configure \
-    --x-includes=/Developer/SDKs/MacOSX10.5.sdk/usr/X11R6/include \
-    --x-libraries=/Developer/SDKs/MacOSX10.5.sdk/usr/X11R6/lib
-</pre>
-
-<p>We haven't attempted to embed this in our autotools build because
-it looks like the fix would have to change every time the OS version
-number is incremented.</p>
-
 <h2 id="pyinstall">Defective Python installation in SuSE 10.3rc</h2>
 
 <p>The Python 2.5 installed with SuSE 10.3rc is missing a needed
@@ -179,7 +202,7 @@ building correctly.</p>
 <h1>Fixed Problems</h1>
 
 <p>We document these here in case you're running on an older system.
-They will be removed as they bwcome sufficiently ancient.</p>
+They will be removed as they become sufficiently ancient.</p>
 
 <h2 id="startup">Distro-dependent problems with gpsd startup</h2>
 
@@ -188,19 +211,6 @@ Gentoo bug</a>.  This shows up on other distributions as well, but
 not under Fedora Core.  The Gentoo problem can be fixed by creating a
 /var/run/usb directory; this fix may apply to other distributions as
 well.</p>
-
-<h2 id="select">Buggy pl2303 drivers on Maxc OS X can make select(2) look broken</h2>
-
-<p>When the fd set being polled includes tty devices (as opposed to
-sockets), select(2) can return 0 and shows no fd with input waiting
-even when data is in fact ready to be read from some of the devices.</p>
-
-<p>The most recent incarnation of this problem was due to a buggy pl2303
-USB-to-serial driver. OS X users should ensure that all their drivers are
-up to date. As of January 2009, this is still a problem - the most recent
-report being a failure of the drivers from osx-pl2303.sourceforge.net on
-OS X 10.5.6. Please try the latest drivers from www.prolific.com.tw before
-reporting hangs on OS X.</p>
 
 <h2 id="openmotif">The 2.3.0-beta version of OpenMotif shipped with
 Fedora Core 5 was buggy.</h2>
@@ -285,6 +295,14 @@ for a simple test program (<code>floattest.c</code>) is in the
 Subversion repository; if <code>gpsd</code> seems to be producing
 incorrect output, please use this tool to validate your toolchain
 before filing a bug report.</p>
+
+<h2 id="macxlibs">Mac OS 10.5 X library packaging problem</h2>
+
+<p>Building <code>xgpsspeed</code> will fail under MacOS 10.5.6
+because the X SDK libraries and include files are not installed to the
+canonical places.  This was <a
+href="http://openradar.appspot.com/6498632">filed as a bug</a> with
+Apple and is reported fixed.</p>
 
 <p>&nbsp;</p>
 

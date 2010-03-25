@@ -8,7 +8,6 @@
 
 #include <sys/types.h>
 #include <math.h>
-#include "gpsd_config.h"
 #include "gpsd.h"
 
 static double fix_minuz(double d);
@@ -91,9 +90,8 @@ void ecef_to_wgs84fix(struct gps_data_t *gpsdata,
 /* fill in WGS84 position/velocity fields from ECEF coordinates */
 {
     double lambda,phi,p,theta,n,h,vnorth,veast,heading;
-    const double a = 6378137;			/* equatorial radius */
-    const double f = 1 / 298.257223563;		/* flattening */
-    const double b = a * (1 - f);		/* polar radius */
+    const double a = WGS84A;			/* equatorial radius */
+    const double b = WGS84B;		/* polar radius */
     const double e2 = (a*a - b*b) / (a*a);
     const double e_2 = (a*a - b*b) / (b*b);
 

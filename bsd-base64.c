@@ -43,6 +43,8 @@
  * IF IBM IS APPRISED OF THE POSSIBILITY OF SUCH DAMAGES.
  */
 
+#include <stdlib.h>
+#include "gpsd_config.h"
 #if !defined(HAVE_B64_NTOP) && !defined(HAVE___B64_NTOP)
 
 #include <sys/types.h>
@@ -51,7 +53,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "gpsd_config.h"
 #include "bsd-base64.h"
 
 #define Assert(Cond) if (!(Cond)) abort()
@@ -125,11 +126,11 @@ static const char Pad64 = '=';
 
 /*@ +matchanyintegral -type @*/
 int
-b64_ntop(u_char const *src, size_t srclength, char *target, size_t targsize)
+b64_ntop(unsigned char const *src, size_t srclength, char *target, size_t targsize)
 {
 	size_t datalength = 0;
-	u_char input[3];
-	u_char output[4];
+	unsigned char input[3];
+	unsigned char output[4];
 	size_t i;
 
 	while (2 < srclength) {
@@ -194,7 +195,7 @@ b64_ntop(u_char const *src, size_t srclength, char *target, size_t targsize)
 
 /*@ +matchanyintegral +charint @*/
 int
-b64_pton(char const *src, u_char *target, size_t targsize)
+b64_pton(char const *src, unsigned char *target, size_t targsize)
 {
 	size_t tarindex;
 	int state, ch;

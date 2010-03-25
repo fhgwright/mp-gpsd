@@ -7,40 +7,73 @@
 use CGI qw(:standard);
 use CGI::Carp qw(warningsToBrowser fatalsToBrowser);
 use MIME::Base64;
+use MIME::Lite;
+use Net::SMTP;
+use strict;
 
-$query = new CGI;
+my $query = new CGI;
 print $query->header;
-print $query->start_html(-title=>"GPS Reporting Form",
+print $query->start_html(-title=>"GPSD Receiver Reporting Form",
 			 -background=>"../paper.gif");
 
-$output_sample_file = $query->param('output_sample');
-$output_sample_body = $query->param('output_sample_body');
+my $output_sample_file = $query->param('output_sample');
+my $output_sample_body = $query->param('output_sample_body');
 $output_sample_body = '' unless ($output_sample_body);
 
 do {
 	local $/ = undef;
-	local $x = <$output_sample_file>;
+	my $x = <$output_sample_file>;
 	$output_sample_body = encode_base64($x, "") if ($x);
 };
 
 if (hasNeededElements($query) && $query->param("action") eq "Send Report"){
 	# handle successful upload...
-	$ENV{'PATH'} = '/usr/bin:/bin';
-#	my $t = time();
-#	open(M, "|mail -s 'new gps report $t' chris.kuethe\@gmail.com") ||
-	open(M, '|mail -s "new gps report" chris.kuethe@gmail.com gpsd-dev@berlios.de') ||
-		die "can't run mail: $!\n";
-	print M "Remote: ${ENV{'REMOTE_ADDR'}}:${ENV{'REMOTE_PORT'}}\n\n";
-	printf M ("[%s]\n", $query->param('model'));
-	foreach $var ( sort qw(submitter vendor packaging techdoc chipset
-                        firmware nmea interface tested rating noconfigure notes 
-                        location date interval leader sample_notes)){
+
+	### mail parameters
+	my $from_address = 'HTTP Server <www@mainframe.cx>';
+	my $to_address = 'gpsd-dev@berlios.de';
+	my $mailhost = '127.0.0.1';
+	my $subject = 'new gps report';
+
+	### Create the multipart container
+	my $email = MIME::Lite->new (
+	    From => $from_address,
+	    To => $to_address,
+	    Subject => $subject,
+	    Type =>'multipart/mixed'
+	) or die "Error creating multipart container: $!\n";
+
+	### build message text
+	my ($var, $val, $msg);
+	$msg = "Remote: ${ENV{'REMOTE_ADDR'}}:${ENV{'REMOTE_PORT'}}\n\n";
+	$msg .= sprintf("[%s]\n", $query->param('model'));
+	$msg .= sprintf("type = device\n");
+	foreach $var ( sort qw(submitter vendor model packaging techdoc chipset
+                        firmware nmea interfaces tested rating noconfigure 
+                        location date notes sample_notes)){
 		$val = $query->param($var);
-		printf M ("\t%s = %s\n", $var, $val) if (defined($val) && $val);
+		$msg .= sprintf("\t%s = %s\n", $var, $val) if (defined($val) && $val);
 	}
-	$output = encode_base64(decode_base64($output_sample_body));
-	printf M ("\noutput_sample (base64 encoded):\n%s\n", $output);
-	close(M);
+
+	### Add the text message part
+	$email->attach (
+	    Type => 'TEXT',
+	    Data => $msg,
+	) or die "Error adding the text message part: $!\n";
+
+	### Add the sample
+	$email->attach (
+	    Type => 'application/octet-stream',
+	    Data => decode_base64($output_sample_body),
+	    Filename => 'sample.bin',
+	    Disposition => 'attachment',
+	    Encoding => 'base64'
+	) or die "Error adding sample output: $!\n";
+
+	#MIME::Lite->send('smtp', $mail_host, Timeout=>60, Debug=>1);
+	#$email->send;
+	$email->send('smtp', $mailhost, Timeout=>60, Debug=>1);
+
 	print "new gps report accepted...\n";
 	exit(0);
 }
@@ -48,10 +81,10 @@ if (hasNeededElements($query) && $query->param("action") eq "Send Report"){
 print $query->start_multipart_form;
 
 print <<EOF;
-<h1>GPS Behavior Reporting Form</h1>
+<h1>GPSD Receiver Reporting Form</h1>
 
 <p>Please use this form to report <code>gpsd</code> successes or
-failures with GPS units, and also to upload a sample of the GPS's
+failures with GPS and AIS units, and also to upload a sample of the receiver's
 output so we can add it to our regression tests and ensure continued
 support of the device.</p>
 
@@ -59,7 +92,7 @@ support of the device.</p>
 in for the report to be useful.  These are: submitter contact address, vendor,
 model, documentation URL, and output sample.  Other fields represent things we
 might be able to find out ourselves, but which are easier for you to determine.
-Every bit of information you can give us about your GPS will help make the
+Every bit of information you can give us about your receiver will help make the
 support for it more reliable.</p>
 
 <hr/>
@@ -81,13 +114,13 @@ print <<EOF;
 
 <p>(It is not actually very likely we will contact you, but we need to
 be able to do it if we can find no other way of getting information
-about the device.  Expect to hear from us if your GPS is obsolescent or
+about the device.  Expect to hear from us if your receiver is obsolescent or
 exotic and the information you provide in the rest of this form turns
 out to be insufficient. Or if your browser is broken enough to botch
 the output-sample upload.)</p>
 
 <hr/>
-<h2>GPS type identification</h2>
+<h2>Receiver type identification</h2>
 
 <p><em style='color: #ff0000;'>Important!</em> Identify the vendor and model of
 your device.
@@ -114,15 +147,15 @@ EOF
 print $query->textfield(-name=>"techdoc", -size=>72);
 
 print <<EOF;
-<p>It is useful to have an indication of how the GPS is packaged.
+<p>It is useful to have an indication of how the receiver is packaged.
 
 <ul>
-<li>A "GPS mouse" is a standalone sensor in a display-less case designed 
-be used as an outbard peripheral to a computer.</li>
-<li>A "handset" is a standalone GPS with a display and human-usable controls.</li>
+<li>A "mouse" is a standalone sensor in a display-less case designed 
+be used as an peripheral to a computer.</li>
+<li>A "handset" is a standalone unit with a display and human-usable controls.</li>
 <li>A "handsfree" is a hands-free unit with display designed for mounting 
 on a car windshield or boat dash.</li>
-<li>A "survey" GPS is packaged for field-survey use.</li> 
+<li>A "survey" unit is packaged for field-survey use.</li> 
 <li>An "OEM module" is an un-cased circuit board with edge connectors.</li>
 <li>"chipset" is a bare chip or chips packaged for surface mount.</li>
 </ul>
@@ -131,16 +164,16 @@ on a car windshield or boat dash.</li>
 EOF
 
 print $query->radio_group(-name=>'packaging',
-			  -values=>['GPS mouse', 'handset', 'handsfree',
+			  -values=>['mouse', 'handset', 'handsfree',
 				'survey', 'OEM module', 'chipset', 'other'],
-			  -default=>"GPS mouse",
+			  -default=>"mouse",
 			  -linebreak=>'false');
 
 
 print <<EOF;
-<p>Please identify the GPS chipset and firmware version, if possible.  You
+<p>Please identify the device chipset and firmware version, if possible.  You
 may be able to get this from the display of <code>xgps</code>; look for
-a GPS Type field or at the window title bar. Alternatively, you may find
+a Device Type field or at the window title bar. Alternatively, you may find
 it in the technical manual.
 <br/>Example: <code>SiRF-II</code> amd <code>2.31ES</code>.</p>
 EOF
@@ -151,7 +184,7 @@ print "<p><em>Firmware:</em>",
     $query->textfield(-name=>"firmware", -size=>72),"</p>\n";
 
 print <<EOF;
-<p>Please identify, if possible, the NMEA version the GPS emits.
+<p>Please identify, if possible, the NMEA version the receiver emits.
 You may be able to get this information from the technical manual.
 Likely values are <code>2.0</code>, <code>2.2</code>, and <code>3.0</code>.
 If the GPS emits only a vendor binary protocol, leave this field blank.</p>
@@ -165,16 +198,16 @@ print <<EOF;
 <hr/>
 <h2>Interfaces</h2>
 
-<p>Please identify the GPS's interface type (USB, RS-232, Compact Flash,
-etc.). If the GPS has adapters that support other interfaces, tell us
-the one you have and mention the adapters in the "Technical Notes" box.
-If it has an exotic interface not listed here, select "Other" and tell us
-about it in "Technical Notes".</p>
+<p>Please identify the receiver's interface type (USB, RS-232, Bluetooth,
+Compact Flash, etc.). If the receiver has adapters that support other
+interfaces, tell us the one you have and mention the adapters in the "Technical
+Notes" box.  If it has an exotic interface not listed here, select "Other" and
+tell us about it in "Technical Notes".</p>
 
 EOF
 
 
-print $query->radio_group(-name=>'interface',
+print $query->radio_group(-name=>'interfaces',
 			  -values=>['USB', 'Serial', 'Bluetooth', 'TTL',
 				    'Compact Flash', 'RS-232', 'Other'],
 			  -default=>"-",
@@ -207,13 +240,13 @@ print "<em>Tested with:</em>",$query->textfield(-name=>"tested",
 						-size=>6);
 
 print <<EOF;
-<p>Please rate how well this GPS functions with GPSD:</p>
+<p>Please rate how well this receiver functions with GPSD:</p>
 
 EOF
 
-%labels=(
+my %labels=(
     "excellent",
-    "Excellent -- gpsd recognizes the GPS rapidly and reliably, reports are complete and correct.",
+    "Excellent -- gpsd recognizes the receiver rapidly and reliably, reports are complete and correct.",
     "good",
     "Good -- gpsd has minor problems or lag recognizing the device, but reports are complete and correct.",
     "fair",
@@ -258,14 +291,14 @@ print <<EOF;
 <hr/>
 <h2>Output sample</h2>
 
-<p><em style='color: #ff0000;'>Important!</em> We need a sample of the
-output from your GPS.  We'll use this for mechanical regression testing,
-which is your best guarantee that support for your device won't get
-broken in a future release. Please be advised that these logs will be
-sent to a publicly archived mailing list, and will be available in the
-public SVN repository.</p>
+<p><em style='color: #ff0000;'>Important!</em> We need a sample of the output
+from your receiver - not the gpsd logfile, just raw output.  We'll use this for
+mechanical regression testing, which is your best guarantee that support for
+your device won't get broken in a future release. Please be advised that these
+logs will be sent to a publicly archived mailing list, and will be available in
+the public SVN repository.</p>
 
-<p>Almost all GPS receivers will simply start throwing data to your port
+<p>Almost all receivers will simply start throwing data to your port
 immediately when they're plugged in. You should normally be able to capture
 this output to a file with the <code>gpscat</code> utility.</p>
 
@@ -278,9 +311,9 @@ href="mailto:gpsd-dev\@lists.berlios.de">GPSD developers</a> for
 help.</p>
 
 <p>A log file is most useful when it contains (a) some sentences
-generated when the GPS has no fix, (b) some sentences representing
-a fix with the GPS stationary, and (c) some sentences representing
-a fix with the GPS moving.</p>
+generated when the receiver has no fix, (b) some sentences representing
+a fix with the unit stationary, and (c) some sentences representing
+a fix with the unit moving.</p>
 
 EOF
 
@@ -295,7 +328,7 @@ files.</p>
 
 <p>Location of the log capture. A good format would include your
 nearest city or other landmark, state/province, country code, and a
-rough latitude/longitude.  The GPS will give an exact location; we
+rough latitude/longitude.  A GPS will give an exact location; we
 want this as a sanity check.
 <br/>Example: <code>Groningen, NL, 53.2N 6.6E</code></p>
 
@@ -306,7 +339,7 @@ print"<em>Location:</em>",$query->textfield(-name=>"location",
 
 print <<EOF;
 
-<p>Day/month/year of the log capture (the GPS will give us
+<p>Day/month/year of the log capture (the receiver will give us
 hour/minute/second).
 <br/>Example: <code>20 May 2006</code>.</p>
 
@@ -317,31 +350,8 @@ print"<em>Date:</em>",$query->textfield(-name=>"date", -size=>72);
 
 print <<EOF;
 
-<p>The GPS's default sampling interval in seconds.  This will usually be 1.
-For SiRF chips it's always 1 and you can leave it blank; it's mainly
-interesting for NMEA devices with unknown chipsets.</p>
-
-EOF
-
-print"<em>Sampling interval:</em>",$query->textfield(-name=>"interval",
-						     -size=>6);
-
-print <<EOF;
-
-<p>First sentence in the GPS's reporting cycle.  Leave this blank for SiRF
-devices; it is mainly interesting for NMEA devices with unknown chipsets.
-You may be able to read it from the manual; if not, slowing the GPS to
-4800 will probably make the intercycle pause visible.</p>
-
-EOF
-
-print"<em>First sentence:</em>",$query->textfield(-name=>"leader",
-						  -size=>20);
-
-print <<EOF;
-
 <p>Finally, add any notes you want to about how the sample was taken.  One
-good thing to put here would a description of how the GPS was moving while the
+good thing to put here would a description of how the unit was moving while the
 log was being captured.  If the sentence mix changes between "fix" and "no fix"
 states, that too is a good thing to note.</p>
 
@@ -407,9 +417,9 @@ if ($query->param("nmea")) {
 } else {
     print "NMEA version not specified.<br/>\n";
 }
-if ($query->param("interface")) {
-    print "Interface type is <code>". escapeHTML($query->param("interface")) ."</code><br/>\n";
-    if ($query->param("interface") eq "USB") {
+if ($query->param("interfaces")) {
+    print "Interface type is <code>". escapeHTML($query->param("interfaces")) ."</code><br/>\n";
+    if ($query->param("interfaces") eq "USB") {
 	if ($query->param("usbchip")) {
 	    print "USB chip is <code>". escapeHTML($query->param("usbchip")) ."</code><br/>\n";
 	} else {
@@ -452,18 +462,6 @@ if ($query->param("date")) {
 } else {
     print "No sample date specified.<br/>\n";
 }
-
-if ($query->param("interval")) {
-    print "Sampling interval <code>". escapeHTML($query->param("interval")) ."</code><br/>\n";
-} else {
-    print "No sampling interval specified.<br/>\n";
-}
-if ($query->param("leader")) {
-    print "Leading sentence <code>". escapeHTML($query->param("leader")) ."</code><br/>\n";
-} else {
-    print "No leading sentence specified.<br/>\n";
-}
-
 
 if ($query->param("sample_notes")) {
     print "Notes on the sample have been entered.";

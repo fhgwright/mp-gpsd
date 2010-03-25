@@ -24,13 +24,25 @@ connected to the Garmin kernel driver.  But we need to be able to tell the
 others apart and distinguish them from baud barf.
 
 ***************************************************************************/
+#include <stdlib.h>
+#include "gpsd_config.h"
 #include <sys/types.h>
 #include <ctype.h>
 #include <stdio.h>
+#ifndef S_SPLINT_S
 #include <unistd.h>
+#endif /* S_SPLINT_S */
 #include <string.h>
 #include <errno.h>
-#include "gpsd_config.h"
+#ifndef S_SPLINT_S
+ #ifdef HAVE_NETINET_IN_H
+  #include <netinet/in.h>      /* for htons() */
+ #endif /* HAVE_NETNET_IN_H */
+ #ifdef HAVE_ARPA_INET_H
+  #include <arpa/inet.h>       /* for htons() */
+ #endif /* HAVE_ARPA_INET_H */
+#endif /* S_SPLINT_S */
+
 #include "bits.h"
 #include "gpsd.h"
 #include "crc24q.h"
@@ -39,13 +51,15 @@ others apart and distinguish them from baud barf.
  * The packet-recognition state machine.  This takes an incoming byte stream
  * and tries to segment it into packets.  There are three types of packets:
  *
- * 1) NMEA lines.  These begin with $, and with \r\n, and have a checksum.
+ * 1) Comments. These begin with # and end with \r\n.
  *
- * 2) Binary packets.  These begin with some fixed leader character(s),
+ * 2) NMEA lines.  These begin with $, and with \r\n, and have a checksum.
+ *
+ * 3) Binary packets.  These begin with some fixed leader character(s),
  *    have a length embedded in them, and end with a checksum (and possibly)
  *    some fixed trailing bytes.  
  *
- * 3) ISGPS packets. The input may be a bitstream containing IS-GPS-200
+ * 4) ISGPS packets. The input may be a bitstream containing IS-GPS-200
  *    packets.  Each includes a fixed leader byte, a length, and check bits.  
  *    In this case, it is not guaranted that packet starts begin on byte 
  *    bounaries; the recognizer has to run a separate state machine against 
@@ -75,8 +89,10 @@ others apart and distinguish them from baud barf.
  * recognition beyond the headers would make no sense in this
  * application, they'd just add complexity.
  *
- * The NMEA portion of state machine allows the following talker IDs:
+ * The NMEA portion of the state machine allows the following talker IDs:
  *      GP -- Global Positioning System.
+ *      GL -- GLONASS, according to IEIC 61162-1
+ *      GN -- Mixed GPS and GLONASS data, according to IEIC 61162-1
  *      II -- Integrated Instrumentation (Raytheon's SeaTalk system).
  *	IN -- Integrated Navigation (Garmin uses this).
  *
@@ -86,10 +102,10 @@ enum {
 #include "packet_states.h"
 };
 
-#define SOH	0x01
-#define DLE	0x10
-#define STX	0x02
-#define ETX	0x03
+#define SOH	(unsigned char)0x01
+#define DLE	(unsigned char)0x10
+#define STX	(unsigned char)0x02
+#define ETX	(unsigned char)0x03
 
 static void nextstate(struct gps_packet_t *lexer,
 		      unsigned char c)
@@ -118,9 +134,9 @@ static void nextstate(struct gps_packet_t *lexer,
 	    break;
 	}
 #endif /* NMEA_ENABLE */
-#if defined(TNT_ENABLE) || defined(GARMINTXT_ENABLE)
+#if defined(TNT_ENABLE) || defined(GARMINTXT_ENABLE) || defined(ONCORE_ENABLE)
 	if (c == '@') {
-	    lexer->state = TNT_LEADER;
+	    lexer->state = AT1_LEADER;
 	    break;
 	}
 #endif
@@ -230,7 +246,11 @@ static void nextstate(struct gps_packet_t *lexer,
 	    lexer->state = GROUND_STATE;
 	break;
     case NMEA_PUB_LEAD:
-	if (c == 'P')
+	/*
+	 * $GP == GPS, $GL = GLONASS only, $GN = mixed GPS and GLONASS,
+	 * according to NMEA (IEIC 61162-1) DRAFT 02/06/2009.
+	 */
+	if (c == 'P' || c == 'N' || c == 'L')
 	    lexer->state = NMEA_LEADER_END;
 	else
 	    lexer->state = GROUND_STATE;
@@ -259,11 +279,39 @@ static void nextstate(struct gps_packet_t *lexer,
 	else
 	    lexer->state = GROUND_STATE;
 	break;
-#if defined(TNT_ENABLE) || defined(GARMINTXT_ENABLE)
-    case TNT_LEADER:
-	  lexer->state = NMEA_LEADER_END;
+#if defined(TNT_ENABLE) || defined(GARMINTXT_ENABLE) || defined(ONCORE_ENABLE)
+    case AT1_LEADER:
+	switch (c) {
+#ifdef ONCORE_ENABLE
+	    case '@':
+		lexer->state = ONCORE_AT2;
+		break;
+#endif /* ONCORE_ENABLE */
+#ifdef TNT_ENABLE
+	    case '*':
+		/* TNT has similar structure like NMEA packet, '*' before optional checksum ends the packet */
+		/* '*' cannot be received from GARMIN working in TEXT mode, use this diference for selection */
+		/* this is not GARMIN TEXT packet, could be TNT */
+		lexer->state = NMEA_LEADER_END;
+		break;
+#endif /* TNT_ENABLE */
+#if defined(GARMINTXT_ENABLE)
+	    case '\r':
+		/* stay in this state, next character should be '\n' */
+		/* in the theory we can stop search here and don't wait for '\n' */
+		lexer->state = AT1_LEADER;
+		break;
+	    case '\n':
+		/* end of packet found */
+		lexer->state = GTXT_RECOGNIZED;
+		break;
+#endif /* GARMINTXT_ENABLE */
+	    default:
+		if (!isprint(c))
+		    lexer->state = GROUND_STATE;
+	}
 	break;
-#endif
+#endif /* defined(TNT_ENABLE) || defined(GARMINTXT_ENABLE) || defined(ONCORE_ENABLE) */
     case NMEA_LEADER_END:
 	if (c == '\r')
 	    lexer->state = NMEA_CR;
@@ -279,11 +327,19 @@ static void nextstate(struct gps_packet_t *lexer,
     case NMEA_CR:
 	if (c == '\n')
 	    lexer->state = NMEA_RECOGNIZED;
+	/*
+	 * There's a GPS called a Jackson Labs Firefly-1a that emits \r\r\n
+	 * at the end of each sentence.  Don't be confused by this.
+	 */
+	else if (c == '\r')
+	    lexer->state = NMEA_CR;
 	else
 	    lexer->state = GROUND_STATE;
 	break;
     case NMEA_RECOGNIZED:
-	if (c == '$')
+	if (c == '#')
+	    lexer->state = COMMENT_BODY;
+	else if (c == '$')
 	    lexer->state = NMEA_DOLLAR;
 	else if (c == '!')
 	    lexer->state = NMEA_BANG;
@@ -492,17 +548,20 @@ static void nextstate(struct gps_packet_t *lexer,
 	    lexer->state = GROUND_STATE;
 	break;
     case SUPERSTAR2_ID2:
-	lexer->length = c + 4;
-	if (lexer->length <= MAX_PACKET_LENGTH)
+	lexer->length = (size_t)c; /* how many data bytes follow this byte */
+	if (lexer->length)
 	    lexer->state = SUPERSTAR2_PAYLOAD;
 	else
-	    lexer->state = GROUND_STATE;
+	    lexer->state = SUPERSTAR2_CKSUM1; /* no data, jump to checksum */
 	break;
     case SUPERSTAR2_PAYLOAD:
 	if (--lexer->length == 0)
 	    lexer->state = SUPERSTAR2_CKSUM1;
 	break;
     case SUPERSTAR2_CKSUM1:
+	lexer->state = SUPERSTAR2_CKSUM2;
+	break;
+    case SUPERSTAR2_CKSUM2:
 	lexer->state = SUPERSTAR2_RECOGNIZED;
 	break;
     case SUPERSTAR2_RECOGNIZED:
@@ -512,6 +571,48 @@ static void nextstate(struct gps_packet_t *lexer,
 	    lexer->state = GROUND_STATE;
 	break;
 #endif /* SUPERSTAR2_ENABLE */
+#ifdef ONCORE_ENABLE
+    case ONCORE_AT2:
+	if (isupper(c)) {
+	    lexer->length = (size_t) c;
+	    lexer->state = ONCORE_ID1;
+	} else
+	    lexer->state = GROUND_STATE;
+	break;
+    case ONCORE_ID1:
+	if (isalpha(c)) {
+	    lexer->length = 
+		oncore_payload_cksum_length((unsigned char) lexer->length,c);
+	    if (lexer->length != 0) {
+		lexer->state = ONCORE_PAYLOAD;
+		break;
+	    }
+	}
+	    lexer->state = GROUND_STATE;
+	break;
+    case ONCORE_PAYLOAD:
+	if (--lexer->length == 0)
+	    lexer->state = ONCORE_CHECKSUM;
+	break;
+    case ONCORE_CHECKSUM:
+	if (c != '\r')
+	    lexer->state = GROUND_STATE;
+	else
+	    lexer->state = ONCORE_CR;
+	break;
+    case ONCORE_CR:
+	if (c == '\n')
+	    lexer->state = ONCORE_RECOGNIZED;
+	else
+	    lexer->state = ONCORE_PAYLOAD;
+	break;
+    case ONCORE_RECOGNIZED:
+	if (c == '@')
+	    lexer->state = AT1_LEADER;
+	else
+	    lexer->state = GROUND_STATE;
+	break;
+#endif /* ONCORE_ENABLE */
 #if defined(TSIP_ENABLE) || defined(EVERMORE_ENABLE) || defined(GARMIN_ENABLE)
     case DLE_LEADER:
 #ifdef EVERMORE_ENABLE
@@ -780,7 +881,7 @@ static void nextstate(struct gps_packet_t *lexer,
     case ITALK_PAYLOAD:
 	/* lookahead for "<!" because sometimes packets are short but valid */
 	if ((c == '>') && (lexer->inbufptr[0] == '<') &&
-	    (lexer->inbufptr[1] == '!')){
+	    (lexer->inbufptr[1] == '!')) {
 	    lexer->state = ITALK_RECOGNIZED;
 	    gpsd_report(LOG_IO, "ITALK: trying to process runt packet\n");
 	    break;
@@ -948,20 +1049,34 @@ void packet_parse(struct gps_packet_t *lexer)
 #ifdef NMEA_ENABLE
 	else if (lexer->state == NMEA_RECOGNIZED) {
 	    bool checksum_ok = true;
-	    char csum[3];
-	    char *trailer = (char *)lexer->inbufptr-5;
-	    if (*trailer == '*') {
+	    char csum[3] = { '0', '0', '0' };
+	    char *end;
+	    /*
+	     * Back up past any whitespace.  Need to do this because
+	     * at least one GPS (the Firefly 1a) emits \r\r\n
+	     */
+	    for (end = (char *)lexer->inbufptr-1; isspace(*end); end--)
+		continue;
+	    end -= 2;
+	    if (*end == '*') {
 		unsigned int n, crc = 0;
-		for (n = 1; (char *)lexer->inbuffer + n < trailer; n++)
+		for (n = 1; (char *)lexer->inbuffer + n < end; n++)
 		    crc ^= lexer->inbuffer[n];
 		(void)snprintf(csum, sizeof(csum), "%02X", crc);
-		checksum_ok = (csum[0]==toupper(trailer[1])
-				&& csum[1]==toupper(trailer[2]));
+		checksum_ok = (csum[0]==toupper(end[1])
+				&& csum[1]==toupper(end[2]));
 	    }
-	    if (checksum_ok)
-		packet_accept(lexer, NMEA_PACKET);
-	    else
+	    if (checksum_ok) {
+#ifdef AIVDM_ENABLE
+		if (strncmp((char *)lexer->inbuffer, "!AIVDM", 6) == 0)
+		    packet_accept(lexer, AIVDM_PACKET);
+		else
+#endif /* AIVDM_ENABLE */
+		    packet_accept(lexer, NMEA_PACKET);
+	    } else {
+		gpsd_report(LOG_WARN, "bad checksum in NMEA packet; expected %s.\n", csum);
 		lexer->state = GROUND_STATE;
+	    }
 	    packet_discard(lexer);
 	    break;
 	}
@@ -984,12 +1099,12 @@ void packet_parse(struct gps_packet_t *lexer)
 #endif /* SIRF_ENABLE */
 #ifdef SUPERSTAR2_ENABLE
 	else if (lexer->state == SUPERSTAR2_RECOGNIZED) {
-	    unsigned short a = 0, b, n;
-	    lexer->length = 4 + lexer->inbuffer[3] + 2;
+	    uint16_t a = 0, b, n;
+	    lexer->length = 4 + (size_t) lexer->inbuffer[3] + 2;
 	    for(n = 0; n < lexer->length - 2; n++)
-		a += lexer->inbuffer[n];
+		a += (uint16_t)lexer->inbuffer[n];
 	    a = htons(a);
-	    b = getbeuw(lexer->inbuffer, lexer->length - 2);
+	    b = (uint16_t)getbeuw(lexer->inbuffer, lexer->length - 2);
 	    gpsd_report(LOG_IO, "SuperStarII pkt dump: type %u len %u: %s\n",
 			lexer->inbuffer[1], (unsigned int)lexer->length,
 			gpsd_hexdump_wrapper(lexer->inbuffer, lexer->length, LOG_RAW));
@@ -1005,9 +1120,46 @@ void packet_parse(struct gps_packet_t *lexer)
 	    break;
 	}
 #endif /* SUPERSTAR2_ENABLE */
+#ifdef ONCORE_ENABLE
+	else if (lexer->state == ONCORE_RECOGNIZED) {
+	    char a, b;
+	    int i, len;
+
+	    len = lexer->inbufptr - lexer->inbuffer;
+	    a = (char)(lexer->inbuffer[len-3]);
+	    b = '\0';
+	    for(i = 2; i < len - 3; i++)
+		b ^= lexer->inbuffer[i];
+	    if (a == b) {
+		gpsd_report(LOG_IO, "Accept OnCore packet @@%c%c len %d\n",
+		    lexer->inbuffer[2], lexer->inbuffer[3], len);
+		packet_accept(lexer, ONCORE_PACKET);
+	    } else {
+		gpsd_report(LOG_IO, "REJECT OnCore packet @@%c%c len %d\n",
+		    lexer->inbuffer[2], lexer->inbuffer[3], len);
+		lexer->state = GROUND_STATE;
+	    }
+	    packet_discard(lexer);
+	    break;
+	}
+#endif /* ONCORE_ENABLE */
 #if defined(TSIP_ENABLE) || defined(GARMIN_ENABLE)
 	else if (lexer->state == TSIP_RECOGNIZED) {
 	    size_t packetlen = lexer->inbufptr - lexer->inbuffer;
+#ifdef TSIP_ENABLE
+	    unsigned int pos, dlecnt;
+	    /* don't count stuffed DLEs in the length */
+	    dlecnt = 0;
+	    for (pos = 0; pos < (unsigned int)packetlen; pos ++)
+		if (lexer->inbuffer[pos] == DLE)
+		    dlecnt ++;
+	    if (dlecnt > 2) {
+		dlecnt -= 2;
+		dlecnt /= 2;
+		gpsd_report(LOG_RAW, "Unstuffed %d DLEs\n", dlecnt);
+		packetlen -= dlecnt;
+	    }
+#endif /* TSIP_ENABLE */
 	    if ( packetlen < 5) {
 		lexer->state = GROUND_STATE;
 	    } else {
@@ -1075,11 +1227,17 @@ void packet_parse(struct gps_packet_t *lexer)
 		 * 0x45, Software Version Information, data length 10
 		 * 0x46, Health of Receiver, data length 2
 		 * 0x48, GPS System Messages
+		 * 0x49, Almanac Health Page
 		 * 0x4a, LLA Position, data length 20
 		 * 0x4b, Machine Code Status, data length 3
+		 * 0x4c, Operating Parameters Report
+		 * 0x54, One Satellite Bias
 		 * 0x56, Velocity Fix (ENU), data length 20
+		 * 0x57, Last Computed Fix Report
 		 * 0x5a, Raw Measurements
+		 * 0x5b, Satellite Ephemeris Status
 		 * 0x5c, Satellite Tracking Status, data length 24
+		 * 0x5e, Additional Fix Status Report
 		 * 0x6d, All-In-View Satellite Selection, data length 16+numSV
 		 * 0x82, Differential Position Fix Mode, data length 1
 		 * 0x83, Double Precision XYZ, data length 36
@@ -1099,9 +1257,9 @@ void packet_parse(struct gps_packet_t *lexer)
 		/*@ -ifempty */
 		if ((0x13 == pkt_id) && (0x01 <= packetlen))
 		    /* pass */;
-		else if ((0x41 == pkt_id) && (0x0e == packetlen))
+		else if ((0x41 == pkt_id) && ((0x0e == packetlen) || (0x0f == packetlen)))
 		    /* pass */;
-		else if ((0x42 == pkt_id) && (0x14 == packetlen ))
+		else if ((0x42 == pkt_id) && (0x14 == packetlen))
 		    /* pass */;
 		else if ((0x43 == pkt_id) && (0x18 == packetlen))
 		    /* pass */;
@@ -1111,17 +1269,31 @@ void packet_parse(struct gps_packet_t *lexer)
 		    /* pass */;
 		else if ((0x48 == pkt_id) && (0x1a == packetlen))
 		    /* pass */;
+		else if ((0x49 == pkt_id) && (0x24 == packetlen))
+		    /* pass */;
 		else if ((0x4a == pkt_id) && (0x18 == packetlen))
 		    /* pass */;
 		else if ((0x4b == pkt_id) && (0x07 == packetlen))
+		    /* pass */;
+		else if ((0x4c == pkt_id) && (0x15 == packetlen))
+		    /* pass */;
+		else if ((0x54 == pkt_id) && (0x10 == packetlen))
 		    /* pass */;
 		else if ((0x55 == pkt_id) && (0x08 == packetlen))
 		    /* pass */;
 		else if ((0x56 == pkt_id) && (0x18 == packetlen))
 		    /* pass */;
-		else if ((0x5a == pkt_id) && (0x1d == packetlen))
+		else if ((0x57 == pkt_id) && (0x0c == packetlen))
+		    /* pass */;
+		else if ((0x5a == pkt_id) && ((0x1d <= packetlen) && (0x1f >= packetlen)))
+		    /* pass */;
+		else if ((0x5b == pkt_id) && (0x24 == packetlen))
 		    /* pass */;
 		else if ((0x5c == pkt_id) && ((0x1c <= packetlen) && (0x1e >= packetlen)))
+		    /* pass */;
+		else if ((0x5e == pkt_id) && (0x06 == packetlen))
+		    /* pass */;
+		else if ((0x5f == pkt_id) && (70 == packetlen))
 		    /* pass */;
 		else if ((0x6d == pkt_id) && ((0x14 <= packetlen) && (0x20 >= packetlen)))
 		    /* pass */;
@@ -1284,15 +1456,15 @@ void packet_parse(struct gps_packet_t *lexer)
 #endif /* EVERMORE_ENABLE */
 /* XXX CSK */
 #ifdef ITRAX_ENABLE
-#define getib(j) ((u_int8_t)lexer->inbuffer[(j)])
-#define getiw(i) ((u_int16_t)(((u_int16_t)getib((i)+1) << 8) | (u_int16_t)getib((i))))
+#define getib(j) ((uint8_t)lexer->inbuffer[(j)])
+#define getiw(i) ((uint16_t)(((uint16_t)getib((i)+1) << 8) | (uint16_t)getib((i))))
 
 	else if (lexer->state == ITALK_RECOGNIZED) {
-	    volatile u_int16_t len, n, csum, xsum, tmpw;
-	    volatile u_int32_t tmpdw;
+	    volatile uint16_t len, n, csum, xsum, tmpw;
+	    volatile uint32_t tmpdw;
 
 	    /* number of words */
-	    len = (unsigned short)(lexer->inbuffer[6] &0xff);
+	    len = (uint16_t)(lexer->inbuffer[6] &0xff);
 
 	    /*@ -type @*/
 	    /* initialize all my registers */
@@ -1300,7 +1472,7 @@ void packet_parse(struct gps_packet_t *lexer)
 	    /* expected checksum */
 	    xsum = getiw(7+2*len);
 
-	    for (n = 0; n < len; n++){
+	    for (n = 0; n < len; n++) {
 		tmpw = getiw(7 + 2*n);
 		tmpdw = (csum + 1) * (tmpw + n);
 		csum ^= (tmpdw & 0xffff) ^ ((tmpdw >>16) & 0xffff);
@@ -1341,6 +1513,19 @@ void packet_parse(struct gps_packet_t *lexer)
 	    break;
 	}
 #endif /* RTCM104V2_ENABLE */
+#ifdef GARMINTXT_ENABLE
+	else if (lexer->state == GTXT_RECOGNIZED) {
+            size_t packetlen = lexer->inbufptr - lexer->inbuffer;
+	    if (57 <= packetlen) {
+		packet_accept(lexer, GARMINTXT_PACKET);
+		packet_discard(lexer);
+                lexer->state = GROUND_STATE;
+		break;
+            } else {
+                lexer->state = GROUND_STATE;
+            }
+        }
+#endif
     } /* while */
 }
 #undef getword
@@ -1358,6 +1543,7 @@ ssize_t packet_get(int fd, struct gps_packet_t *lexer)
 	if ((errno == EAGAIN) || (errno == EINTR)) {
 #ifdef STATE_DEBUG
 	    gpsd_report(LOG_RAW+2, "no bytes ready\n");
+	    recvd = 0;
 	    /* fall through, input buffer may be nonempty */
 #endif /* STATE_DEBUG */
 	} else {
@@ -1387,11 +1573,39 @@ ssize_t packet_get(int fd, struct gps_packet_t *lexer)
     /* Otherwise, consume from the packet input buffer */
     packet_parse(lexer);
 
+    /* if input buffer is full, discard */
+    if (sizeof(lexer->inbuffer)==(lexer->inbuflen)) {
+	    packet_discard(lexer);
+	    lexer->state = GROUND_STATE;
+    }
+
     /*
-     * recvd can still be 0 or -1 at this point even if buffer data 
-     * was consumed.  It could be -1 on a transient read error.
+     * If we gathered a packet, return its length; it will have been
+     * consumed out of the input buffer and moved to the output
+     * buffer.  We don't care whether the read() returned 0 or -1 and
+     * gathered packet data was all buffered or whether ot was partly
+     * just physically read.
+     *
+     * Note: this choice greatly simplifies life for callers of
+     * packet_get(), but means that they cannot tell when a nonzero
+     * return means there was a successful physical read.  They will
+     * thus credit a data source that drops out with being alive 
+     * slightly longer than it actually was.  This is unlikely to
+     * matter as long as any policy timeouts are large compared to
+     * the time required to consume the greatest possible amount 
+     * of buffered input, but if you hack this code you need to
+     * be aware of the issue. It might also slightly affect 
+     * performance profiling.
      */
-    return recvd;
+    if (lexer->outbuflen > 0)
+	return (ssize_t)lexer->outbuflen;
+    else
+	/*
+	 * Otherwise recvd is the size of whatever packet fragment we got.
+	 * It can still be 0 or -1 at this point even if buffer data 
+	 * was consumed.
+	 */
+	return recvd;
 }
 
 void packet_reset(struct gps_packet_t *lexer)
@@ -1424,3 +1638,60 @@ void packet_pushback(struct gps_packet_t *lexer)
     }
 }
 #endif /* __UNUSED */
+
+#ifdef ONCORE_ENABLE
+size_t oncore_payload_cksum_length(unsigned char id1,unsigned char id2)
+{
+    size_t l;
+
+    /* For the packet sniffer to not terminate the message due to
+     * payload data looking like a trailer, the known payload lengths
+     * including the checksum are given.  Return -1 for unknown IDs.
+     */
+
+#define ONCTYPE(id2,id3) ((((unsigned int)id2)<<8)|(id3))
+
+    switch (ONCTYPE(id1,id2)) {
+    case ONCTYPE('A','b'): l = 10; break; /* GMT offset */
+    case ONCTYPE('A','w'): l =  8; break; /* time mode */
+    case ONCTYPE('A','c'): l = 11; break; /* date */
+    case ONCTYPE('A','a'): l = 10; break; /* time of day */
+    case ONCTYPE('A','d'): l = 11; break; /* latitude */
+    case ONCTYPE('A','e'): l = 11; break; /* longitude */
+    case ONCTYPE('A','f'): l = 15; break; /* height */
+    case ONCTYPE('E','a'): l = 76; break; /* position/status/data */
+    case ONCTYPE('A','g'): l =  8; break; /* satellite mask angle */
+    case ONCTYPE('B','b'): l = 92; break; /* visible satellites status */
+    case ONCTYPE('B','j'): l =  8; break; /* leap seconds pending */
+    case ONCTYPE('A','q'): l =  8; break; /* atmospheric correction mode */
+    case ONCTYPE('A','p'): l = 25; break; /* set user datum / select datum */
+    /* Command "Ao" gives "Ap" response   (select datum) */
+    case ONCTYPE('C','h'): l =  9; break; /* almanac input ("Cb" response) */
+    case ONCTYPE('C','b'): l = 33; break; /* almanac output ("Be" response) */
+    case ONCTYPE('S','z'): l =  8; break; /* system power-on failure */
+    case ONCTYPE('C','j'): l = 294; break; /* receiver ID */
+    case ONCTYPE('F','a'): l =  9; break; /* self-test */
+    case ONCTYPE('C','f'): l =  7; break; /* set-to-defaults */
+    case ONCTYPE('E','q'): l = 96; break; /* ASCII position */
+    case ONCTYPE('A','u'): l = 12; break; /* altitide hold height */
+    case ONCTYPE('A','v'): l =  8; break; /* altitude hold mode */
+    case ONCTYPE('A','N'): l =  8; break; /* velocity filter */
+    case ONCTYPE('A','O'): l =  8; break; /* RTCM report mode */
+    case ONCTYPE('C','c'): l = 80; break; /* ephemeris data input ("Bf") */
+    case ONCTYPE('C','k'): l =  7; break; /* pseudorng correction inp. ("Ce")*/
+    /* Command "Ci" (switch to NMEA, GT versions only) has no response */
+    case ONCTYPE('B','o'): l =  8; break; /* UTC offset status */
+    case ONCTYPE('A','z'): l = 11; break; /* 1PPS cable delay */
+    case ONCTYPE('A','y'): l = 11; break; /* 1PPS offset */
+    case ONCTYPE('A','P'): l =  8; break; /* pulse mode */
+    case ONCTYPE('A','s'): l = 20; break; /* position-hold position */
+    case ONCTYPE('A','t'): l =  8; break; /* position-hold mode */
+    case ONCTYPE('E','n'): l = 69; break; /* time RAIM setup and status */
+    default:
+	return 0;
+    }
+
+    return l - 6; /* Subtract header and trailer. */
+}
+#endif /* ONCORE_ENABLE */
+

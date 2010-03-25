@@ -5,7 +5,6 @@
 #include <Python.h>
 
 #include <stdio.h>
-#include "gpsd_config.h"
 #include "gpsd.h"
 
 static PyObject *ErrorObject = NULL;
@@ -71,25 +70,18 @@ Lexer_init(LexerObject *self)
 static PyObject *
 Lexer_get(LexerObject *self, PyObject *args)
 {
-    ssize_t len, waiting;
+    ssize_t len;
     int fd;
 
-    if (!PyArg_ParseTuple(args, "i;missing or invalid file descriptor argument to gpspacket.get", &fd))
+    if (!PyArg_ParseTuple(args, "i;missing or invalid file descriptor argument to gps.packet.get", &fd))
         return NULL;
-
-    waiting = packet_buffered_input(&self->lexer);
 
     len = packet_get(fd, &self->lexer);
     if (PyErr_Occurred())
 	return NULL;
 
-    if (len <= 0 && waiting <= 0) {
-	self->lexer.type = EMPTY_PACKET;
-	self->lexer.outbuffer[0] = '\0';
-	self->lexer.outbuflen = 0;
-    }
-
-    return Py_BuildValue("(i, s#)", 
+    return Py_BuildValue("(i, i, s#)",
+			 len,
 			 self->lexer.type, 
 			 self->lexer.outbuffer, 
 			 self->lexer.outbuflen);
@@ -134,7 +126,7 @@ static PyTypeObject Lexer_Type = {
 	 * to be portable to Windows without using C++. */
 	PyObject_HEAD_INIT(NULL)
 	0,			/*ob_size*/
-	"gpspacket.lexer",	/*tp_name*/
+	"gps.packet.lexer",	/*tp_name*/
 	sizeof(LexerObject),	/*tp_basicsize*/
 	0,			/*tp_itemsize*/
 	/* methods */
@@ -224,7 +216,7 @@ register_report(LexerObject *self, PyObject *args)
 
 /* List of functions defined in the module */
 
-static PyMethodDef gpspacket_methods[] = {
+static PyMethodDef packet_methods[] = {
     {"new",		gpspacket_new,		METH_VARARGS,
      PyDoc_STR("new() -> new packet-lexer object")},
     {"register_report", (PyCFunction)register_report, METH_VARARGS,
@@ -246,7 +238,7 @@ level of the message and the message itself.\n\
 ");
 
 PyMODINIT_FUNC
-initgpspacket(void)
+initpacket(void)
 {
     PyObject *m;
 
@@ -254,10 +246,9 @@ initgpspacket(void)
 	return;
 
     /* Create the module and add the functions */
-    m = Py_InitModule3("gpspacket", gpspacket_methods, module_doc);
+    m = Py_InitModule3("packet", packet_methods, module_doc);
 
     PyModule_AddIntConstant(m, "BAD_PACKET", BAD_PACKET);
-    PyModule_AddIntConstant(m, "EMPTY_PACKET", EMPTY_PACKET);
     PyModule_AddIntConstant(m, "COMMENT_PACKET", COMMENT_PACKET);
     PyModule_AddIntConstant(m, "NMEA_PACKET", NMEA_PACKET);
     PyModule_AddIntConstant(m, "SIRF_PACKET", SIRF_PACKET);

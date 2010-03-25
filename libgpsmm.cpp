@@ -6,10 +6,15 @@
  * file "COPYING" for more information.
  *
  */
+#include <cstdlib>
+
+#include "gpsd_config.h"
 #include "libgpsmm.h"
 
+gpsmm::gpsmm() : gps_data(0) { gps_data = NULL; }
+
 struct gps_data_t* gpsmm::open(void) {
-	return open("127.0.0.1",DEFAULT_GPSD_PORT);
+	return open("localhost",DEFAULT_GPSD_PORT);
 }
 
 struct gps_data_t* gpsmm::open(const char *host, const char *port) {
@@ -23,8 +28,17 @@ struct gps_data_t* gpsmm::open(const char *host, const char *port) {
 	}
 }
 
-struct gps_data_t* gpsmm::query(const char *request) {
-	if (gps_query(gps_data,request)==-1) {
+struct gps_data_t* gpsmm::stream(int flags) {
+  if (gps_stream(gps_data,flags, NULL)==-1) {
+		return NULL;
+	}
+	else {
+		return backup();
+	}
+}
+
+struct gps_data_t* gpsmm::send(const char *request) {
+	if (gps_send(gps_data,request)==-1) {
 		return NULL;
 	}
 	else {
@@ -42,20 +56,18 @@ struct gps_data_t* gpsmm::poll(void) {
 	}
 }
 
-int gpsmm::set_callback(void (*hook)(struct gps_data_t *sentence, char *buf, size_t len, int level)) {
-	handler = new pthread_t;
-	return gps_set_callback(gps_data,hook,handler);
-}
-
-int gpsmm::del_callback(void) {
-	int res;
-	res=gps_del_callback(gps_data,handler);
-	delete handler;
-	return res;
+bool gpsmm::waiting(void) {
+	return gps_waiting(gps_data);
 }
 
 void gpsmm::clear_fix(void) {
 	gps_clear_fix(&(gps_data->fix));
+}
+
+void gpsmm::enable_debug(int level, FILE *fp) {
+#ifdef CLIENTDEBUG_ENABLE
+	gps_enable_debug(level, fp);
+#endif /* CLIENTDEBUG_ENABLE */
 }
 
 gpsmm::~gpsmm() {

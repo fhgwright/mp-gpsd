@@ -1,10 +1,10 @@
 /* gpsd.h -- fundamental types and structures for the gpsd library */
-/* This file is generated.  Do not hand-hack it! */
 
 /* $Id$ */
 #ifndef _GPSD_H_
 #define _GPSD_H_
 
+#include "gpsd_config.h"
 #include <stdbool.h>
 #include <stdio.h>
 #ifdef HAVE_TERMIOS_H
@@ -15,4 +15,5 @@
 #endif
 #include "gps.h"
 
+#ifndef GPSD_CONFIG_H
 /* Feature configuration switches begin here */

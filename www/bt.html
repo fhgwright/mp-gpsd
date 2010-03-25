@@ -3,7 +3,7 @@
 <head>
    <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
    <meta name="Author" content="Remco Treffkorn">
-   <meta name="Description" content="GPSd is a utility that can listen to a GPS or Loran Receiver and re-publish the positional data in a simpler format.">
+   <meta name="Description" content="GPSd is a utility that can listen to a GPS or AIS receiver and re-publish the positional data in a simpler format.">
    <meta name="Keywords" content="GPS, translator, mxmap, GIS">
    <link rel="stylesheet" href="main.css" type="text/css"/>
    <title>Bluetooth and GPSd</title>
@@ -29,8 +29,10 @@ Bluetooth and <code>gpsd</code>
 
     <a href="hardware.html">Hardware</a><br/>
     <a href="hacking.html">Hacker's Guide</a><br/>
+    <a href="protocol-transition.html">Application Compatibility</a>
     <a href="references.html">References</a><br/>
     <a href="history.html">History</a><br/>
+    <a href="future.html">Future</a><br/>
 
     <a href='http://www.catb.org/hacker-emblem/'><img
     src='http://www.catb.org/hacker-emblem/glider.png'
@@ -43,15 +45,22 @@ Bluetooth and <code>gpsd</code>
 
 <div id="Content">
 
-<p>Bluetooth connections work with gpsd by leveraging rfcomm.  Rfcomm
-provides a serial port interface to a BT device and has been designed
-to allow for automated connect/disconnect operations over bluetooth.
-The steps below will allow you to use your BT GPS device automatically
-whenever it is powered on and gpsd is running.</p>
+<p>Bluetooth connections work with <code>gpsd</code> by leveraging the
+rfcomm serial port emulation.  Rfcomm provides a serial port interface
+to a BT device and has been designed to allow for automated
+connect/disconnect operations over Bluetooth.  The steps below will
+allow you to use your BT GPS device automatically whenever it is
+powered on and gpsd is running.</p>
 
-<p>Note that you must be logged in as root for most of these steps.
+<p>Note that you must be logged in as root for most of these steps.</p>
+
+<h2>Installation</h2>
+
+<p>If your system comes with Bluetooth tools preinstalled (look for
+<img src="bt.png"> on your status bar) you can probably skip these steps.</p>
+
 <ol>
-<li><p>First, the Bluez protcol stack must be installed.  All the
+<li><p>First, the Bluez protocol stack must be installed.  All the
 documentation can be found on <a
 href='http://bluez.sourceforge.net/'>http://bluez.sourceforge.net/</a>.</p></li>
 <li><p>Install bluetooth for your device with the "rfcomm" module to
@@ -68,7 +77,11 @@ allow for serial port emulation.</p></li>
 
 <li><p>If the modules have loaded successfully, type "hciconfig" and you 
 should see your BT interface listed under the "hci0" name.</p></li>
+</ol>
 
+<h2>Configuration</h2>
+
+<ol>
 <li><p>Turn on your BT GPS device and scan for remote BT devices:</li>
 <pre>
 	# hciconfig hci0 up
@@ -142,7 +155,7 @@ listening to /dev/rfcomm0</p>
 <p>At this point, your system should be configured to use gpsd with
 your BT GPS device!</p>
 
-<p>Known Issues:</p>
+<h2>Known Issues:</h2>
 <ul>
 <li><p>On system startup, gpsd starts before rfcomm0 is bound by rfcomm
 and fails (at least on some systems) - a workaround for this is to add
@@ -153,10 +166,11 @@ a symlink to the gpsd init.d script to a later runlevel.</p></li>
 </pre>
 </ul>
 
-<p>Contributors:</p>
+<h2>Contributors:</h2>
 <ul>
 <li><p>Jean-Michel Bouffard</p></li>
 <li><p>Joshua Layne</p></li>
+<li><p>Lukasz Stelmach</p></li>
 </ul>
 
 </div>

@@ -10,6 +10,9 @@ For contribution guidelines and internals documentation, please see
 The list of bugs exposed by gpsd in other software has moved to
 <http://gpsd.berlios.de/upstream-bugs.html>.
 
+See also the GPSD bug tracker at 
+<https://developer.berlios.de/bugs/?group_id=2116>
+
 ** Bugs in gpsd and its clients:
 
 *** Support for the True North magnetic compass is currently broken
@@ -21,62 +24,68 @@ fix the driver yourself and send us the patch, contact Bill Powell
 <bpowell@tntc.com> at True North Technologies and tell him he needs
 to reverse his refusal to send us an eval unit.
 
+*** Driver issues
+
+**** Geodetic fix computation is numerically unstable: 
+
+In the bu303-nofix.log test, the expected-correct output has an
+altitude of -6378137m, about earth radius, with lat/lon of 180,0.  On
+NetBSD 5.0/i386, the altitude is -6378253m, on NetBSD 5.0/amd64 it is
+-6378253m, and on NetBSD 5.0/sparc64 it is -6378171m.  On Linux/i386,
+it is -6378143m.
+
+Altitude is computed by geoid.c:ecef_to_wgs84fix(), which is a pile of
+trig calculations.  As usual, sin() and cos() aren't guaranteed to be
+cross-architecture stable throughout their range. Note that bu303 logs
+with valid fixes have not been problematic.  It is not clear that
+anyone has hand-validated the expected output.
+
+(amd64 is what NetBSD labels all implementations of AMD's 64-bit
+architecture; the machine in question above is an Intel CPU under
+Xen.)
+
+**** superstar2.chk:
+
+Packet detection appears to fail completely on big-endian machines.
+Greg Troxel reports this from netbsd-5/sparc64. Output at
+<http://www.lexort.com/gpsd/>. The problem is very likely in the
+packet-checksum computation, which looks a bit dodgy.
+
 ** To do:
+
+*** Finish gpssim
+
+It's blocked on skyview computation.
+
+*** Complete and test the speed/parity/stopbit methods in the drivers
+
+These are used for the '?DEVICE' (old 'B') command.  All work for 8N1.
+
+**** superstar2: not implemented (driver is unfinished)
+**** italk: not implemented (but could be)
+**** tsip: speed tested, parity and stop-bit switching not tested
+**** sirf: speed tested, parity and stop-bit switching not tested
+**** evermore: speed tested, rejects parity/stopbit setting
+**** ubx: fully implemented, parity and stop-bit switching not tested
+**** zodiac: fully implemented, not tested
+**** navcom.c: speed tested, rejects parity/stopbit setting
+
+SiRF, UBX, TSIP, and even Zodiac can support non-8N1 modes; these need
+to be tested.
+
+*** Support the D-Bus signals recognized by libgypsy
+
+Ian Holmes's Gypsy daemon is a pale shadow of GPSD, but his ideas 
+about signalling D-Bus client apps only on fix changes are good.  We
+should support the signal set described here:
+<http://gypsy.freedesktop.org/why-not-gpsd.html>.
 
 *** Command to ship RTCM corrections to a specified device
 
 At the moment, if a GPS accepts RTCM corrections and they are
-available, gpsd ships them to the device from which the GPS is
+available, gpsd ships them to the serial device from which the GPS is
 reporting fix data.  Some GPSes have auxiliary ports for RTCM; 
 there should be a (privileged) command to redirect RTCM connections.
-
-*** libgps should try to automatically try to reconnect when a poll fails
-
-Petter Reinholdtsen suggests:
-
-At the moment, when a gpsd client using libgps is connected to the
-gpsd server, and the server is restarted, the client loses the
-connection and do not update any more.
-
-It would be nice if the gps_poll() and gps_query() would try to
-reconnect to the server if the read() and write() calls on the tcp
-socket fail.
-
-To test this, start gpsd first (/etc/init.d/gpsd start), xgps second,
-and then restart gpsd (/etc/init.d/gpsd restart).  The xgps client
-will fail to update any more.
-
-I realised how nice this feature would be while comparing the xgps
-client to the roadgps client (part of the roadmap package).  The
-roadgps client would reconnect to the new server and keep updating as
-soon as the server was available. :)
-
-On second thought, and after discussing this on the gpsd mailing list,
-I believe the reconnect need to be handled by the applications in
-addition to the library.  Applications will commonly use the file
-descriptor to detect incoming data, and this file descriptor will
-change on reconnect.
-
-So I rephrase my wish, and ask for reconnect funcionality in xgps
-instead.  It will make sure the library support reconnects, and also
-provide an example for other clients using the library.
-
-(ESR thinks maybe this ought to be done at library level anyway, with
-users warned that the gps_fd member of the gps_data_t structure may
-change on reconnect and shouldn't be cached.  This wouldn't be hard to
-implement, but it would change gps_data_t and require a library
-version bump.)
-
-This is Berlios FR #3789.
-
-*** Full Python wrapper for libgpsd
-
-This would be useful for test code of all kinds.
-
-*** New features for xgps.
-
-Add J option checkbox.  Maybe embed the speedometer widget from
-xgpspeed in some of the unused space and nuke xgpsspeed.
 
 *** Per-driver restore of changed config settings on exit.
 
@@ -107,27 +116,6 @@ checking to see if it's already on, and stops navigation methods on
 wrapup.  It also forces the set of sentences issued.  There doesn't
 seem to be any way to query these settings.
 
-*** Merge cgps and xgps
-
-Possibly cgps and xgps should merge into a single test client that honors the
-GPSD_UNITS environment variable and chooses its UI mode depending on
-whether or not it's running under X.  There is controversy about this 
-proposal on the dev list.
-
-*** SiRF firmware uploader
-
-Chris Kuethe has shipped a 0.0 pre-alpha version.  It is not yet 
-resolved whether SiRF Technology will allow us to ship the 
-binary loader code needed to actually use it.
-
-*** uBlox firmware uploader
-
-uBlox does make firmware updates available on their website and a cursory
-inspection suggests that their flash process should plug directly in to
-gpsflash - they use the same three stage process as SiRF: send a binary
-command to enter programming mode, send a tiny reflash bootstrap program
-and then send the actual firmware image.
-
 *** Industry-standard format dumping of raw satellite data
 
 It would be useful to be able to extract RINEX (or some other standard)
@@ -152,8 +140,12 @@ packet-oriented format, rather than a file-oriented format like RINEX.
 *** RTCM3 support.
 
 Previous plans for more RTCM2 support seem to have been overtaken by
-events, e.g. the world moving to RTCM3.  There is an incomplete
-decoder which needs to be finished.
+events, e.g. the world moving to RTCM3. We have support for analyzing
+RTCM3 messages, but it's entirely theoretical - written from the
+standard.  We need to find a pair of files consisting of a
+representative set of RTCM3 sentences and some sort of ASCII dump of
+them so we can test whether our analyzer gets all the bitfield
+boundaries right.
 
 *** Do the research to figure out just what is going on with status bits
 
@@ -190,6 +182,40 @@ relationships are there?
 News flash: it develops that the "Navigation receiver warning" is
 supposed to indicate a valid fix that has a DOP too high or fails
 an elevation test.
+
+*** IPv6 Support
+
+gpsd should have support for IPv6.  Steps to get to full IPv6 support
+include:
+
+**** Detect IPv6 support and getaddrinfo(3) in configure.ac
+
+This web page may be helpful, but is probably overkill - the world has
+gotten simpler since then:
+http://cvs.deepspace6.net/view/example-ipv6-package/configure.ac?rev=1.2&content-type=text/vnd.viewcvs-markup
+
+**** Change from one listening socket to N
+
+Having multiple sockets will also support future changes to listen on
+specific addresses, rather than the -G option for INADDR_ANY instead
+of INADDR_LOCAL.
+
+**** If v6 support is present, open both AF_INET and AF_INET6.
+
+If either fails, just skip it.  gpsd should run on systems without
+"options INET" but with only "options INET6" (BSD) or the Linux
+equivalent.
+
+**** In libgps, if getaddrinfo is present, use it instead of gethostbyname.
+
+Loop through all the returned addresses until one works.  See telnet
+in NetBSD for an example (src/usr.bin/telnet/commands.c).
+
+**** (perhaps) Add a flag to connection libraries to force v4 or v6.
+
+Also add command line flags to force the library flags.  Perhaps this
+is not necessary; telnet and ntp have this feature but postfix and
+sendmail don't seem to.
 
 ** Future features (?)
 
@@ -273,6 +299,16 @@ http://www.twinsun.com/tz/tz-link.htm
 
 Free time-zone maps of the U.S.
 http://www.manifold.net/download/freemaps.html
+
+** Documentation
+
+*** GeoClue
+
+Figure out how gpsd should relate to GeoClue and explain this.  A
+particular question is the dbus interface to gpsd and the GeoClue
+provider interface.  There is quite possibly nothing to do; GeoClue
+using gpsd's published interfaces seems sensible.
+http://www.freedesktop.org/wiki/Software/GeoClue
 
 Local variables:
 mode: outline

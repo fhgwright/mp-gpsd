@@ -8,23 +8,37 @@
 XML = \
 	gpsd.xml \
 	gps.xml \
-	cgpxlogger.xml \
 	libgps.xml \
 	libgpsmm.xml \
 	libgpsd.xml \
-	sirfmon.xml \
-	rtcmdecode.xml \
+	gpsmon.xml \
+	gpsdecode.xml \
 	gpsprof.xml \
 	gpsfake.xml \
 	gpsctl.xml \
 	gpscat.xml \
 	gpspipe.xml \
-	gpsflash.xml \
 	rtcm-104.xml \
 	srec.xml
 
+all: html
 
-html: index.html hardware.html $(XML:.xml=.html)
+html: index.html hardware.html writing-a-driver.html gypsy.html AIVDM.html NMEA.html $(XML:.xml=.html) protocol-evolution.html protocol-transition.html
+
+AIVDM.html: AIVDM.txt
+	asciidoc -a toc AIVDM.txt
+
+NMEA.html: NMEA.txt
+	asciidoc -a toc NMEA.txt
+
+protocol-evolution.html: protocol-evolution.txt
+	asciidoc -a toc protocol-evolution.txt
+
+protocol-transition.html: protocol-transition.txt
+	asciidoc -a toc protocol-transition.txt
+
+writing-a-driver.html: writing-a-driver.xml
+	xmlto xhtml-nochunks writing-a-driver.xml
 
 index.html: index.html.in
 	sed -e "/@DATE@/s//`date '+%B %d, %Y'`/" <index.html.in >index.html
@@ -32,9 +46,5 @@ index.html: index.html.in
 hardware.html: hardware-head.html ../gpscap.ini hardware-tail.html
 	(cat hardware-head.html; (cd ..; python gpscap.py); cat hardware-tail.html) >hardware.html
 
-# Re-do this and upload it when adding new manuals
-sums: 
-	sha1sum `find vendor-docs -type f -name "*.pdf" -print` >checksums
-
 clean:
-	rm -f $(XML:.xml=.html)
+	rm -f $(XML:.xml=.html) hardware.html protocol-evolution.html protocol-transition.html writing-a-driver.html *~

@@ -27,8 +27,10 @@
     <a href="wishlist.html">Wish List</a><br/>
     <a href="hall-of-shame.html">Hall of Shame</a><br/>
     <a href="hacking.html">Hacker's Guide</a><br/>
+    <a href="protocol-transition.html">Application Compatibility</a>
     <a href="references.html">References</a><br/>
     <a href="history.html">History</a><br/>
+    <a href="future.html">Future</a><br/>
 
     <div>&nbsp;</div>
 
@@ -102,14 +104,14 @@
 </div>
 </div>
 
-<p><code>gpsd</code> should work with any GPS using an RS232C or USB
-interface that advertises NMEA-0183 compliance.  Here are some notes
-on hardware we have tested.  Hyperlinks lead to technical information.
-The "Works with" column is the last <code>gpsd</code> version with
-which this GPS is known to have been successfully tested; A <img
-src="regression.png"/> in this column means we have a regression test
-load for the device that is checked before each release. Vendors are
-listed in alphabetical order.</p>
+<p><code>gpsd</code> should work with any GPS or AIS receiver using an
+RS232C or USB interface that advertises NMEA-0183 compliance.  Here
+are some notes on hardware we have tested.  Hyperlinks lead to
+technical information.  The "Works with" column is the last
+<code>gpsd</code> version with which this receiver is known to have been
+successfully tested; A <img src="regression.png"/> in this column
+means we have a regression test load for the device that is checked
+before each release. Vendors are listed in alphabetical order.</p>
 
 <p>There is also a <a href="#timing">table of PPS-capable
 receivers</a> which may be appropriate for timing use.</p>
@@ -123,24 +125,24 @@ of the problem. Where possible, we indicate this in the device table.</p>
 <p>Icons used in the table:
 
 <ul>
-<li><img src="star.png"><img src="star.png"><img src="star.png"><img
+<li><img src="star.png"/><img src="star.png"/><img src="star.png"/><img
 src="star.png"> marks devices with <b>Excellent</b> performance: gpsd
-recognizes the GPS rapidly and reliably, reports are complete and
+recognizes the receiver rapidly and reliably, reports are complete and
 correct.</li>
 
-<li><img src="star.png"><img src="star.png"><img src="star.png"> marks
+<li><img src="star.png"/><img src="star.png"/><img src="star.png"/> marks
 devices with <b>Good</b> performance: <tt>gpsd</tt> has minor problems
 or lag recognizing the device, but reports are complete and
 correct.</li>
 
-<li><img src="star.png"><img src="star.png"> marks devices with
+<li><img src="star.png"/><img src="star.png"/> marks devices with
 <b>Fair</b> performance: reports have minor dropouts or problems,
 including occasional transient nonsense values.</li>
 
-<li><img src="star.png"> marks devices with <b>Poor</b> performance:
+<li><img src="star.png"/> marks devices with <b>Poor</b> performance:
 reports frequently have values that are wrong or nonsense.</li>
 
-<li><img src="bomb.png"> marks devices which are <b>Broken</b>;
+<li><img src="bomb.png"/> marks devices which are <b>Broken</b>;
 gpsd frequently fails to recognize the device at all.</li>
 
 <li><img src="noconfigure.png"/> marks devices that needed the
@@ -156,6 +158,13 @@ regression-test load. These are checked on every release.</li>
 
 <li><img src="discontinued.png"/> marks devices that have been
 discontinued by their manufacturers.</li>
+
+<li><img src="hotplug.png"/> marks devices which will be recognized by
+the Linux hotplug system when they are plugged in. If you installed
+<tt>gpsd</tt> from a binary package,or did "make udev-install" from
+the source distribution, this should mean you never have to launch
+<tt>gpsd</tt> manually; the udev syatem will launch it for you when
+it sees a device of this kind go active.</li>
 </ul></p>
 
 <p>Note that in most cases (including the <img src="noconfigure.png"/>

@@ -1,11 +1,12 @@
 /* $Id$ */
+#ifndef S_SPLINT_S
 #include <unistd.h>
+#endif /* S_SPLINT_S */
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
 
-#include "gpsd_config.h"
 #include "gpsd.h"
 
 int gpsd_hexdump_level = -1;
@@ -52,25 +53,27 @@ char /*@ observer @*/ *gpsd_hexdump(const void *binbuf, size_t binbuflen)
     return hexbuf;
 }
 
-int gpsd_hexpack(char *src, char *dst, size_t len){
+int gpsd_hexpack(/*@in@*/const char *src, /*@out@*/char *dst, size_t len) {
 /* hex2bin source string to destination - destination can be same as source */ 
     int i, k, l;
 
+    /*@ -mustdefine @*/
     l = (int)(strlen(src) / 2);
     if ((l < 1) || ((size_t)l > len))
-	return -1;
+	return -2;
 
-    bzero(dst, (int)len);
     for (i = 0; i < l; i++)
 	if ((k = hex2bin(src+i*2)) != -1)
 	    dst[i] = (char)(k & 0xff);
 	else
 	    return -1;
+    (void)memset(dst+i, '\0', (size_t)(len-i));
     return l;
+    /*@ +mustdefine @*/
 }
 
 /*@ +charint -shiftimplementation @*/
-int hex2bin(char *s)
+int hex2bin(const char *s)
 {
     int a, b;
 

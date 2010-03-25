@@ -3,7 +3,7 @@
 <head>
    <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
    <meta name="Author" content="Remco Treffkorn">
-   <meta name="Description" content="gpsd is a utility that can listen to a GPS or Loran Receiver and re-publish the positional data in a simpler format.">
+   <meta name="Description" content="gpsd is a utility that can listen to a GPS or AIS receiver and re-publish the positional data in a simpler format.">
    <meta name="Keywords" content="GPS, translator, GIS">
    <!-- the following is a verification tag for Google Analytics -->
    <meta name="verify-v1" content="kb4f3qxJPMaOltYTpJHnvbnteza1PHO4EhrRIfcq2gk=" />
@@ -33,7 +33,9 @@
     <a href="hall-of-shame.html">Hall of Shame</a><br/>
     <a href="hacking.html">Hacker's Guide</a><br/>
     <a href="references.html">References</a><br/>
+    <a href="protocol-transition.html">Application Compatibility</a>
     <a href="history.html">History</a><br/>
+    <a href="future.html">Future</a><br/>
 
     <div>&nbsp;</div>
 
@@ -62,25 +64,35 @@
 
 <div id="Content">
 
+<h1 id='news'>Urgent news for maintainers of <code>gpsd</code> clients</h1>
+
+<p>We've been warning it was coming for years, and it's here: in 2.90,
+the request/response protocol used by <code>gpsd</code> has changed in
+ways that will break your application if you're not careful.  The old
+protocol is still supported, but will remain so only for a very
+limited time.  Read <a href="protocol-transition.html">"Moving to
+GPSD-NG: a Guide for Client Developers"</a> to find out why this is
+happening and what you need to do about it.</p>
+
 <h1>About <code>gpsd</code></h1>
 
 <p><code>gpsd</code> is a service daemon that monitors one or more
-GPSes attached to a host computer through serial or USB ports, making
-all data on the location/course/velocity of the sensors available to
-be queried on TCP port 2947 of the host computer.  With
-<code>gpsd</code>, multiple GPS client applications (such as
-navigational and wardriving software) can share access to GPSes
-without contention or loss of data. Also, gpsd responds to queries
-with a format that is substantially easier to parse than the NMEA 0183
-emitted by most GPSes.  The <code>gpsd</code> distribution includes a
-linkable C service library, a C++ wrapper class, and a Python module
-that developers of <code>gpsd</code>-aware applications can use to
-encapsulate all communication with <code>gpsd</code>.</para>
+GPSes or AIS receivers attached to a host computer through serial or
+USB ports, making all data on the location/course/velocity of the
+sensors available to be queried on TCP port 2947 of the host computer.
+With <code>gpsd</code>, multiple location-aware client applications (such as
+navigational and wardriving software) can share access to receivers
+without contention or loss of data. Also, <code>gpsd</code> responds
+to queries with a format that is substantially easier to parse than
+the NMEA 0183 emitted by most GPSes.  The <code>gpsd</code>
+distribution includes a linkable C service library, a C++ wrapper
+class, and a Python module that developers of <code>gpsd</code>-aware
+applications can use to encapsulate all communication with
+<code>gpsd</code>.</para>
 
-<p>Besides <code>gpsd</code> itself, the project provides
-auxiliary tools for diagnostic monitoring and profiling of GPSes 
-and feeding GPS-aware applications specified track data for 
-diagnostic purposes.</p>
+<p>Besides <code>gpsd</code> itself, the project provides auxiliary
+tools for diagnostic monitoring and profiling of receivers and feeding
+location-aware applications GPS/AIS logs for diagnostic purposes.</p>
 
 <p>The goal of the <code>gpsd</code> project is to create a solid
 layer of open-source infrastructure for programs running under Linux
@@ -89,39 +101,47 @@ aim for simple, robust interfaces, unfussy operation, and an easy
 learning curve for application developers.  Applications that
 presently use <code>gpsd</code> include <a
 href="http://www.pygps.org">pyGPS</a>, <a
+href="http://www.gpsdrive.de/">gpsdrive</a>, <a
 href="http://www.kismetwireless.net/">Kismet</a>, <a
-href="http://www.gpsdrive.cc/">GPSdrive</a>, <a
+href="http://www.gpsdrive.de/">GPSdrive</a>, <a
 href="http://qpegps.sourceforge.net/">gpeGPS</a>, <a
 href="http://www.gnustep.it/enrico/position/">position</a>, <a
-href="http://roadmap.digitalomaha.net/index.html">roadmap</a>, <a
+href="http://roadmap.sourceforge.net/">roadmap</a>, <a
 href="http://roadnav.sourceforge.net/">roadnav</a>, <a
 href="http://www.navit-project.org/">navit</a>, <a
-href="http://viking.sf.net">viking</a>,
-and <a href="http://gaia.serezhkin.com/">gaia</a>.</p>
+href="http://viking.sf.net">viking</a>, <a
+href="http://opencpn.org">opencpn</a>, and <a
+href="http://icculus.org/obdgpslogger/">obdgpslogger</a>.</p>
 
 <p>Under Linux, <code>gpsd</code> normally runs with zero
 configuration.  Binary packages for this program install hotplug
 scripts that do the right thing when a USB device goes active,
 launching <code>gpsd</code> if needed and telling <code>gpsd</code>
 which device to read data from.  Then, <code>gpsd</code> deduces a
-baud rate and GPS type by looking at the data stream.</p>
+baud rate and GPS/AIS type by looking at the data stream.</p>
 
 <p><code>gpsd</code> is high-quality, carefully-audited code.  It is
 regularly checked with the standard mode of <a
-href='http://www.splint.org'>splint</a>, audited with <a
-href='http://valgrind.org/'>Valgrind</a>, and an extensive
-regression-test suite is used to check correct behavior before each
-release.  This care has paid off in an exceptionally low defect rate;
-our first <a href='http://coverity.com'>Coverity</a> scan, in March
-2007, turned up only two errors in over 22,000 LLOC.</p>
+href='http://www.splint.org'>splint</a> and <a
+href='http://https://sourceforge.net/apps/mediawiki/cppcheck/'>cppcheck</a>,
+audited with <a href='http://valgrind.org/'>Valgrind</a>, and an
+extensive regression-test suite is used to check correct behavior
+before each release.  This care has paid off in an exceptionally low
+defect rate; our first <a href='http://coverity.com'>Coverity</a>
+scan, in March 2007, turned up only two errors in over 22,000
+LLOC.</p>
+
+<p>Statistics about the code volume, commit history, and contributors
+associated with thias project are <a
+href="https://www.ohloh.net/p/3944">available at Ohloh</a></p>
 
 <p>Our development platforms are open-source Unixes &mdash; Linux, and
 the *BSD family.  Presently Linux and OpenBSD are directly supported.
 We'll support proprietary Unixes if it's not too much work (and it
 usually isn't). Apple's OS X is back in our good books, but it is
 criticial that you have all your USB drivers updated. Older drivers
-are buggy and prevent gpsd from being able to read from usb-serial
-devices.</p>
+are buggy and prevent <code>gpsd</code> from being able to read from
+USB-serial devices.</p>
 
 <p>No, we don't support Windows &mdash; get a better operating system.</p>
 
@@ -143,7 +163,9 @@ buying <a href="wishlist.html"> test hardware and standards</a>.</p>
 
 <p>This web page was last updated on @DATE@.  You can browse the
 project's <a href='NEWS'>news file</a> or <a href='TODO'>to-do
-list</a> here.</p>
+list</a> here.  Note: because of the way this website is maintained, 
+these files may reflect the state of the repository tip (development
+version) rather than the latest released stable version.</p>
 
 <h1 id='downloads'>Downloads and packages</h1>
 
@@ -190,10 +212,13 @@ repository.</li>
 
 <h1 id='documentation'>Documentation</h1>
 
-<p>The following manual pages describe the code:</p>
+<p>The following manual pages describe the code.  Note: because of the
+way this website is maintained, these files will describe the state and
+features of the repository tip (development version) rather than the
+latest stable version.</p>
 
 <dl>
-<dt><a href="gpsd.html">gpsd.1</a></dt>
+<dt><a href="gpsd.html">gpsd.8</a></dt>
 <dd>The <code>gpsd</code> daemon.</dd>
 
 <dt><a href="xgps.html">gps.1</a></dt>
@@ -219,24 +244,26 @@ and fix latency.</dd>
 <dd>The <code>gpsctl</code> tool for tweaking GPS settings.</dd>
 
 <dt><a href="gpscat.html">gpscat.1</a></dt>
-<dd>The <code>gpscat</code> tool dumps output from a serial device.</dd>
+<dd>The <code>gpscat</code> tool dumps output from a serial
+device. Optionally, it can packetize the data.</dd>
 
-<dt><a href="sirfmon.html">sirfmon.1</a></dt>
-<dd>The <code>sirfmon</code> packet monitor for SiRF GPSes.</dd>
+<dt><a href="gpsmon.html">gpsmon.1</a></dt>
+<dd>The <code>gpsmon</code> real-time packet monitor and diagnostic
+tool. (This replaces the <code>sirfmon</code> tool in older versions.)</dd>
 
 <dt><a href="gpspipe.html">gpspipe.1</a></dt> <dd>A simple client that
 captures GPS output and/or <code>gpsd</code> reports and sends it to
 standard output.</dd>
 
-<!--
-<dt><a href="rtcmdecode.html">rtcmdecode.1</a></dt>
-<dd>The <code>rtcmdecode</code> RTCM-104 decoder.</dd>
+<dt><a href="gpsdecode.html">gpsdecode.1</a></dt>
+<dd>The <code>gpsdecode</code> packet decoder.</dd>
 
+<!--
 <dt><a href="gpsflash.html">gpsflash(1)</a></dt>
 <dd>The <code>src</code> GPS firmware uploader..</dd>
 
 <dt><a href="rtcm-104.html">rtcm-104.5</a></dt>
-<dd>The <code>rtcmdecode</code> RTCM104 decoder dump format.</dd>
+<dd>The <code>gpsdecode</code> RTCM104 decoder dump format.</dd>
 
 <dt><a href="srec.html">srec.5</a></dt>
 <dd>The <code>src</code> Motorola S-record and file format.</dd>
@@ -275,6 +302,21 @@ do, even if you don't yet have a local GPS.</p>
 <dd>If you are new to GPS technology and don't quite understand what
 <code>gpsd</code> is about, you might find this interesting.</dd>
 
+<dt><a href="http://esr.ibiblio.org/?p=801">Why GPSes suck, and what
+to do about it</a></dt>
+<dd>The designer of <code>gpsd</code> 2.0 rants in an at least
+semi-humorous way about everything that's wrong with GPS standards 
+and vendors.</dd>
+
+<dt><a href="protocol-evolution.html">GPSD-NG: A Case Study in
+Application Protocol Evolution</a></dt>
+<dd>History and evolution of the GPSD-NG protocol, illuminating some
+larger trends in application protocol design.</dd>
+
+<dt><a href="protocol-transition.html">Moving to GPSD-NG: a Guide for Client Developers</a></dt>
+<dd>A practical explanation of GPSD-NG, and how to move to it as painlessly as 
+possible.</dd>
+
 <dt><a href="replacing-nmea.html">Towards A Better GPS Protocol</a></dt>
 <dd>An analysis of what's wrong with NMEA 0183, and a simple way to fix 
 it.</dd>
@@ -285,6 +327,10 @@ design of <code>gpsd</code> and vendor claims about binary protocols.</dd>
 
 <dt><a href="writing-a-driver.html">Notes on Writing a GPSD Driver</a></dt>
 <dd>A guide for the perplexed by the author of the Jupiter-T driver.</dd>
+
+<dt><a href="excellence.html">GPSD and Code Excellence</a></dt>
+<dd>An essay written for the <a href="http://codeoffsets.com/">The
+Alliance for Code Excellence</a> on how GPSD drives out bad code.</dd>
 
 </dl>
 
@@ -312,6 +358,9 @@ basically <code>xgps</code> with a more modern look and feel.
 <p>You can find Debian-unstable packages 
 <a href='http://packages.debian.org/unstable/misc/gpsd'>here</a>.</p>
 
+<p>There's a Perl client library <a
+href="http://search.cpan.org/dist/Net-GPSD3/">on CPAN.</a></p>
+
 <p><code>gpsd</code> is carried in the OpenBSD ports tree.</p>
 
 <p>There's a <a
@@ -320,6 +369,12 @@ page</a> devoted to gpsd helper applications.</p>
 
 <p><a href="http://www.openstreetmap.org/">OpenStreetMap</a> is a wiki
 aiming to build a freely available, world-wide streetmap.</p>
+
+<p>Freedesktop.org is hosting a project called <a
+href="http://www.freedesktop.org/wiki/Software/GeoClue">geoclue</a>
+that aims to provide a location service layer for all D-Bus-using
+applications. It can use <code>gpsd</code> as a source for location
+info.</p>
 
 <p>The penguin-with-satellites logo is a hacked version of one I found
 <a
@@ -375,7 +430,7 @@ src="http://ss.webring.com/navbar?f=j;y=eric_s_raymond;u=defurl">
 </script><noscript><table bgcolor=gray cellspacing=0
 border=2><tr> <td><table cellpadding=2 cellspacing=0 border=0><tr><td
 align=center> <font face=arial size=-1>This site is a member of
-WebRing. <br>To browse visit <a
+WebRing. <br/>To browse visit <a
 href="http://ss.webring.com/navbar?f=l;y=eric_s_raymond;u=defurl">
 Here</a>.</font></td></tr></table></td></tr></table></noscript>
 </div>

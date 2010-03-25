@@ -35,7 +35,6 @@ C:
 <funcprototype>
 <funcdef>int <function>gpsd_activate</function></funcdef>
     <paramdef>struct gps_device_t *<parameter>session</parameter></paramdef>
-    <paramdef>bool <parameter>reconfigurable</parameter></paramdef>
 </funcprototype>
 <funcprototype>
 <funcdef>void <function>gpsd_deactivate</function></funcdef>
@@ -80,11 +79,6 @@ certainly what you want.</para>
 <function>gpsd_init()</function>
 initializes a session structure to hold the data collected by the GPS.</para>
 
-<para>You may optionally specify a DGPS server, either as a string
-containing a server name or a string containining server name followed
-by a colon and a port name or number.  To specify no DGPS, pass the 
-null pointer.</para>
-
 <para>The second argument must be a context structure.  The library 
 will use it for information that need to be shared between sessions; 
 presently this includes the leap-second correction and possibly a
@@ -117,8 +111,7 @@ designate a speed to be tried at the front of the hunt queue</para>
 sentence or as it is read from the GPS.  The data from non-NMEA GPSes like
 the EarthMate will be translated to an NMEA sentence before being
 passed to the hook.  Parameters are a pointer to a gps_data structure
-full of parsed data, the sentence, the length of the sentence, 
-and a rawness level.</para>
+full of parsed data, the sentence, and the length of the sentene..</para>
 </listitem>
 </varlistentry>
 </variablelist>

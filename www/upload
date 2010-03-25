@@ -1,11 +1,13 @@
-#!/bin/sh 
+#!/bin/bash 
 #
 # Upload gpsd docs
 #
+# No CGI copy yet, hosting site won't let us send mail
+#
 webdir=shell.berlios.de:/home/groups/gpsd/htdocs
-cgidir=shell.berlios.de:/home/groups/gpsd/cgi-bin
+#cgidir=shell.berlios.de:/home/groups/gpsd/cgi-bin
 
-make html	# Ensure all derived HTML is up to date.
+make all	# Ensure all derived HTML and checksums are up to date.
 
 if [ $1 ]
 then
@@ -16,8 +18,8 @@ else
 	performance/{*.html,*.txt,*.png} \
 	../TODO ../NEWS \
 	$webdir
-    scp gps_report.cgi $cgidir
+    #scp gps_report.cgi $cgidir
 fi
 
-# To refresh the vendor-docs directory just do this:
-# scp -r vendor-docs $webdir/vendor-docs
+# To refresh the vendor-docs and standards directories just do this:
+#scp -r standards library vendor-docs $webdir

@@ -14,16 +14,16 @@
 
 class gpsmm {
 	public:
-		gpsmm() { };
+		gpsmm();
 		virtual ~gpsmm();
 		struct gps_data_t* open(const char *host,const char *port); //opens the connection with gpsd, MUST call this before any other method
 		struct gps_data_t* open(void); //open() with default values
-		struct gps_data_t* query(const char *request); //put a command to gpsd and return the updated struct
+		struct gps_data_t* send(const char *request); //put a command to gpsd and return the updated struct
+		struct gps_data_t* stream(int); //set watcher and policy flags
 		struct gps_data_t* poll(void); //block until gpsd returns new data, then return the updated struct
-		int set_callback(void (*hook)(struct gps_data_t *sentence, char *buf, size_t len, int level)); //set a callback funcition, called each time new data arrives
-		int del_callback(void); //delete the callback function
+		bool waiting(void); //nonblocking check for data waitin
 		void clear_fix(void);
-
+		void enable_debug(int, FILE*);
 	private:
 		struct gps_data_t *gps_data;
 		struct gps_data_t *to_user;	//we return the user a copy of the internal structure. This way she can modify it without

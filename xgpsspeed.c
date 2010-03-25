@@ -18,6 +18,7 @@
 
 #include "gpsd_config.h"
 #include "gps.h"
+#include "gpsdclient.h"
 
 #include "xgpsspeed.icon"
 
@@ -35,16 +36,25 @@ static struct gps_data_t *gpsdata;
 static Widget tacho;
 static double speedfactor;
 static Widget toplevel;
+static struct fixsource_t source;
+#ifdef CLIENTDEBUG_ENABLE
+static int debug;
+#endif /* CLIENTDEBUG_ENABLE */
 
 static void update_display(struct gps_data_t *gpsdata, 
-			   char *buf UNUSED, size_t len UNUSED, int level UNUSED)
+			   char *buf UNUSED, size_t len UNUSED)
 {
-    int temp_int = (int)rint(gpsdata->fix.speed * speedfactor);
+    /* this is where we implement source-device filtering */
+    if (gpsdata->dev.path[0]!='\0' && source.device!=NULL && strcmp(source.device, gpsdata->dev.path) != 0)
+	return;
+    else {
+	int temp_int = (int)rint(gpsdata->fix.speed * speedfactor);
 
-    if (temp_int < 0) temp_int = 0;
-    else if (temp_int > 100) temp_int = 100;
+	if (temp_int < 0) temp_int = 0;
+	else if (temp_int > 100) temp_int = 100;
 
-    (void)TachometerSetValue(tacho, temp_int);
+	(void)TachometerSetValue(tacho, temp_int);
+    }
 }
 
 static void handle_input(XtPointer client_data UNUSED,
@@ -81,7 +91,6 @@ int main(int argc, char **argv)
     Arg             args[10];
     XtAppContext app;
     int option;
-    char *arg = NULL, *colon1, *colon2, *device = NULL, *server = NULL, *port = DEFAULT_GPSD_PORT;
     char *speedunits;
     Widget base;
 
@@ -98,8 +107,14 @@ int main(int argc, char **argv)
     else if (strcmp(speedunits, "knots")==0)
 	speedfactor = MPS_TO_KNOTS;
 
-    while ((option = getopt(argc, argv, "hV")) != -1) {
+    while ((option = getopt(argc, argv, "D:hV")) != -1) {
 	switch (option) {
+	case 'D':
+	    debug = atoi(optarg);
+#ifdef CLIENTDEBUG_ENABLE
+	    gps_enable_debug(debug, stderr);
+#endif /* CLIENTDEBUG_ENABLE */
+	    break;
 	case 'V':
 	    (void)printf("xgpsspeed %s\n", VERSION);
 	    exit(0);
@@ -108,31 +123,14 @@ int main(int argc, char **argv)
 	    exit(1);
 	}
     }
-    /*@ -branchstate -nullpass @*/
-    if (optind < argc) {
-	arg = strdup(argv[optind]);
-	colon1 = strchr(arg, ':');
-	server = arg;
-	if (colon1 != NULL) {
-	    if (colon1 == arg)
-		server = NULL;
-	    else
-		*colon1 = '\0';
-	    port = colon1 + 1;
-	    colon2 = strchr(port, ':');
-	    if (colon2 != NULL) {
-		if (colon2 == port)
-		    port = NULL;
-	        else
-		    *colon2 = '\0';
-		device = colon2 + 1;
-	    }
-	}
-	colon1 = colon2 = NULL;
-    }
-    /*@ +branchstate @*/
 
-    /*@ -immediatetrans -usedef -observertrans -statictrans @*/
+    /*@ -compdestroy @*/
+    if (optind < argc) {
+	gpsd_source_spec(argv[optind], &source);
+    } else
+	gpsd_source_spec(NULL, &source);
+
+    /*@ -immediatetrans -usedef -observertrans -statictrans -nullpass @*/
     /**** Shell Widget ****/
     (void)XtSetArg(args[0], XtNiconPixmap,
 	     XCreateBitmapFromData(XtDisplay(toplevel),
@@ -163,7 +161,7 @@ int main(int argc, char **argv)
     tacho = XtCreateManagedWidget("meter", tachometerWidgetClass,base,NULL,0);
     (void)XtRealizeWidget(toplevel);
 
-    if (!(gpsdata = gps_open(server, DEFAULT_GPSD_PORT))) {
+    if (!(gpsdata = gps_open(source.server, source.port))) {
 	(void)fputs("xgpsspeed: no gpsd running or network error\n", stderr);
 	exit(2);
     }
@@ -176,28 +174,12 @@ int main(int argc, char **argv)
 
     gps_set_raw_hook(gpsdata, update_display);
 
-    if (device) {
-	char *channelcmd;
-	size_t l;
-	l = strlen(device)+4;
-
-	if ((channelcmd = (char *)malloc(l)) != NULL){
-	    /*@ -compdef @*/
-	    (void)strlcpy(channelcmd, "F=", l);
-	    (void)strlcpy(channelcmd+2, device, l);
-	    (void)gps_query(gpsdata, channelcmd);
-	    (void)free(channelcmd);
-	    /*@ +compdef @*/
-	}
-    }
-
-    (void)gps_query(gpsdata, "w+x\n");
+    (void)gps_stream(gpsdata, WATCH_ENABLE|WATCH_NEWSTYLE, NULL);
 
     (void)XtAppMainLoop(app);
 
     (void)gps_close(gpsdata);
-    if (arg != NULL)
-	(void)free(arg);
     return 0;
+    /*@ +compdestroy @*/
 }
 /*@ +mustfreefresh @*/
