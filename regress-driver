@@ -3,8 +3,27 @@
 # The regression-test driver script.  This used to be explicit in the
 # makefile before we regrouped the regression tests by stable and unstable 
 # drivers.
-#
-PATH=.:$PATH
+
+# We need to have the build directory in $PATH to find the new gpsd
+# in case there is one in $PATH somewhere else in the system.
+if [ "`dirname $0`" = "." ]; then
+    PATH=`pwd`:${PATH}
+else
+    PATH=`dirname $0`:${PATH}
+fi
+
+# Arrange to call a gpsfake in the source directory without fuss.
+if [ -z ${PYTHON} ]; then
+    PYTHON="python"
+fi
+py_libdir=`pwd`/build/`${PYTHON} -c 'import distutils.util; import sys; print("lib.%s-%s" %(distutils.util.get_platform(), sys.version[0:3]))'`
+py_scriptdir=`pwd`/build/`${PYTHON} -c 'import sys; print("scripts-%s" %(sys.version[0:3], ))'`
+if [ -d ${py_libdir} ] && [ -d ${py_scriptdir} ]; then
+    PYTHONPATH=${py_libdir}
+    export PYTHONPATH
+
+    PATH=${py_scriptdir}:${PATH}
+fi
 export PATH
 
 mode=regress
@@ -25,14 +44,13 @@ done
 shift $(($OPTIND - 1))
 
 # Enables us to turn debugging up high without screwing up the diff checks
-# First expression filters out device notifications on old protocol.
-# Second and third filter out gpsd log messages.
-# Fourth filters out gps.py verbose loggging
-# Fifth filters out new-style WATCH responses
-# Sixth filters out new-style DEVICE responses
-# Seventh filters out new-style VERSION responses
-# Eighth filters out device fields in new-style responses.
-GPSFILTER="sed -e /^GPSD,X/d -e /^gpsd:/d -e /^gpsfake/d -e /GPS-DATA/d -e /WATCH/d -e /DEVICE/d -e /VERSION/d -e s/,\"device\":[^,}]*//"
+# First and Second filter out gpsd log messages.
+# Third filters out gps.py verbose loggging
+# Fourth filters out WATCH responses
+# Fifth filters out DEVICE responses
+# Sixth filters out VERSION responses
+# Seventh filters out device fields
+GPSFILTER="sed -e /^gpsd:/d -e /^gpsfake/d -e /GPS-DATA/d -e /WATCH/d -e /DEVICE/d -e /VERSION/d -e s/,\"device\":[^,}]*//"
 
 # Use ALTFILTER to set up custom filtering when a regression test fails
 # This example filters out altitude and some fields computed by gpsd's error 
@@ -40,29 +58,36 @@ GPSFILTER="sed -e /^GPSD,X/d -e /^gpsd:/d -e /^gpsfake/d -e /GPS-DATA/d -e /WATC
 # logic. Note that as the last attribute mode needs to be handled differently.
 #ALTFILTER="-e s/\"alt\":[^,]*,// -e s/\"ep[vhs]\":[-+0-9.]*// -e s/,\"mode\":[^}]*//"
 
+TMP=/tmp
+
+# Only twirl the baton on a tty, avoids junk in transcripts. 
+if [ -t 1 ]
+then
+    opts="$opts -b"
+fi
+
 case $mode in
     regress)
         echo "Testing the $testing..." >&2
         errors=0; total=0; notfound=0;
         for f in $*; do
-            dir=`dirname $f`
-	    trap 'rm -f $dir/test.chk $dir/test-whole.chk $dir/test-trunc.chk $dir/log-copy.chk $dir/diff $dir/diff-trunc; exit $errors' 0 1 2 15
+	    trap 'rm -f ${TMP}/test-$$.chk ${TMP}/test-whole-$$.chk ${TMP}/test-trunc-$$.chk ${TMP}/log-copy-$$.chk ${TMP}/diff-$$ ${TMP}/diff-$$-trunc; exit $errors' EXIT HUP INT TERM
 	    if [ -r $f.chk ]
 	    then
 		case $testing in
-		daemon) gpsfake -s 38400 -1 -p $opts ${f} | ${GPSFILTER} ${ALTFILTER} >$dir/test.chk ;;
-		clientlib) libgps -b <${f} >$dir/test.chk ;;
+		daemon) gpsfake -s 38400 -1 -p $opts ${f} | ${GPSFILTER} ${ALTFILTER} >${TMP}/test-$$.chk ;;
+		clientlib) libgps -b <${f} >${TMP}/test-$$.chk ;;
 		esac
-		sed -n <${f}.chk >$dir/log-copy.chk ${ALTFILTER} -e 'p';
-		sed -n <$dir/test.chk >$dir/test-whole.chk ${ALTFILTER} -e 'p';
-		sed -n <$dir/test.chk >$dir/test-trunc.chk -e '$d' ${ALTFILTER} -e 'p';
-		diff -ub $dir/log-copy.chk $dir/test-whole.chk >$dir/diff;
-		diff -ub $dir/log-copy.chk $dir/test-trunc.chk >$dir/diff-trunc;
-		if test \( -s $dir/diff \) -a \( -s $dir/diff-trunc \) ; then
+		sed -n <${f}.chk >${TMP}/log-copy-$$.chk ${ALTFILTER} -e 'p';
+		sed -n <${TMP}/test-$$.chk >${TMP}/test-whole-$$.chk ${ALTFILTER} -e 'p';
+		sed -n <${TMP}/test-$$.chk >${TMP}/test-trunc-$$.chk -e '$d' ${ALTFILTER} -e 'p';
+		diff -ub ${TMP}/log-copy-$$.chk ${TMP}/test-whole-$$.chk >${TMP}/diff-$$;
+		diff -ub ${TMP}/log-copy-$$.chk ${TMP}/test-trunc-$$.chk >${TMP}/diff-$$-trunc;
+		if test \( -s ${TMP}/diff-$$ \) -a \( -s ${TMP}/diff-$$-trunc \) ; then
 		    errors=`expr $errors + 1`;
-		    cat $dir/diff
+		    cat ${TMP}/diff-$$
 		fi;
-		rm -f $dir/test.chk $dir/test-whole.chk $dir/test-trunc.chk $dir/log-copy.chk $dir/diff $dir/diff-trunc
+		rm -f ${TMP}/test-$$.chk ${TMP}/test-whole-$$.chk ${TMP}/test-trunc-$$.chk ${TMP}/log-copy-$$.chk ${TMP}/diff-$$ ${TMP}/diff-$$-trunc
 	    else
 		echo "*** No check log $f.chk exists"
 		notfound=`expr $notfound + 1`;
@@ -80,18 +105,17 @@ case $mode in
     superraw)
         echo "Testing super-raw mode..." >&2
         for f in $*; do
-            dir=`dirname $f`
-            gpsfake -s 38400 -1 -b -p -r '{"class":"WATCH","enable":False,"raw":2}' $opts ${f} \
-            | ./devtools/striplog -1 >$dir/test1.chk;
-            ./devtools/striplog <${f} >$dir/test2.chk;
-            cmp $dir/test[12].chk;
-        done; rm $dir/test[12].chk
+            gpsfake -s 38400 -1 -p $opts -r '{"class":"WATCH","enable":False,"raw":2}' $opts ${f} \
+            | ./devtools/striplog -1 >${TMP}/test1-$$.chk;
+            ./devtools/striplog <${f} >${TMP}/test2-$$.chk;
+            cmp ${TMP}/test[12]-$$.chk;
+        done; rm ${TMP}/test[12]-$$.chk
         ;;
     build)
 	echo "Rebuilding $testing regressions..." >&2
         for f in $*; do
 	    case $testing in 
-            daemon) gpsfake -s 38400 -1 -b -p $opts ${f} | ${GPSFILTER} >${f}.chk;;
+            daemon) gpsfake -s 38400 -1 -p $opts ${f} | ${GPSFILTER} >${f}.chk;;
 	    clientlib) libgps -b <${f} >${f}.chk ;;
             esac
         done
@@ -101,7 +125,7 @@ case $mode in
         echo "Viewing..." >&2
         for f in $*; do
 	    case $testing in 
-            daemon) gpsfake -s 38400 -1 -b -p $opts ${f} | ${GPSFILTER} ;;
+            daemon) gpsfake -s 38400 -1 -p $opts ${f} | ${GPSFILTER} ;;
             clientlib) libgps -b <${f} ;;
             esac
         done

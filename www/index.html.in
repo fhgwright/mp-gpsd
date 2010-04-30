@@ -43,6 +43,8 @@
     src='http://www.catb.org/hacker-emblem/glider.png'
     alt='hacker emblem' /></a><br />
 
+    <script type="text/javascript" src="http://www.ohloh.net/p/3944/widgets/project_thin_badge.js"></script>
+
     <hr/>
     <script type="text/javascript"><!--
     google_ad_client = "pub-1458586455084261";
@@ -64,15 +66,37 @@
 
 <div id="Content">
 
+<table class="centered" width="80%" border="1" cellpadding="20" bgcolor="white">
+<tr>
+<td>
+<script type="text/javascript"
+src="http://www.ohloh.net/p/3944/widgets/project_basic_stats.js"></script>
+</td>
+<td>
+<script type="text/javascript"
+src="http://www.ohloh.net/p/3944/widgets/project_factoids.js"></script>
+</td>
+<td>
+<script type="text/javascript"
+src="http://www.ohloh.net/p/3944/widgets/project_languages.js"></script>
+</td>
+<td>
+<script type="text/javascript"
+src="http://www.ohloh.net/p/3944/widgets/project_cocomo.js"></script>
+</td>
+</tr>
+</table>
+
 <h1 id='news'>Urgent news for maintainers of <code>gpsd</code> clients</h1>
 
 <p>We've been warning it was coming for years, and it's here: in 2.90,
 the request/response protocol used by <code>gpsd</code> has changed in
 ways that will break your application if you're not careful.  The old
-protocol is still supported, but will remain so only for a very
-limited time.  Read <a href="protocol-transition.html">"Moving to
-GPSD-NG: a Guide for Client Developers"</a> to find out why this is
-happening and what you need to do about it.</p>
+protocol is gone from the damon.  It is still supported in the client
+library, but will remain so only for a very limited time.  Read <a
+href="protocol-transition.html">"Moving to GPSD-NG: a Guide for Client
+Developers"</a> to find out why this is happening and what you need to
+do about it.</p>
 
 <h1>About <code>gpsd</code></h1>
 
@@ -110,8 +134,11 @@ href="http://roadmap.sourceforge.net/">roadmap</a>, <a
 href="http://roadnav.sourceforge.net/">roadnav</a>, <a
 href="http://www.navit-project.org/">navit</a>, <a
 href="http://viking.sf.net">viking</a>, <a
-href="http://opencpn.org">opencpn</a>, and <a
-href="http://icculus.org/obdgpslogger/">obdgpslogger</a>.</p>
+href="http://www.tangogps.org/">tangogps</a>, <a
+href="http://www.foxtrotGPS.org/">foxtrot</a>, <a
+href="http://sourceforge.net/projects/opencpn/">opencpn</a>, <a
+href="http://icculus.org/obdgpslogger/">obdgpslogger</a>, and <a
+href="http://www.freedesktop.org/wiki/Software/GeoClue">geoclue</a>.</p>
 
 <p>Under Linux, <code>gpsd</code> normally runs with zero
 configuration.  Binary packages for this program install hotplug
@@ -129,10 +156,12 @@ extensive regression-test suite is used to check correct behavior
 before each release.  This care has paid off in an exceptionally low
 defect rate; our first <a href='http://coverity.com'>Coverity</a>
 scan, in March 2007, turned up only two errors in over 22,000
-LLOC.</p>
+LLOC. And in January 2010, the GPSD project <a
+href="http://thedailywtf.com/Articles/Bad-Code-Offsets-Open-Web-Innovation.asp">won</a>
+the first Good Code Grant from the Alliance for Code Excellence.</p>
 
 <p>Statistics about the code volume, commit history, and contributors
-associated with thias project are <a
+associated with this project are <a
 href="https://www.ohloh.net/p/3944">available at Ohloh</a></p>
 
 <p>Our development platforms are open-source Unixes &mdash; Linux, and
@@ -159,6 +188,8 @@ bugs.</p>
 assumption that we ever see any!) will go to the project's fund for
 buying <a href="wishlist.html"> test hardware and standards</a>.</p>
 
+<p class="centered">
+
 <h1 id='news'>News</h1>
 
 <p>This web page was last updated on @DATE@.  You can browse the
@@ -167,19 +198,27 @@ list</a> here.  Note: because of the way this website is maintained,
 these files may reflect the state of the repository tip (development
 version) rather than the latest released stable version.</p>
 
-<h1 id='downloads'>Downloads and packages</h1>
+<h1 id='downloads'>Repository, Downloads and Packages</h1>
 
-<p>Look in the <a
-href="http://developer.berlios.de/project/showfiles.php?group_id=2116">download</a>
-directory for tarballs of all released versions. Access to the
-bleeding-edge developer version is supported <a
-href="http://developer.berlios.de/svn/?group_id=2116">via
-Subversion</a>.  The main project page is <a
-href='http://developer.berlios.de/projects/gpsd/'>here on berlios.de</a>.</p>
+<dl>
+<dt><a href='http://developer.berlios.de/projects/gpsd/'>Project page</a>
+<dd>The main project page on Berlios</dd>
+
+<dt><a
+href="http://developer.berlios.de/project/showfiles.php?group_id=2116">Releases</a>
+<dd>Where to get release tarballs</dd>
+
+<dt><a href="http://developer.berlios.de/git/?group_id=2116">Browse Code</a></dt>
+<dd>Developer access to master git repository</dd>
+
+<dt><a
+href="http://git.debian.org/?p=users/bzed/mirror/gpsd.git">Debian mirror</a></dt>
+<dd>Debian mirror, updated every 7 minutes.</dd>
+</dl>
 
 <p>If you are using a Debian-based distribution (including Ubuntu) you
 can probably install <code>gpsd</code> through your regular package
-manager or by tying <code>"sudo apt-get gpsd"</code> at the command
+manager or by typing <code>"sudo apt-get gpsd"</code> at the command
 line.</p>
 
 <h1 id='mailing-lists'>Mailing Lists</h1>
@@ -288,16 +327,14 @@ that describes particularly egregious vendor blunders.</p>
 <p>Some of the developers hang out regularly on IRC at <a
 href="irc://irc.freenode.net#gpsd">channel #gpsd at irc.freenode.net</a>.</p>
 
-<p>Some GPSD data streams that you can look at are 
-<a href="http://gpsd.rellim.com">http://gpsd.rellim.com</a><!--/*The following two not available as of 2007-12-23*/, 
-<a href="http://gpsd.gritch.org">http://gpsd.gritch.org</a>,-->
-and <a href="http://gpsd.mainframe.cx">http://gpsd.mainframe.cx</a>.  You can
-also point our test clients at these hostnames to see what the clients
-do, even if you don't yet have a local GPS.</p>
-
 <h1 id='white_papers'>White Papers</h1>
 
 <dl>
+<dt><a href="client-howto.html">GPSD Client HOWTO</a></dt>
+<dd>A programmer's guide to interfacing with <code>gpsd</code> from
+client applications. Explains the theory, points at working example
+source code, warns you what the edge cases and gotchas are.</dd>
+
 <dt><a href="gps-hacking.html">ESR's Guide to Hacking With GPS</a></dt>
 <dd>If you are new to GPS technology and don't quite understand what
 <code>gpsd</code> is about, you might find this interesting.</dd>
@@ -328,9 +365,20 @@ design of <code>gpsd</code> and vendor claims about binary protocols.</dd>
 <dt><a href="writing-a-driver.html">Notes on Writing a GPSD Driver</a></dt>
 <dd>A guide for the perplexed by the author of the Jupiter-T driver.</dd>
 
+<dt><a href="internals.html">A Tour of the GPSD Internals</a></dt>
+<dd>A walk through the code of GPSD. Written in 2007 and out of date
+in spots, but still quite useful for anyone interested in modifying
+the code.</dd>
+
 <dt><a href="excellence.html">GPSD and Code Excellence</a></dt>
 <dd>An essay written for the <a href="http://codeoffsets.com/">The
 Alliance for Code Excellence</a> on how GPSD drives out bad code.</dd>
+
+<dt><a href="http://esr.ibiblio.org/?p=1859">Scenes from the Life of a System Architect</a></dt>
+<dd>The GPSD lead describes some work in progress on the core code of
+GPSD. A slice of what doing software architecture is like in the
+real world, where historyt can weigh neatrly as much as today's
+requirements list.</dd>
 
 </dl>
 
@@ -406,10 +454,6 @@ win32.  This way programs such as <a
 href='http://www.wigle.net'>JiGLE</a> can still get GPS data from
 netstumbler. This program is not genetically related to
 <code>gpsd</code>.</p>
-
-<p>There is an interesting alpha-stage proposal called <a
-href='http://www.gpster.net/locod.html'>locod</a> that aims to
-integrate location information from GPSes and other sources.</p>
 
 <p><a
 href='http://users.hol.gr/~dzach/gpsfeed/index.html'>gpsfeed+</a> is a

@@ -1,5 +1,4 @@
-/* $Id$
- *
+/*
  * A prototype driver.  Doesn't run, doesn't even compile.
  *
  * For new driver authors: replace "_PROTO_" and "_proto_" with the name of
@@ -31,8 +30,8 @@
  * packet.c
  * packet_states.h
  *
- * see http://svn.berlios.de/viewvc/gpsd/trunk/?sortby=date&pathrev=5078
- * for an example of how a new driver arrived.
+ * This file is Copyright (c) 2010 by the GPSD project
+ * BSD terms apply: see the file COPYING in the distribution root for details.
  */
 
 #include <sys/types.h>
@@ -90,33 +89,34 @@ _proto__msg_navsol(struct gps_device_t *session, unsigned char *buf, size_t data
     if ((flags & _PROTO__SOLUTION_VALID) == 0)
 	return 0;
 
-    mask = ONLINE_SET;
+    mask = ONLINE_IS;
 
     /* extract ECEF navigation solution here */
     /* or extract the local tangential plane (ENU) solution */
     [Px, Py, Pz, Vx, Vy, Vz] = GET_ECEF_FIX();
-    ecef_to_wgs84fix(&session->gpsdata, Px, Py, Pz, Vx, Vy, Vz);
-    mask |= LATLON_SET | ALTITUDE_SET | SPEED_SET | TRACK_SET | CLIMB_SET  ;
+    ecef_to_wgs84fix(&session->newdata,  &session->separation,
+		     Px, Py, Pz, Vx, Vy, Vz);
+    mask |= LATLON_IS | ALTITUDE_IS | SPEED_IS | TRACK_IS | CLIMB_IS  ;
 
-    session->gpsdata.fix.epx = GET_LONGITUDE_ERROR();
-    session->gpsdata.fix.epy = GET_LATITUDE_ERROR();
-    session->gpsdata.fix.eps = GET_SPEED_ERROR();
+    session->newdata.epx = GET_LONGITUDE_ERROR();
+    session->newdata.epy = GET_LATITUDE_ERROR();
+    session->newdata.eps = GET_SPEED_ERROR();
     session->gpsdata.satellites_used = GET_SATELLITES_USED();
     dop_clear(&session->gpsdata.dop);
     session->gpsdata.dop.hdop = GET_HDOP();
     session->gpsdata.dop.vdop = GET_VDOP();
     /* other DOP if available */
-    mask |= DOP_SET;
+    mask |= DOP_IS;
 
-    session->gpsdata.fix.mode = GET_FIX_MODE();
+    session->newdata.mode = GET_FIX_MODE();
     session->gpsdata.status = GET_FIX_STATUS();
 
     /*
-     * Mix in CLEAE_SET to clue the daemon in about when to clear fix
-     * information.  Mix in REPORT_SET when the sentence is reliably
+     * Mix in CLEAR_IS to clue the daemon in about when to clear fix
+     * information.  Mix in REPORT_IS when the sentence is reliably
      * the last in a reporting cycle.
      */
-    mask |= MODE_SET | STATUS_SET | REPORT_SET;
+    mask |= MODE_IS | STATUS_IS | REPORT_IS;
 
     /* 
      * At the end of each packet-cracking function, report at LOG_DATA level
@@ -124,11 +124,11 @@ _proto__msg_navsol(struct gps_device_t *session, unsigned char *buf, size_t data
      * makes it relatively easy to track down data-management problems.
      */
     gpsd_report(LOG_DATA, "NAVSOL: time=%.2f, lat=%.2f lon=%.2f alt=%.2f mode=%d status=%d mask=%s\n",
-		session->gpsdata.fix.time,
-		session->gpsdata.fix.latitude,
-		session->gpsdata.fix.longitude,
-		session->gpsdata.fix.altitude,
-		session->gpsdata.fix.mode,
+		session->newdata.time,
+		session->newdata.latitude,
+		session->newdata.longitude,
+		session->newdata.altitude,
+		session->newdata.mode,
 		session->gpsdata.status,
 		gpsd_maskdump(mask));
 
@@ -154,12 +154,15 @@ _proto__msg_utctime(struct gps_device_t *session, unsigned char *buf, size_t dat
 
     tow = GET_MS_TIMEOFWEEK();
     gps_week = GET_WEEKNUMBER();
+    session->context->gps_week = gps_week;
     session->context->leap_seconds = GET_GPS_LEAPSECONDS();
+    session->context->gps_tow = tow / 1000.0;
 
-    t = gpstime_to_unix(gps_week, tow/1000.0) - session->context->leap_seconds;
-    session->gpsdata.fix.time = t;
+    t = gpstime_to_unix(gps_week, session->context->gps_tow) 
+    	- session->context->leap_seconds;
+    session->newdata.time = t;
 
-    return TIME_SET | ONLINE_SET;
+    return TIME_IS | ONLINE_IS;
 }
 
 /**
@@ -213,7 +216,7 @@ _proto__msg_svinfo(struct gps_device_t *session, unsigned char *buf, size_t data
 		"SVINFO: visible=%d used=%d mask={SATELLITE|USED}\n",
 		session->gpsdata.satellites_visible, 
 		session->gpsdata.satellites_used);
-    return SATELLITE_SET | USED_SET;
+    return SATELLITE_IS | USED_IS;
 }
 
 /**
@@ -235,9 +238,9 @@ gps_mask_t _proto__dispatch(struct gps_device_t *session, unsigned char *buf, si
      */
     session->cycle_end_reliable = true;
     if (msgid == MY_START_OF_CYCLE)
-	retmask |= CLEAR_SET;
+	retmask |= CLEAR_IS;
     else if (msgid == MY_END_OF_CYCLE)
-	retmask |= REPORT_SET;
+	retmask |= REPORT_IS;
 
     type = GET_MESSAGE_TYPE();
 
@@ -424,6 +427,23 @@ static void _proto__set_mode(struct gps_device_t *session, int mode)
 }
 #endif /* ALLOW_RECONFIGURE */
 
+#ifdef NTPSHM_ENABLE
+static double _proto_ntp_offset(struct gps_device_t *session)
+{
+    /*
+     * If NTP notification is enabled, the GPS will occasionally NTP
+     * its notion of the time. This will lag behind actual time by
+     * some amount which has to be determined by observation vs. (say
+     * WWVB radio broadcasts) and, furthermore, may differ by baud
+     * rate. This method is for computing the NTP fudge factor.  If
+     * it's absent, an offset of 0.0 will be assumed, effectively
+     * falling back on what's in ntp.conf. When it returns NAN,
+     * nothing will be sent to NTP.
+     */
+    return MAGIC_CONSTANT;
+}
+#endif /* NTPSHM_ENABLE */
+
 static void _proto__wrapup(struct gps_device_t *session)
 {
 }
@@ -443,6 +463,7 @@ static void _proto__wrapup(struct gps_device_t *session)
 /* any driver must use to compile.                   */
 
 /* This is everything we export */
+/* *INDENT-OFF* */
 const struct gps_type_t _proto__binary = {
     /* Full name of type */
     .type_name        = "_proto_ binary",
@@ -476,6 +497,10 @@ const struct gps_type_t _proto__binary = {
     /* Control string sender - should provide checksum and headers/trailer */
     .control_send   = _proto__control_send,
 #endif /* ALLOW_CONTROLSEND */
+#ifdef NTPSHM_ENABLE
+    .ntp_offset     = _proto_ntp_offset,
+#endif /* NTPSHM_ENABLE */
+/* *INDENT-ON* */
 };
 #endif /* defined(_PROTO__ENABLE) && defined(BINARY_ENABLE) */
 

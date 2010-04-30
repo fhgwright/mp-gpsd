@@ -41,6 +41,8 @@ GPSD Frequently Asked Questions
     src='http://www.catb.org/hacker-emblem/glider.png'
     alt='hacker emblem' /></a><br />
 
+    <script type="text/javascript" src="http://www.ohloh.net/p/3944/widgets/project_thin_badge.js"></script>
+
     <hr/>
     <script type="text/javascript"><!--
     google_ad_client = "pub-1458586455084261";
@@ -65,16 +67,19 @@ GPSD Frequently Asked Questions
 <ul>
 <li><a href='#bug-reporting'>How do I report bugs in GPSD?</a><br/>
 <li><a href='#nodata'>I get no data from my GPS</a></h1>
+<li><a href='#startup'>Why does getting a fix take so long after powerup?</li>
 <li><a href='#timelag'>Why does GPS time lag wall time by 11-15 seconds?</a></li>
-<li><a href="#singleshot">Why does my single-shot query fail to return fix data?</a><br/>
 <li><a href='#speed'>Why does my receiver report wildly fluctuating speed?</a><br/>
 <li><a href='#gpsdrive'>Why do I get implausibly low speeds when using gpsdrive?</a><br/>
-<li><a href='#kismet'>Why do I get flaky results when I try to use <code>gpsd</code> with Kismet?</a><br/>
+<li><a href='#kismet'>Why do I get no results when I try to use <code>gpsd</code> with Kismet?</a><br/>
 <li><a href='#bluetooth'>Why do I have to restart <code>gpsd</code> whenever I power-cycle my Bluetooth device?</a><br/>
 <li><a href='#lockup'>My <code>gpsd</code> sometimes stops responding overnight</a><br/>
 <li><a href='#why_not_parse_nmea'>Why use the <code>gpsd</code> protocol rather than parsing raw NMEA?</a><br/>
 <li><a href='#interfacing'>How should  I interface my application with <code>gpsd</code>?</a><br/>
 <li><a href='#agps'>Can GPSD work use Assisted GPS data from cellphone networks?</code>?</a><br/>
+<li><a href='#accuracy'>How can I improve fix accuracy from my GPS?</a><br/>
+<li><a href='#time'>How can I improve time reference accuracy from my GPS?</a><br/>
+<li><a href='#sleep'>Why does my GPS get lost when I sleep/wake my laptop?</a><br/>
 <li><a href='#web'>How do I get gpsd data into a web page?</a><br/>
 </ul>
 
@@ -108,7 +113,7 @@ possible your bug has already been fixed.  Download the latest public
 version from the <a
 href='http://developer.berlios.de/projects/gpsd/'>project page</a> and
 test it.  To be really helpful, check out the <a
-href='http://developer.berlios.de/svn/?group_id=2116'>Subversion
+href='https://developer.berlios.de/git/?group_id=2116'>git
 head</a> and test that.  We don't mind getting bug reports that say 
 "I saw version foo had the following bug, but you've fixed it."</p>
 
@@ -246,7 +251,7 @@ most useful thing you can do is pin down the release in which the
 bug was introduced.</p>
 
 <p>How efficiently you can do this depends on whether or not you have
-a client for the Subversion version control system.  If you don't, all
+a client for the the git version control system.  If you don't, all
 you can do is download and test named releases.  If you do, you can
 pin down the exact change that introduced the bug.  The latter is
 far more helpful to us and will get your bug fixed faster, so we'll
@@ -254,39 +259,17 @@ describe that procedure here.</p>
 
 <ol>
 <li><p>Follow <a
-href='http://developer.berlios.de/svn/?group_id=2116'>these
+href='http://developer.berlios.de/git/?group_id=2116'>these
 instructions</a> to check out a copy of the software.</p></li>
 
-<li><p>Do "svn log *" in the top-level directory of the checked-out tree.
-Save the results.  This is your map of dates to revision levels.</p></li>
-
-<li><p>Determine the revision levels of the first known bad release
-and the last known good release.  You can do this by looking for the
-release dates from gpsd.spec in the log output. Note: pick the
-<em>first</em> revision matching the known-good date and the <em>last</em>
-revision matching the known-bad date.</p></li>
-
-<li><p>Use the <code>-r</code> option of <code>svn up</code> to check
-out the revision level in the middle of that range.  Thus, if the last
-known good release was 2502 and the known bad one is 2760, check out
-release (2760 + 2502) / 2 = 2631.  The command you want would be "svn
--r 2631 up" in this case.</p></li>
-
-<li><p>Build and test the revision.  Whether it works or not, you will
-eliminate half the range.  If it works, you know the bug was introduced
-somewhere in the upper half range.  If it doesn't, the bug was introduced
-in the lower half.</p></li>
-
-<li><p>Do the same test on the half-range where the error was introduced;
-e.g. check out the middle version, test that, and narrow the range by another
-factor of 2.</p></li>
-
-<li><p>Repeat this bisection search until you know the exact revision that
-introduced your bug.  This will happen very quickly, as the number of
-tests required will be the log to the base 2 of the number of
-revisions in your original span.  Even if there are (say) 500
-revisions in the span you should only require 9 tests to nail down the
-exact change in question.</p></li>
+<li><p>Use <a
+href="http://www.kernel.org/pub/software/scm/git/docs/git-bisect.html">git
+bisect</a> to locate the exact revision that introduced your bug.
+This will happen very quickly, as the number of tests required will be
+the log to the base 2 of the number of revisions in your original
+span.  Even if there are (say) 500 revisions in the span you should
+only require 9 tests to nail down the exact change in
+question.</p></li>
 </ol>
 
 <h3>12. Include the vendor, mode, and firmware version in your report.</h3>
@@ -305,7 +288,7 @@ the version.</p>
 <p>This answer may apply if you have followed the Quick Start
 procedure on the manual page but <code>gpsd</code> reports no data.</p>
 
-<p>Check for the obvious thing &mdash; a disconnected or loose cable<
+<p>Check for the obvious thing &mdash; a disconnected or loose cable
 &mdash; first. Make sure you specified the device your GPS is
 actually plugged into.</p>
 
@@ -328,6 +311,38 @@ such as <code>sudo modprobe usbserial vendor=0×1a86
 product=0×7523</code>.  Do not copy those hex numbers slavishly, they
 are examples.  To get the right numbers, you will need to dig up the
 vendor and product ID of your USB-serial converter device.</p>
+
+<h1 id="startup">Why does getting a fix take so long after powerup?</h1>
+
+<p>On a Linux machine, the <code>gpsd</code> daemon normally takes
+between 0.1 and 0.6 seconds to handshake with your hardware.  After
+that you will receive GPS reports within a second of when the sensor
+issues them.  GPSD itself adds <a
+href="http://gpsd.berlios.de/performance.html">no measurable
+latency</a>, but RS-323 transmission time to <code>gpsd</code> can be
+significant; you can cut this time by increasing the baud rate.</p>
+
+<p>Longer handshake delays have been reported from other platforms.
+Under OpenBSD, time to handshake with some binary GPSes (including
+SiRFs) can be up to two minutes.  This seems to reflect some bad
+interaction between the autobauding code in <code>gpsd</code> and the
+operating system's tty layer; when <code>gpsd</code> is compiled to
+use a fixed port speed, handshake times drop to a fraction of a
+second.</p>
+
+<p>If you are starting a GPS for the first time, or after it has been
+powered off for more than two weeks, this is a 'cold start'; it needs
+to get a new satellite ephemeris to do its job. The satellites
+broadcast this information very slowly (at 50bps) on a fixed schedule,
+and it can take up to 20 minutes.</p>
+
+<p>Warm start on a modern GPS with a good skyview (4 or more sats
+visible) normally takes about 30 seconds. (Vendor spec sheets fib by
+quoting this time only, leaving out the cold-start lag to fetch
+ephemeris.) If it's taking longer, the first thing to suspect is that
+your skyview is poor. Especially if you're indoors.</p>
+
+<p>The best advice is: go outside and be patient for a few minutes.</p>
 
 <h1 id="timelag">Why does GPS time lag wall time by 11-15 seconds?</h1>
 
@@ -370,16 +385,9 @@ similar solution.</p>
 <p>This is a gpsdrive bug, as you can verify by running
 <code>xgps</code> alongside it.</p>
 
-<h1 id='kismet'>Why do I get flaky results when I try to use <code>gpsd</code> with Kismet?</h1>
+<h1 id='kismet'>Why do I get no results when I try to use <code>gpsd</code> with Kismet?</h1>
 
-<p>Kismet's interface was designed for a much older version of
-<code>gpsd</code>, and tends to fight with the autobauding code in the
-newer versions.  The Kismet maintainer has promised to fix this.
-Until he does, the workaround is to start <code>gpsd</code> and make
-sure it has synced up to a GPS before running Kismet. You can <a
-href='start-kismet'>download a shellscript</a> that does this.</p>
-
-<p>Note that your Kismet configuration has to include the setting
+<p>Your Kismet configuration has to include the setting
 "gps=true"  This is s a surprisingly easy detail to forget.</p>
 
 <h1 id='bluetooth'>Why do I have to restart <code>gpsd</code> whenever I power-cycle my Bluetooth device?</h1>
@@ -493,6 +501,97 @@ right sort of receiver, AGPS systems are carrier-dependent.  As far as
 we know there aren't any published standards for the format of the
 corrections.  So even if we had the signals, GPSD couldn't know what to
 do with them.</p>
+
+<h1 id='accuracy'>How can I improve fix accuracy from my GPS?</h1>
+
+<p>Use an antenna, and place the sensor (and/or antenna) properly.</p>
+
+<p>A real antenna can help, especially if you're using PPS as a time
+reference. It should be particularly helpful for reducing timing
+jitter.</p>
+
+<p>One common error is to place the GPS or antenna as high as
+possible.  This will increase <a
+href="http://en.wikipedia.org/wiki/Global_Positioning_System#Multipath_effects">multipath
+effects</a> due to signal bounce from the ground or water, which can
+cause the GPS to mistake its position and the time signal.  The
+correct location for a boat GPS antenna is on the gunwale rail or
+pushpit rail, close to the water and as far from the mast as possible
+(to reduce signal bounce from the mast). If
+you're outside or in a fixed location, put the GPS antenna as far from
+buildings as possible, and on the ground. If you're in a car, don't
+put the GPS antenna on the roof, put it on the towbar or similar.</p>
+
+<p>If you're driving in a heavily built up area, you're going to get
+signal bounce off buildings and and reduced accuracy. That's just how
+the physics works. Note, however, that as your velocity goes up it
+becomes easier for the convergence filters in your GPS to spot
+and discard delayed signal, so multipath effects are proprtionately
+less important in fast-moving vehicles.</p>
+
+<p>If you're using <tt>gpsd</tt> with software that plots your
+position on a map, and you seem to be getting latitude/longitude that
+is at a fixed offset from reality, it is possible the base datum of
+the map is something other than the WGS84 GPS uses. A
+frequently-occuring case of this is older maps in the United States
+based on NAD27 (e.g., USGS topo maps); you may see a displacement of
+as much as 100-150m with respect to WGS84.  While modern datums (e.g.,
+NAD83) are almost all very close to WGS84, typically each area of
+world has an older datum that only agrees at the 100m level.</p>
+
+<h1 id='time'>How can I improve time reference accuracy from my GPS?</h1>
+
+<p>All the measures you'd take to improve <a href="#accuracy">fix
+accuracy</a> will help. Time referencing at accuracies below 
+0.01sec has its own set of issues related to latency in your
+sensor and computer.</p>
+
+<p>In particular, USB transport is not suited for anything
+time-related that requires sub-millisecond accuracy. If a
+USB-connected GPS unit wants to tell the computer it's 12:23:45, it
+will have to wait for the computer to poll it. This polling happens
+1000 times per second, introducing variable latency averaging a
+half-millisecond.  Furthermore, the USB chip might run at anything
+close to 1000 Hz. If it runs at 1000.1 Hz, every 10th second the next
+time-report will come 1 whole millisecond earlier. This will have NTP
+observing something like a 1 ms high sawtooth in the time-reports.</p>
+
+<p>For accurate time reference, use a PPS line over RS232 triggering an
+interrupt. Serial bus interrupt latencies on modern hardware on the
+order of 10 microseconds, roughly a hundred-fold improvement over
+USB.</p>
+
+<p>Don't confuse PPS with conventional, non-PPS data transport over
+RS232; the latency on that is much higher. At one character per ten
+bits (counting framing at stopbits) a 9600-bps serial link introduces
+about a millisecond of latency <em>per character</em>; furthermore,
+the Linux kernel will normally delay delivery of characters to your
+application until the next timer tick, about every 4 milliseconds in
+modern kernels. Both USB and RS232 will incur that approximately
+5ms-per-char latency overhead.</p>
+
+<h1 id='sleep'>Why does my GPS get lost when I sleep/wake my laptop?</h1>
+
+<p>This is not a GPSD problem, but a result of the way Linux handles
+USB serial devices.  In a default Linux configuration, USB serial
+device name do not depend on which physical port you plug the
+USB/serial adaptor, but on what order you plug devices in: 1st device
+gets /dev/ttyUSB0, 2nd gets /dev/ttyUSB1, etc....
+
+<p>This collides with what happens during a suspend/resume. If you
+suspensd while <tt>gpsd</tt> has a device active, it will hold the
+device open while your laptop is asleep - but, meanwhile, the suspend
+logic is shutting down hotpluggable devices to be recreated at
+resume time. On resume, Linux will see that the old device is open
+<em>and recreate one with a different name</em>, leaving <tt>gpsd</tt>
+kooking at a bad file descriptor.</p>
+
+<p>There is a solution to this problem: create a stable gps-usb device
+that is actually a symlink which gets modified by hotplug events, and
+give <tt>gpsd</tt> that device when you invoke it.  You'll need <a
+href="70-persistent-usb-gps.rules">these replacement udev rules</a>,
+and the experience required to patch them so the vendor ID in the last
+one matches your GPS hardware (look in your lsusb output).
 
 <h1 id='web'>How do I get gpsd data into a web page?</h1>
 

@@ -1,6 +1,8 @@
-/* $Id$ */
 /* GPS speedometer as a wrapper around an Athena widget Tachometer
  * - Derrick J Brashear <shadow@dementia.org>
+ *
+ * This file is Copyright (c) 2010 by the GPSD project
+ * BSD terms apply: see the file COPYING in the distribution root for details.
  */
 #include <sys/types.h>
 #include <stdlib.h>
@@ -174,7 +176,7 @@ int main(int argc, char **argv)
 
     gps_set_raw_hook(gpsdata, update_display);
 
-    (void)gps_stream(gpsdata, WATCH_ENABLE|WATCH_NEWSTYLE, NULL);
+    (void)gps_stream(gpsdata, WATCH_ENABLE, NULL);
 
     (void)XtAppMainLoop(app);
 

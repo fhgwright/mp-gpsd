@@ -1,13 +1,17 @@
 <?xml version="1.0" encoding="ISO-8859-1"?>
+<!--
+This file is Copyright (c) 2010 by the GPSD project
+BSD terms apply: see the file COPYING in the distribution root for details.
+-->
 <!DOCTYPE refentry PUBLIC "-//OASIS//DTD DocBook XML V4.1.2//EN"
                    "http://www.oasis-open.org/docbook/xml/4.1.2/docbookx.dtd">
-<!-- lifted from troff+man by doclifter -->
 <refentry>
 <refentryinfo><date>14 Aug 2004</date></refentryinfo>
 <refmeta>
 <refentrytitle>3</refentrytitle>
 <manvolnum>3</manvolnum>
-<refmiscinfo class='source'>Linux</refmiscinfo>
+<refmiscinfo class="source">The GPSD Project</refmiscinfo>
+<refmiscinfo class="manual">GPSD Documentation</refmiscinfo>
 </refmeta>
 <refnamediv id='name'>
 <refname>libgps</refname>
@@ -91,17 +95,8 @@ del session
 <refsect1 id='description'><title>DESCRIPTION</title>
 
 <para><emphasis remap='B'>libgps</emphasis> is a service library which
-supports querying GPS devices; link it with the linker option
--lgps. There are two interfaces supported in it; one high-level
-interface that goes through
-<citerefentry><refentrytitle>gpsd</refentrytitle><manvolnum>1</manvolnum></citerefentry>
-and is intended for concurrent use by several applications, and one
-low-level interface that speaks directly with the serial or USB device
-to which the GPS is attached. This page describes the high-level
-interface that is safe for multiple applications to use simultaneously; it
-is probably the one you want.  The low-level interface is documented
-at
-<citerefentry><refentrytitle>libgpsd</refentrytitle><manvolnum>3</manvolnum></citerefentry>.</para>
+supports communicating with an instance of the
+<citerefentry><refentrytitle>gpsd</refentrytitle><manvolnum>8</manvolnum></citerefentry>; link it with the linker option -lgps.</para>
 
 <warning><para>Take care to conditionalize your code on the major and
 minor API version symbols in <filename>gps.h</filename>; ideally,
@@ -142,8 +137,9 @@ of responses, from the daemon and interprets it as though it were a
 query response (the return value is as for a query).
 <function>gps_poll()</function> returns the validity mask of the
 received structure.  This function does a blocking read waiting for
-data from the daemon; it returns 0 for success, or -1 on a Unix-level
-read error. </para>
+data from the daemon; it returns 0 for success, -1 with errno set on a 
+Unix-level read error, -1 with errno not set if the socket to
+the daemon has closed. </para>
 
 <para><function>gps_waiting()</function> can be used to check
 whether there is data from the daemon. It returns true if there is,
@@ -179,8 +175,8 @@ This is the default.</para>
 <varlistentry>
 <term>WATCH_JSON</term>
 <listitem>
-<para>Enable JSON reporting of data. If WATCH_ENABLE is set, and nmo
-other WATCH flags are set, this ids the default.</para>
+<para>Enable JSON reporting of data. If WATCH_ENABLE is set, and no
+other WATCH flags are set, this is the default.</para>
 </listitem>
 </varlistentry>
 <varlistentry>
@@ -333,7 +329,7 @@ the GPSD wire protocol. It is not recommended.</para>
 <para>
 <citerefentry><refentrytitle>gpsd</refentrytitle><manvolnum>8</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>gps</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
-<citerefentry><refentrytitle>libgps</refentrytitle><manvolnum>3</manvolnum></citerefentry>.
+<citerefentry><refentrytitle>libgpsd</refentrytitle><manvolnum>3</manvolnum></citerefentry>.
 <citerefentry><refentrytitle>libgpsmm</refentrytitle><manvolnum>3</manvolnum></citerefentry>.
 </para>
 </refsect1>

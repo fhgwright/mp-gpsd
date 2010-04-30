@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 '''
-xgps2 -- test client for gpsd
+xgps -- test client for gpsd
 
 usage: xgps [-D level] [-hV?] [-l degmfmt] [-u units] [server[:port[:device]]]
 '''
@@ -10,6 +10,9 @@ This is xgps, a test client for the gpsd daemon.
 
 By Eric S. Raymond for the GPSD project, December 2009
 '''
+#
+# This file is Copyright (c) 2010 by the GPSD project
+# BSD terms apply: see the file COPYING in the distribution root for details.
 
 import sys, os, re, math, time, exceptions, getopt, socket
 
@@ -17,7 +20,7 @@ import gobject, pygtk
 pygtk.require('2.0')
 import gtk
 
-import gps, gps.client
+import gps, gps.clienthelpers
 
 class unit_adjustments:
     "Encapsulate adjustments for unit systems."
@@ -27,15 +30,15 @@ class unit_adjustments:
         self.speedfactor = gps.MPS_TO_MPH
         self.speedunits = "mph"
         if units is None:
-            units = gps.client.gpsd_units()
-        if units in (gps.client.unspecified, gps.client.imperial, "imperial", "i"):
+            units = gps.clienthelpers.gpsd_units()
+        if units in (gps.clienthelpers.unspecified, gps.clienthelpers.imperial, "imperial", "i"):
             pass
-        elif units in (gps.client.nautical, "nautical", "n"):
+        elif units in (gps.clienthelpers.nautical, "nautical", "n"):
             self.altfactor = gps.METERS_TO_FEET
             self.altunits = "ft"
             self.speedfactor = gps.MPS_TO_KNOTS
             self.speedunits = "knots"
-        elif units in (gps.client.metric, "metric", "m"):
+        elif units in (gps.clienthelpers.metric, "metric", "m"):
             self.altfactor = 1
             self.altunits = "m"
             self.speedfactor = gps.MPS_TO_KPH
@@ -81,6 +84,10 @@ class SkyView(gtk.DrawingArea):
                                x - diam / 2, y - diam / 2,
                                diam, diam, 0, 360 * 64)
 
+    def draw_line(self, widget, x1, y1, x2, y2):
+        "Draw a line between specified points."
+        widget.window.draw_lines(self.gc, [(x1, y1), (x2, y2)])
+
     def draw_square(self, widget, x, y, diam, filled=False):
         "Draw a square centered on the specified midpoint."
         widget.window.draw_rectangle(self.gc, filled,
@@ -123,7 +130,15 @@ class SkyView(gtk.DrawingArea):
         # The horizon circle
         self.draw_circle(widget, self.width / 2, self.height / 2,
                          self.diameter)
+        self.set_color("gray")
+        (x1, y1) = self.pol2cart(0, 0)
+        (x2, y2) = self.pol2cart(180, 0)
+        self.draw_line(widget, x1, y1, x2, y2)
+        (x1, y1) = self.pol2cart(90, 0)
+        (x2, y2) = self.pol2cart(270, 0)
+        self.draw_line(widget, x1, y1, x2, y2)
         # The compass-point letters
+        self.set_color("black")
         (x, y) = self.pol2cart(0, 0)
         self.draw_string(widget, x, y+10, "N")
         (x, y) = self.pol2cart(90, 0)
@@ -215,7 +230,7 @@ class AISView:
         else:
             latsuff = ""
         lat = abs(lat)
-        lat = gps.client.deg_to_str(self.deg_type, lat)
+        lat = gps.clienthelpers.deg_to_str(self.deg_type, lat)
         if lon < 0:
             lonsuff = "W"
         elif lon > 0:
@@ -223,7 +238,7 @@ class AISView:
         else:
             lonsuff = ""
         lon = abs(lon)
-        lon = gps.client.deg_to_str(gps.client.deg_ddmmss, lon)
+        lon = gps.clienthelpers.deg_to_str(gps.clienthelpers.deg_ddmmss, lon)
         return lat + latsuff + "/" + lon + lonsuff
 
     def update(self, ais):
@@ -275,7 +290,7 @@ class AISView:
 class Base:
     gpsfields = (
         # First column
-        ("Time", lambda s, r: gps.isotime(r.time)),
+        ("Time", lambda s, r: s.update_time(r)),
         ("Latitude", lambda s, r: s.update_latitude(r)),
         ("Longitude", lambda s, r: s.update_longitude(r)),
         ("Altitude", lambda s, r: s.update_altitude(r)),
@@ -451,7 +466,10 @@ class Base:
 
     def set_satlist_field(self, row, column, value):
         "Set a specified field in the satellite list."
-        self.satlist.set_value(self.row_iters[row], column, value)
+        try:
+            self.satlist.set_value(self.row_iters[row], column, value)
+        except IndexError:
+            sys.stderr.write("xgps: channel = %d, MAXCHANNELS = %d\n" % (row, gps.MAXCHANNELS))
 
     def delete_event(self, widget, event, data=None):
         gtk.main_quit()
@@ -459,9 +477,15 @@ class Base:
 
     # State updates
 
+    def update_time(self, data):
+        if hasattr(data, "time"):
+            return gps.isotime(data.time)
+        else:
+            return "n/a"
+
     def update_latitude(self, data):
         if data.mode >= gps.MODE_2D:
-            lat = gps.client.deg_to_str(self.deg_type, abs(data.lat))
+            lat = gps.clienthelpers.deg_to_str(self.deg_type, abs(data.lat))
             if data.lat < 0:
                 ns = 'S'
             else:
@@ -472,7 +496,7 @@ class Base:
 
     def update_longitude(self, data):
         if data.mode >= gps.MODE_2D:
-            lon = gps.client.deg_to_str(self.deg_type, abs(data.lon))
+            lon = gps.clienthelpers.deg_to_str(self.deg_type, abs(data.lon))
             if data.lon < 0:
                 ew = 'W'
             else:
@@ -507,7 +531,7 @@ class Base:
 
     def update_track(self, data):
         if hasattr(data, "track"):
-            return gps.client.deg_to_str(self.deg_type, abs(data.track))
+            return gps.clienthelpers.deg_to_str(self.deg_type, abs(data.track))
         else:
             return "n/a"
 
@@ -561,9 +585,10 @@ class Base:
 
     # I/O monitoring and gtk housekeeping
 
-    def watch(self, daemon):
+    def watch(self, daemon, device):
         "Set up monitoring of a daemon instance."
         self.daemon = daemon
+        self.device = device
         gobject.io_add_watch(daemon.sock, gobject.IO_IN, self.handle_response)
         gobject.io_add_watch(daemon.sock, gobject.IO_ERR, self.handle_hangup)
         gobject.io_add_watch(daemon.sock, gobject.IO_HUP, self.handle_hangup)
@@ -573,6 +598,8 @@ class Base:
         if self.daemon.poll() == -1:
             self.handle_hangup(source, condition)
         if self.daemon.valid & gps.PACKET_SET:
+            if self.device and self.device != self.daemon.data["device"]:
+                return True
             self.rawdisplay.set_text(self.daemon.response.strip())
             if self.daemon.data["class"] == "SKY":
                 self.update_skyview(self.daemon.satellites)
@@ -621,22 +648,28 @@ if __name__ == "__main__":
             sys.stderr.write("xgps 1.0\n")
             sys.exit(0)
 
-    degreefmt = {'d':gps.client.deg_dd,
-                 'm':gps.client.deg_ddmm,
-                 's':gps.client.deg_ddmmss}[degreefmt]
+    degreefmt = {'d':gps.clienthelpers.deg_dd,
+                 'm':gps.clienthelpers.deg_ddmm,
+                 's':gps.clienthelpers.deg_ddmmss}[degreefmt]
 
-    if len(arguments) == 0:
-        host = "localhost"
-    else:
-        host = arguments[0]
+    (host, port, device) = ("localhost", "2947", None)
+    if len(arguments):
+        args = arguments[0].split(":")
+        if len(args) >= 1:
+            host = args[0]
+        if len(args) >= 2:
+            port = args[1]
+        if len(args) >= 3:
+            device = args[2]
 
     base = Base(deg_type=degreefmt)
     base.set_units(unit_system)
     try:
         daemon = gps.gps(host=host,
+                         port=port,
                          mode=gps.WATCH_ENABLE|gps.WATCH_JSON|gps.WATCH_SCALED,
                          verbose=debug)
-        base.watch(daemon)
+        base.watch(daemon, device)
         base.main()
     except socket.error:
         w = gtk.MessageDialog(type=gtk.MESSAGE_ERROR,

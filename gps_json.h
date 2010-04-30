@@ -1,14 +1,22 @@
-/* gps_json.h - JSON handling for libgps and gpsd */
+/* gps_json.h - JSON handling for libgps and gpsd
+ *
+ * By Eric S. Raymond, 2009
+ * This file is Copyright (c) 2010 by the GPSD project
+ * BSD terms apply: see the file COPYING in the distribution root for details.
+ */
 
 #include "json.h"
 
 #define GPS_JSON_COMMAND_MAX	80
-#define GPS_JSON_RESPONSE_MAX	1024
+#define GPS_JSON_RESPONSE_MAX	1536
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 char *json_stringify(/*@out@*/char *, size_t, /*@in@*/const char *);
-void json_tpv_dump(const struct gps_data_t *, struct gps_fix_t *, 
-		   /*@out@*/char *, size_t);
+void json_tpv_dump(const struct gps_data_t *, /*@out@*/char *, size_t);
 void json_sky_dump(const struct gps_data_t *, /*@out@*/char *, size_t);
+void json_att_dump(const struct gps_data_t *, /*@out@*/char *, size_t);
 void json_device_dump(const struct gps_device_t *, /*@out@*/char *, size_t);
 void json_watch_dump(const struct policy_t *, /*@out@*/char *, size_t);
 int json_watch_read(const char *, /*@out@*/struct policy_t *, 
@@ -22,6 +30,9 @@ int json_ais_read(const char *, char *, size_t, struct ais_t *,
 		  /*@null@*/const char **);
 int libgps_json_unpack(const char *, struct gps_data_t *, 
 		       /*@null@*/const char **);
+#ifdef __cplusplus
+}
+#endif
 
 /* these values don't matter in themselves, they just have to be out-of-band */
 #define DEVDEFAULT_BPS  	0

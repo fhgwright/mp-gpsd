@@ -1,5 +1,8 @@
 #!@PYTHON@
 #
+# This file is Copyright (c) 2010 by the GPSD project
+# BSD terms apply: see the file COPYING in the distribution root for details.
+#
 # Never hand-hack what you can generate...
 #
 # This code generates template declarations for AIS-JSON parsing from a
@@ -360,6 +363,35 @@ ais_specs = (
         ('dim.to_starboard',  'uinteger',      '0'),	# Part B
         ),
     },
+    {
+    "initname" : "json_ais25",
+    "header": "\tAIS_HEADER,",
+    "structname": "ais->type25",
+    "fieldmap":(
+        # fieldname       type             default
+        ('addressed',     'boolean',       'false'),
+        ('structured',    'boolean',       'false'),
+        ('dest_mmsi',     'uinteger',      '0'),
+        ('app_id',        'uinteger',      '0'),
+        ('data',          'string',        None),
+        ),
+    "stringbuffered":("data",),
+    },
+    {
+    "initname" : "json_ais26",
+    "header": "\tAIS_HEADER,",
+    "structname": "ais->type26",
+    "fieldmap":(
+        # fieldname       type             default
+        ('addressed',     'boolean',       'false'),
+        ('structured',    'boolean',       'false'),
+        ('dest_mmsi',     'uinteger',      '0'),
+        ('app_id',        'uinteger',      '0'),
+        ('data',          'string',        None),
+        ('radio',         'uinteger',      '0'),
+        ),
+    "stringbuffered":("data",),
+    },
 )
 
 
@@ -372,14 +404,15 @@ stringspec = ""
 
 def generate(spec):
     global outboard
+    report = ""
     for (attr, itype, default) in spec["fieldmap"]:
         if attr in spec.get("stringbuffered", []):
             if attr not in outboard:
-                print "    char %s[JSON_VAL_MAX+1];" % attr
+                report += "    char %s[JSON_VAL_MAX+1];\n" % attr
                 outboard.append(attr)
-    print "    const struct json_attr_t %s[] = {" % spec["initname"]
+    report += "    const struct json_attr_t %s[] = {\n" % spec["initname"]
     if "header" in spec:
-        print spec["header"]
+        report += spec["header"] + "\n"
     for (attr, itype, default) in spec["fieldmap"]:
         structname = spec["structname"]
         if itype == "string":
@@ -392,18 +425,19 @@ def generate(spec):
             target = structname + "." + attr
         if "." in attr:
             attr = attr[attr.rfind(".")+1:]
-        print '\t{"%s",%st_%s,%s.addr.%s = %s%s,' % \
+        report += '\t{"%s",%st_%s,%s.addr.%s = %s%s,\n' % \
                (attr, " "*(14-len(attr)), itype, " "*(10-len(itype)), itype, deref, target)
         leader = " " * 39
         if itype == "string":
-            print leader + ".len = sizeof(%s)}," % target
+            report += leader + ".len = sizeof(%s)},\n" % target
         else:
-            print leader + ".dflt.%s = %s}," % (itype, default)
+            report += leader + ".dflt.%s = %s},\n" % (itype, default)
 
-    print """\
-	{NULL},
+    report += """\
+	{NULL}
     };
 """
+    print report
 
 # No code for generating dump functions yet.
 # When we do this, remembeer that we have to suppress dump function
@@ -492,3 +526,7 @@ if __name__ == '__main__':
 
 /* Generated code ends. */
 """
+# The following sets edit modes for GNU EMACS
+# Local Variables:
+# mode:python
+# End:

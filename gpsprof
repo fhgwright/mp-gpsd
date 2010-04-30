@@ -1,4 +1,7 @@
-#!@PYTHON@
+#!/usr/bin/env python
+#
+# This file is Copyright (c) 2010 by the GPSD project
+# BSD terms apply: see the file COPYING in the distribution root for details.
 #
 # Collect and plot latency-profiling data from a running gpsd.
 # Requires gnuplot.
@@ -478,4 +481,7 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         pass
 
-
+# The following sets edit modes for GNU EMACS
+# Local Variables:
+# mode:python
+# End:

@@ -37,6 +37,8 @@
     src='http://www.catb.org/hacker-emblem/glider.png'
     alt='hacker emblem' /></a><br />
 
+    <script type="text/javascript" src="http://www.ohloh.net/p/3944/widgets/project_thin_badge.js"></script>
+
     <hr/>
     <script type="text/javascript"><!--
     google_ad_client = "pub-1458586455084261";
@@ -59,8 +61,7 @@
 
 <h1>Contents</h1>
 
-<p>If you're looking for things to hack on, first see the
-<a href="http://svn.berlios.de/svnroot/repos/gpsd/trunk/TODO">TODO</a>
+<p>If you're looking for things to hack on, first see the TODO
 file in the source distribution.</p>
 
 <ol type="I">
@@ -107,23 +108,9 @@ file in the source distribution.</p>
 <li><a href="#confidence">Report errors with a 95% confidence interval</a></li>
 <li><a href="#logfiles">Log files for regression testing</a></li>
 </ol>
-<li><a href="#buffering">The buffering problem</a></li>
+<li><a href="#designahead">Future Protocol Directions</a></li>
 <ol>
-<li><a href="#mapping">Mapping the design space</a></li>
-<ol type="i">
-<li><a href="#rtcpp">Report then clear per packet</a></li>
-<li><a href="#bartcot">Buffer all, report then clear on trigger</a></li>
-<li><a href="#baroepcasoc">Buffer all, report on every packet, clear at start-of-cycle</a></li>
-<li><a href="#baroencd">Buffer all, report on every packet, never clear data</a></li>
-<li><a href="#baroeptood">Buffer all, report on every packet, time out old data</a></li>
-</ol>
-<li><a href="#noperfect">There is no perfect option</a></li>
-<li><a href="#interpolation">Combining buffering with interpolation: a speculative design</a></li>
-</ol>
-<li><a href="#designahead">Designing Ahead</a></li>
-<ol>
-<li><a href="#nonpvt">Non-TPV Data</a></li>
-<li><a href="#protov4">Design Sketch for GPSD-NG, the Next-Generation GPSD Protocol</a></li>
+<li><a href="#proposed">Proposed sentences</a></li>
 </ol>
 <li><a href="#blindalleys">Blind alleys</a></li>
 <ol>
@@ -881,14 +868,11 @@ a non-DGPS UERE estimate of 8 (95% confidence).  That's what we use.</p>
 
 <h2 id="ancient">Ancient history</h2>
 
-<p>The project is presently kept in a Subversion repository.  Up until
+<p>The project is presently kept in a git repository.  Up until
 mid-August 2004 (r256) it was kept in CVS, which was mechanically
-upconverted using cvs2svn.</p>
-
-<p>If you read very old portions of the revision log, there are many
-spans of identical comments.  Some of these are places where cvs2svn should
-have merged multiple CVS commits to a single SVN changeset, but did
-not. Others are scar tissue from pre-2006 versions of Emacs VC.</p>
+upconverted to Subversion. On 12 March 2010 the Subversion repository was
+converted to git. The external releases from the Subversion era
+still exist as tags.</p>
 
 <h1 id="trouble">Known trouble spots</h1>
 
@@ -1067,15 +1051,16 @@ See the Garmin binary driver for an example.</p>
 
 <h3 id="reports">Where to put the data you get from the GPS</h3>
 
-<p>Your driver should put new data from each incoming packet or sentence
-in the 'gpsdata' member of the GPS, and return a validity flag mask
-telling what members were updated (all float members are initially set -->
-to not-a-number. as well).  There is driver-independent code
-that will be responsible for merging that new data into the existing
-fix.  To assist this, the CYCLE_START_SET flag is special.  Set this
-when the driver returns the first timestamped message containing fix
-data in an update cycle.  (This excludes satellite-picture messages
-and messages about GPS status that don't contain fix data.)</p>
+<p>Your driver should put new data from each incoming packet or
+sentence in the 'gpsdata' member of the GPS (fixes go in the 'newdata'
+member), and return a validity flag mask telling what members were
+updated (all float members are initially set to not-a-number. as
+well).  There is driver-independent code that will be responsible for
+merging that new data into the existing fix.  To assist this, the
+CYCLE_START_SET flag is special.  Set this when the driver returns the
+first timestamped message containing fix data in an update cycle.
+(This excludes satellite-picture messages and messages about GPS
+status that don't contain fix data.)</p>
 
 <p>Your packet parser must return field-validity mask bits (using the
 _SET macros in gps.h), suitable to be put in session->gpsdata.valid.
@@ -1154,7 +1139,7 @@ water depth and temperature via NMEA DPT and MTW sentences). JSON
 gives a natural way to add ad-hoc fields, and we expect to
 exploit that in the future.</p>
 
-<h2>Proposed sentences:</h2>
+<h2 id="proposed">Proposed sentences:</h2>
 
 <p>Chris Kuethe has floated the following list requests for
 discussion:</p>
@@ -1190,22 +1175,6 @@ report on every packet, clear at start-of-cycle" policy.</p>
 daemon running &mdash; but a bad idea.  It would make denial-of-service 
 attacks on applications using the GPS far too easy.  For example,
 suppose the control string were a baud-rate change?</p>
-
-<h2 id="libusb">Using libusb to do USB device discovery</h2>
-
-<p>There has been some consideration of going to the cross-platform libusb
-library to do USB device discovery. This would create an external
-dependency that gpsd doesn't now have, and bring more complexity on
-board than is probably desirable.</p>
-
-<p>We've chosen instead to rely on the local hotplug system.  That way
-gpsd can concentrate solely on knowing about GPSes.</p>
-
-<p>There has been talk of revisiting libusb as a more reliable way to
-communicate with Garmin receivers. By implementing the driver in user
-space with libusb, we gain portability and freedom from buggy kernel
-modules. It may also offer us a way to better support OS X. It's not a
-dead issue any more.<p>
 
 <h2 id="fifo">Setting FIFO threshold to 1 to reduce jitter in serial-message times</h2>
 
@@ -1380,50 +1349,48 @@ the following order:</p>
 href="http://developer.berlios.de/bugs/?group_id=2116">Berlios bug
 tracker</a> for release blockers.</dt>  <dd></dd>
 
-<dt>2. Run the stable regression tests and other checks</dt> <dd>If it
-doesn't pass regressions, it isn't ready to ship. This is the time to
-run valgrind-audit, 'make splint', and 'make cppcheck' as well and
-check that those reports are clean.</dd>
-
-<dt>3. Issue the pre-release heads-up</dt>
+<dt>2. Issue the pre-release heads-up</dt>
 <dd>About 48 hours before release, announce that it's coming so people
 will have a day or so to get their urgent fixes in.</dd>
 
-<dt>4. Check that the version number is correct</dt>
+<dt>3. Check that the version number is correct</dt>
 <dd>It may need to be modified in configure.ac, and another autogen.sh
 done.  Make sure the 'dev' suffix is gone.</dd>
 
-<dt>5. Check timebase.h.</dt>
+<dt>4. Check timebase.h.</dt>
 <dd>The values for leap-second offset and the start-subframe time
 may need to be adjusted.</dd>
 
-<dt>6. Announce on gpsd-dev</dt>
+<dt>5. Announce on gpsd-dev</dt>
 <dd>Announce that release is imminent and commits should be held off until
 the release has been shipped and tagged.</dd>
 
-<dt>7. Update the NEWS file</dt>
+<dt>6. Update the NEWS file</dt>
 <dd>Make sure the topmost entry in the changelog portion of
 gpsd.spec.in is up-to-date and properly timestamped.</dd>
 
-<dt>8. Check the revision.h file</dt>
-<dd>The contents of the revision.h file should match the output of
-svnversion. If it doesn't, remove revision.h, svn up, and make revision.h</dd>
+<dt>7. Run the regression tests and other checks</dt> 
+<dd>If it doesn't pass regressions, it isn't ready to ship. This is
+the time to run valgrind-audit, 'make splint', and 'make cppcheck' as
+well and check that those reports are clean. Use flocktest to
+verify operation on the remote test machines.</dd>
 
-<dt>9. Ship to Berlios</dt>
-<dd>Make the tarball and upload to berlios.de, 
+<dt>8. Ship to Berlios</dt>
+<dd>Make the tarball (make dist) and upload to berlios.de (make upload-ftp), 
 and do Berlios's release procedure.</dd>
 
-<dt>10. Tag the release in SVN</dt>
-<dd>Doing 'make svn-tag' should accomplish this</dd>
+<dt>9. Tag the release in git</dt>
+<dd>Doing 'make release-tag' should accomplish this. The tag push
+will trigger mail to the announce list.</dd>
 
-<dt>11. Bump the release number</dt>
+<dt>10. Bump the release number</dt>
 <dd>Bump the release number in configure.ac, adding a 'dev' suffix
 so tarball instances pulled from the repo will be clearly
 distinguishable from the next public release.</dd>
 
-<dt>12. Announce the release</dt>
+<dt>11. Announce the release</dt>
 <dd>Announce the release, and the resumption of regular commits, on
-the mailing lists.</dd>
+the dev list.</dd>
 </dl>
 
 <h2>Packaging links</h2>

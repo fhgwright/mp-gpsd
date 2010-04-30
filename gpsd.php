@@ -1,9 +1,8 @@
 <?php
 
-# $Id$
 #$CSK: gpsd.php,v 1.39 2006/11/21 22:31:10 ckuethe Exp $
 
-# Copyright (c) 2006 Chris Kuethe <chris.kuethe@gmail.com>
+# Copyright (c) 2006,2010 Chris Kuethe <chris.kuethe@gmail.com>
 #
 # Permission to use, copy, modify, and distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
@@ -18,8 +17,27 @@
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 global $head, $blurb, $title, $googlemap, $autorefresh, $footer, $gmap_key;
-global $GPS, $server, $advertise, $port, $magic, $swap_ew, $magic;
-$magic = 1; # leave this set to 1
+global $server, $advertise, $port, $open, $swap_ew, $testmode;
+$testmode = 1; # leave this set to 1
+
+# Public script parameters:
+#   host: host name or address where GPSd runs. Default: from config file
+#   port: port of GPSd. Default: from config file
+#   op=view: show just the skyview image instead of the whole HTML page
+#     sz=small: used with op=view, display a small (240x240px) skyview
+#   op=json: respond with the GPSd POLL JSON structure
+#     jsonp=prefix: used with op=json, wrap the POLL JSON in parentheses
+#                   and prepend prefix
+
+# If you're running PHP with the Suhosin patch (like the Debian PHP5 package),
+# it may be necessary to increase the value of the
+# suhosin.get.max_value_length parameter to 2048. The imgdata parameter used
+# for displaying the skyview is longer than the default 512 allowed by Suhosin.
+# Debian has the config file at /etc/php5/conf.d/suhosin.ini.
+
+# this script shouldn't take more than a few seconds to run
+set_time_limit(3);
+ini_set('max_execution_time', 3);
 
 if (!file_exists("gpsd_config.inc"))
 	write_config();
@@ -27,10 +45,34 @@ if (!file_exists("gpsd_config.inc"))
 require_once("gpsd_config.inc");
 
 # sample data
-$resp = 'GPSD,S=2,P=53.527167 -113.530168,A=704.542,M=3,Q=10 1.77 0.80 0.66 0.61 1.87,Y=MID9 1158081774.000000 12:25 24 70 42 1:4 13 282 36 1:23 87 196 48 1:6 9 28 29 1:16 54 102 47 1:20 34 190 45 1:2 12 319 36 1:13 52 292 46 1:24 12 265 0 0:1 8 112 41 1:27 16 247 40 1:122 23 213 31 0:';
+$resp = <<<EOF
+{"class":"POLL","timestamp":1270517274.846,"active":1,
+ "fixes":[{"class":"TPV","tag":"MID41","device":"/dev/ttyUSB0",
+           "time":1270517264.240,"ept":0.005,"lat":40.035093060,
+           "lon":-75.519748733,"alt":31.1,"track":99.4319,
+           "speed":0.123,"mode":3}],
+ "skyviews":[{"class":"SKY","tag":"MID41","device":"/dev/ttyUSB0",
+              "time":1270517264.240,"hdop":9.20,"vdop":12.1,
+              "satellites":[{"PRN":16,"el":55,"az":42,"ss":36,"used":true},
+                            {"PRN":19,"el":25,"az":177,"ss":0,"used":false},
+                            {"PRN":7,"el":13,"az":295,"ss":0,"used":false},
+                            {"PRN":6,"el":56,"az":135,"ss":32,"used":true},
+                            {"PRN":13,"el":47,"az":304,"ss":0,"used":false},
+                            {"PRN":23,"el":66,"az":259,"ss":40,"used":true},
+                            {"PRN":20,"el":7,"az":226,"ss":0,"used":false},
+                            {"PRN":3,"el":52,"az":163,"ss":32,"used":true},
+                            {"PRN":31,"el":16,"az":102,"ss":0,"used":false}
+                           ]
+             }
+            ]
+}
+EOF;
+
+
 
 # if we're passing in a query, let's unpack and use it
-if (isset($_GET['imgdata']) && isset($_GET['op']) && ($_GET['op'] == 'view')){
+$op = isset($_GET['op']) ? $_GET['op'] : '';
+if (isset($_GET['imgdata']) && $op == 'view'){
 	$resp = base64_decode($_GET['imgdata']);
 	if ($resp){
 		gen_image($resp);
@@ -45,30 +87,28 @@ if (isset($_GET['imgdata']) && isset($_GET['op']) && ($_GET['op'] == 'view')){
 		if (!preg_match('/\D/', $_GET['port']) && ($port>0) && ($port<65536))
 			$port = $_GET['port'];
 
-	if ($magic){
+	if ($testmode){
 		$sock = @fsockopen($server, $port, $errno, $errstr, 2);
-		@fwrite($sock, "J=1,W=1\n");	# watcher mode and buffering
-		$z = 0;
-		do {
-			$resp = @fread($sock, 384);
-			$z++;
-		} while ((strncmp($resp, 'GPSD,O=', 7) || (
-			strncmp($resp, 'GPSD,O=', 7) == 0 &&
-			strlen($resp) <= 8)) &&
-			$z < 6);
-		@fwrite($sock, "SPAMQY\n");	# Query what we actually want
-		# the O report doesn't give us satellite usage or DOP
-		$resp = @fread($sock, 384);
+		@fwrite($sock, "?POLL;\n");
+		for($tries = 0; $tries < 10; $tries++){
+			$resp = @fread($sock, 1536); # SKY can be pretty big
+			if (preg_match('/{"class":"POLL".+}/i', $resp, $m)){
+				$resp = $m[0];
+				break;
+			}
+		}
 		@fclose($sock);
+		if (!$resp)
+			$resp = '{"class":"ERROR","message":"no response from GPS daemon"}';
 	}
 }
 
-if (isset($_GET['op']) && ($_GET['op'] == 'view')){
+if ($op == 'view')
 	gen_image($resp);
-} else {
-	parse_pvt($resp);
+else if ($op == 'json')
+	write_json($resp);
+else
 	write_html($resp);
-}
 
 exit(0);
 
@@ -146,38 +186,36 @@ function azel2xy($az, $el, $sz){
 }
 
 function splot($im, $sz, $C, $e){
-	list($sv, $el, $az, $snr, $u) = $e;
-
-	if ((0 == $sv) || (0 == $az + $el + $snr) ||
-	    ($az < 0) || ($el < 0))
+	if ((0 == $e['PRN']) || (0 == $e['az'] + $e['el'] + $e['ss']) ||
+	    ($e['az'] < 0) || ($e['el'] < 0))
 		return;
 
 	$color = $C['brightgreen'];
-	if ($snr < 40)
+	if ($e['ss'] < 40)
 		$color = $C['darkgreen'];
-	if ($snr < 35)
+	if ($e['ss'] < 35)
 		$color = $C['yellow'];
-	if ($snr < 30)
+	if ($e['ss'] < 30)
 		$color = $C['red'];
-	if ($el<10)
+	if ($e['el']<10)
 		$color = $C['blue'];
-	if ($snr < 10)
+	if ($e['ss'] < 10)
 		$color = $C['black'];
 
-	list($x, $y) = azel2xy($az, $el, $sz);
+	list($x, $y) = azel2xy($e['az'], $e['el'], $sz);
 
 	$r = 12;
 	if (isset($_GET['sz']) && ($_GET['sz'] == 'small'))
 		$r = 8;
 
-	imageString($im, 3, $x+4, $y+4, $sv, $C['black']);
-	if ($u)
-		if ($sv > 32)
+	imageString($im, 3, $x+4, $y+4, $e['PRN'], $C['black']);
+	if ($e['used'] == true)
+		if ($e['PRN'] > 32)
 			imageFilledDiamond($im, $x, $y, $r, $color);
 		else
 			imageFilledArc($im, $x, $y, $r, $r, 0, 360, $color, 0);
 	else
-		if ($sv > 32)
+		if ($e['PRN'] > 32)
 			imageDiamond($im, $x, $y, $r, $color);
 		else
 			imageArc($im, $x, $y, $r, $r, 0, 360, $color);
@@ -204,7 +242,6 @@ function imageFilledDiamond($im, $x, $y, $r, $color){
 		$t -= 0.5;
 	}
 }       
-
 
 function elevation($im, $sz, $C, $a){
 	$b = 90 - $a;
@@ -253,15 +290,14 @@ function skyview($im, $sz, $C){
 }
 
 function gen_image($resp){
-	global $magic;
-
-	$sz = 640;
+	$sz = 600;
 	if (isset($_GET['sz']) && ($_GET['sz'] == 'small'))
 		$sz = 240;
 
-	if (!preg_match('/,Y=\S+ [0-9\.]+ (\d+):/', $resp, $m))
-		die("can't parse gpsd's response");
-	$n = $m[1];	
+	$GPS = json_decode($resp, true);
+	if ($GPS['class'] != "POLL"){
+		die("json_decode error: $resp");
+	}
 
 	$im = imageCreate($sz, $sz);
 	$C = colorsetup($im);
@@ -269,30 +305,13 @@ function gen_image($resp){
 	if ($sz > 240)
 		legend($im, $sz, $C);
 
-	$s = explode(':', $resp);
-	for($i = 1; $i <= $n; $i++){
-		$e = explode(' ', $s[$i]);
-		splot($im, $sz, $C, $e);
+	for($i = 0; $i < count($GPS['skyviews'][0]['satellites']); $i++){
+		splot($im, $sz, $C, $GPS['skyviews'][0]['satellites'][$i]);
 	}
 
 	header("Content-type: image/png");
 	imagePNG($im);
 	imageDestroy($im);
-}
-
-function clearstate(){
-	global $GPS;
-
-	$GPS['loc'] = '';
-	$GPS['alt'] = 'Unavailable';
-	$GPS['lat'] = 'Unavailable';
-	$GPS['lon'] = 'Unavailable';
-	$GPS['sat'] = 'Unavailable';
-	$GPS['hdop'] = 'Unavailable';
-	$GPS['dgps'] = 'Unavailable';
-	$GPS['fix'] = 'Unavailable';
-	$GPS['gt'] = '';
-	$GPS['lt'] = '';
 }
 
 function dfix($x, $y, $z){
@@ -304,84 +323,23 @@ function dfix($x, $y, $z){
 	return $x;
 }
 
-function parse_pvt($resp){
-	global $GPS, $magic;
-
-	clearstate();
-
-	if (strlen($resp)){
-		$GPS['fix']  = 'No';
-		if (preg_match('/M=(\d),/', $resp, $m)){
-			switch ($m[1]){
-			case 2:
-				$GPS['fix']  = '2D';
-				break;
-			case 3:
-				$GPS['fix']  = '3D';
-				break;
-			case 4:
-				$GPS['fix']  = '3D (PPS)';
-				break;
-			default:
-				$GPS['fix']  = "No";
-			}
-		}
-
-		if (preg_match('/S=(\d),/', $resp, $m)){
-			$GPS['fix'] .= ' (';
-			if ($m[1] != 2){
-				$GPS['fix'] .= 'not ';
-			}
-			$GPS['fix'] .= 'DGPS corrected)';
-		}
-
-		if (preg_match('/A=([0-9\.-]+),/', $resp, $m)){
-			$GPS['alt'] = ($m[1] . ' m');
-		}
-
-		if (preg_match('/P=([0-9\.-]+) ([0-9\.-]+),/',
-		    $resp, $m)){
-			$GPS['lat'] = $m[1]; $GPS['lon'] = $m[2];
-		}
-
-		if (preg_match('/Q=(\d+) ([0-9\.]+) ([0-9\.]+) ([0-9\.]+) ([0-9\.]+)/', $resp, $m)){
-			$GPS['sat']  = $m[1]; $GPS['gdop'] = $m[2];
-			$GPS['hdop'] = $m[3]; $GPS['vdop'] = $m[4];
-		}
-
-		if ($GPS['lat'] != 'Unavailable' &&
-		    $GPS['lon'] != 'Unavailable'){
-			$GPS['lat'] = dfix($GPS['lat'], 'N', 'S');
-			$GPS['lon'] = dfix($GPS['lon'], 'E', 'W');
-
-			$GPS['loc'] = sprintf('at %s / %s',
-			    $GPS['lat'], $GPS['lon']);
-		}
-
-		if (preg_match('/^No/', $GPS['fix'])){
-			clearstate();
-		}
-	} else
-		$GPS['loc'] = '';
-
-	$GPS['gt'] = time();
-	$GPS['lt'] = date("r", $GPS['gt']);
-	$GPS['gt'] = gmdate("r", $GPS['gt']);
-}
-
 function write_html($resp){
-	global $GPS, $sock, $errstr, $errno, $server, $port, $head, $body;
+	global $sock, $errstr, $errno, $server, $port, $head, $body, $open;
 	global $blurb, $title, $autorefresh, $googlemap, $gmap_key, $footer;
-	global $magic;
+	global $testmode, $advertise;
+
+	$GPS = json_decode($resp, true);
+	if ($GPS['class'] != 'POLL'){
+		die("json_decode error: $resp");
+	}
 
 	header("Content-type: text/html; charset=UTF-8");
 
 	global $lat, $lon;
-	$lat = (float)$GPS['lat'];
-	$lon = -(float)$GPS['lon'];
+	$lat = (float)$GPS['fixes'][0]['lat'];
+	$lon = (float)$GPS['fixes'][0]['lon'];
 	$x = $server; $y = $port;
 	$imgdata = base64_encode($resp);
-	include("gpsd_config.inc"); # breaks things
 	$server = $x; $port = $y;
 
 	if ($autorefresh > 0)
@@ -395,9 +353,8 @@ function write_html($resp){
 		$gmap_body = 'onload="Load()" onunload="GUnload()"';
 		$gmap_code = gen_gmap_code();
 	}
-	$svn ='$Rev$';
 	$part1 = <<<EOF
-<?xml version="1.0" encoding="ISO-8859-1"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
     "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -406,7 +363,7 @@ function write_html($resp){
 {$gmap_head}
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
 <meta http-equiv="Content-Language" content="en,en-us"/>
-<title>{$title} - GPSD Test Station {$GPS['loc']}</title>
+<title>{$title} - GPSD Test Station {$lat}, {$lon}</title>
 {$autorefresh}
 <style>
 .warning {
@@ -440,7 +397,7 @@ EOF;
 	if (!strlen($advertise))
 		$advertise = $server;
 
-	if ($magic && !$sock)
+	if ($testmode && !$sock)
 		$part2 = "";
 	else
 		$part2 = <<<EOF
@@ -448,20 +405,24 @@ EOF;
 
 <td rowspan="4" align="center" valign="top">
 <img src="?op=view&amp;imgdata={$imgdata}"
-width="640" height="640"/>
+width="600" height="600"/>
 <br clear="all"/>
 <p class="caption">A filled circle means the satellite was used in
 the last fix. Green-yellow-red colors indicate signal strength in dB, 
  green=most and red=least.  Diamonds indicate SBAS satellites.</p>
-</td>
+{$gmap_code}</td>
 </tr>
 EOF;
 
-	$part3 = <<<EOF
+	if (!$open)
+		$part3 = '';
+	else
+		$part3 = <<<EOF
 <!-- ------------------------------------------------------------ -->
 
 <tr><td align="justify">To get real-time information, connect to
-<span class="fixed">telnet://{$advertise}:{$port}/</span> and type "R".<br/>
+<span class="fixed">telnet://{$advertise}:{$port}/</span> and type "?POLL;"
+or "?WATCH={"enable":true,"raw":true}".<br/>
 Use a different server:<br/>
 <form method=GET action="${_SERVER['SCRIPT_NAME']}">
 <input name="host" value="{$advertise}">:
@@ -472,26 +433,30 @@ Use a different server:<br/>
 </tr>
 EOF;
 
-	if ($magic && !$sock)
+	if ($testmode && !$sock)
 		$part4 = "<tr><td><font color='red'>The gpsd instance that this page monitors is not running.</font></td></tr>";
-	else
+	else {
+		$nsv = count($GPS['skyviews'][0]['satellites']);
+		$ts = gmdate("r", $GPS['fixes'][0]['time']);
 		$part4 = <<<EOF
 <!-- ------------------------------------------------------------ -->
         <tr><td align=center valign=top>
 	<table border=1>
 	<tr><td colspan=2 align=center><b>Current Information</b></td></tr>
-	<tr><td>Time (Local)</td><td>{$GPS['lt']}</td></tr>
-	<tr><td>Time (UTC)</td><td>{$GPS['gt']}</td></tr>
-	<tr><td>Latitude</td><td>{$GPS['lat']}</td></tr>
-	<tr><td>Longitude</td><td>{$GPS['lon']}</td></tr>
-	<tr><td>Altitude</td><td>{$GPS['alt']}</td></tr>
-	<tr><td>Fix Type</td><td>{$GPS['fix']}</td></tr>
-	<tr><td>Satellites</td><td>{$GPS['sat']}</td></tr>
-	<tr><td>HDOP</td><td>{$GPS['hdop']}</td></tr>
+	<tr><td>Time (UTC)</td><td>{$ts}</td></tr>
+	<tr><td>Latitude</td><td>{$GPS['fixes'][0]['lat']}</td></tr>
+	<tr><td>Longitude</td><td>{$GPS['fixes'][0]['lon']}</td></tr>
+	<tr><td>Altitude</td><td>{$GPS['fixes'][0]['alt']}</td></tr>
+	<tr><td>Fix Type</td><td>{$GPS['fixes'][0]['mode']}</td></tr>
+	<tr><td>Satellites</td><td>{$nsv}</td></tr>
+	<tr><td>HDOP</td><td>{$GPS['skyviews'][0]['hdop']}</td></tr>
 	</table>
 </tr>
-<tr><td><small>{$resp}</small></td></tr>
+<!-- raw response
+{$resp}
+-->
 EOF;
+	}
 
 	$part5 = <<<EOF
 </table>
@@ -501,7 +466,6 @@ EOF;
 
 <hr/>
 <span class="administrivia">This script is distributed by the <a href="http://gpsd.berlios.de">GPSD project</a>.</span><br/>
-<span class="administrivia">{$svn}<br/>
 </body>
 </body>
 
@@ -509,6 +473,14 @@ EOF;
 
 print $part1 . $part2 . $part3 . $part4 . $part5;
 
+}
+
+function write_json($resp){
+	header('Content-Type: text/javascript');
+	if (isset($_GET['jsonp']))
+		print "{$_GET['jsonp']}({$resp})";
+	else
+		print $resp;
 }
 
 function write_config(){
@@ -526,6 +498,7 @@ function write_config(){
 \$googlemap = 0; # set to 1 if you want to have a google map
 \$gmap_key = 'GetYourOwnGoogleKey'; # your google API key goes here
 \$swap_ew = 0; # set to 1 if you don't understand projections
+\$open = 0; # set to 1 to show the form to change the GPSd server
 
 ## You can read the header, footer and blurb from a file...
 # \$head = file_get_contents('/path/to/header.inc');

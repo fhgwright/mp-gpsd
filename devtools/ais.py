@@ -2,6 +2,9 @@
 #
 # A Python AIVDM/AIVDO decoder
 #
+# This file is Copyright (c) 2010 by the GPSD project
+# BSD terms apply: see the file COPYING in the distribution root for details.
+#
 # This decoder works by defining a declarative pseudolanguage in which
 # to describe the process of extracting packed bitfields from an AIS
 # message, a set of tables which contain instructions in the pseudolanguage,
@@ -427,7 +430,7 @@ type17 = (
              formatter=short_latlon_format),
     bitfield("lat",         17, 'signed',   0xd548,  "Latitude",
              formatter=short_latlon_format),
-    spare(2),
+    spare(5),
     bitfield("data",      736,  'raw',      None,    "DGNSS data"),
     )
 
@@ -1034,4 +1037,4 @@ if __name__ == "__main__":
                 print "%d\t%d" % (msgtype, frequencies[msgtype])
     except KeyboardInterrupt:
         pass
-# $Id$
+# End

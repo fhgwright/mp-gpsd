@@ -1,9 +1,8 @@
-/* $Id$ */
 /*
  * Copyright (C) 2005 Alfredo Pironti
  *
  * This software is distributed under a BSD-style license. See the
- * file "COPYING" for more information.
+ * file "COPYING" in the top-level directory of the disribution for details.
  *
  */
 #include <cstdlib>
@@ -54,6 +53,10 @@ struct gps_data_t* gpsmm::poll(void) {
 	else {
 		return backup();
 	}
+}
+
+int gpsmm::close(void) {
+	return gps_close(gps_data);
 }
 
 bool gpsmm::waiting(void) {

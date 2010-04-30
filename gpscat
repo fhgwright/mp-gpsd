@@ -1,4 +1,7 @@
-#!@PYTHON@
+#!/usr/bin/env python
+#
+# This file is Copyright (c) 2010 by the GPSD project
+# BSD terms apply: see the file COPYING in the distribution root for details.
 #
 # Display GPS output.  Hexify it if necessary.
 #
@@ -58,9 +61,6 @@ if __name__ == '__main__':
                 debuglevel = BASELEVEL + int(val)
             elif switch == '-h':
                 sys.stderr.write("usage: gpscat [-s speed] serial-port\n")
-                raise SystemExit, 0
-            elif switch == '-V':
-                sys.stderr.write("gpscat at svn revision $Rev$\n")
                 raise SystemExit, 0
 
         tty = os.open(arguments[0], os.O_RDWR)

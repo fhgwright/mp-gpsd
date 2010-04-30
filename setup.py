@@ -1,4 +1,6 @@
-# $Id$
+# This file is Copyright (c) 2010 by the GPSD project
+# BSD terms apply: see the file COPYING in the distribution root for details.
+#
 # Creates build/lib.linux-${arch}-${pyvers}/gpspacket.so,
 # where ${arch} is an architecture and ${pyvers} is a Python version.
 
@@ -24,12 +26,12 @@ try:
     # Doesn't matter what it is, just that we have one
     if sys.argv[where+1]:
         manpages=[('share/man/man1', ['gpscat.1', 'gpsfake.1','gpsprof.1'])]
-        print "Installing manual pages, generator is", sys.argv[where+1]
+        print("Installing manual pages, generator is %s" %( sys.argv[where+1]))
     sys.argv = sys.argv[:where] + sys.argv[where+2:]
 except ValueError:
     pass
 if not manpages:
-    print "No XML processor, omitting manual-page installation."
+    print("No XML processor, omitting manual-page installation.")
 
 if not 'clean' in sys.argv:
     abs_builddir = ("abs_builddir" in os.environ) and os.environ["abs_builddir"] or ""
@@ -44,22 +46,36 @@ if not 'clean' in sys.argv:
         # dependency of f_name has been updated?
         if not os.path.exists(os.path.join(abs_builddir, f_name)):
             cmd = cdcmd + MAKE + " '" + f_name + "'"
-            print cmd
+            print(cmd)
             make_out = os.popen(cmd)
-            print make_out.read()
+            print(make_out.read())
             if make_out.close():
                 sys.exit(1)
             created_files.append(f_name)
 
 gpspacket_sources = ["gpspacket.c", "packet.c", "isgps.c",
             "driver_rtcm2.c", "strl.c", "hex.c", "crc24q.c"]
+include_dirs = [ os.path.realpath(os.path.dirname(__file__)) ]
+version_out = os.popen(MAKE + " version")
+version = version_out.read()
+print(version)
+if version_out.close():
+    sys.exit(1)
+version = version.split('\n')[-2]
+version = version.strip()
 
-setup( name="gpsd",
-       version="1.0",
+setup( name="gps",
+       version=version,
+       description='Python libraries for the gpsd service daemon',
+       url="http://gpsd.berlios.de/",
+       author='the GPSD project',
+       author_email="gpsd-dev@lists.berlios.de",
+       license="BSD",
        ext_modules=[
-    	Extension("gps.packet", gpspacket_sources),
-    	Extension("gps.client", ["gpsclient.c", "geoid.c", "gpsdclient.c", "strl.c"])
+    	Extension("gps.packet", gpspacket_sources, include_dirs=include_dirs),
+    	Extension("gps.clienthelpers", ["gpsclient.c", "geoid.c", "gpsdclient.c", "strl.c"], include_dirs=include_dirs)
         ],
        packages = ['gps'],
-       data_files=[('bin', ['gpscat','gpsfake','gpsprof'])] + manpages
+       scripts = ['gpscat','gpsfake','gpsprof', 'xgps'],
+       data_files= manpages
      )

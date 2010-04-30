@@ -1,4 +1,7 @@
-/* $Id$ */
+/*
+ * This file is Copyright (c) 2010 by the GPSD project
+ * BSD terms apply: see the file COPYING in the distribution root for details.
+ */
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -8,12 +11,15 @@
 #ifndef S_SPLINT_S
 #include <unistd.h>
 #endif /* S_SPLINT_S */
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include "gpsd.h"
 
 static int verbose = 0;
 
-void gpsd_report(int errlevel, const char *fmt, ... )
+void gpsd_report(int errlevel, const char *fmt, ...)
 /* assemble command in printf(3) style, use stderr or syslog */
 {
     if (errlevel <= verbose) {
@@ -21,30 +27,33 @@ void gpsd_report(int errlevel, const char *fmt, ... )
 	va_list ap;
 
 	buf[0] = '\0';
-	va_start(ap, fmt) ;
-	(void)vsnprintf(buf + strlen(buf), sizeof(buf)-strlen(buf), fmt, ap);
+	va_start(ap, fmt);
+	(void)vsnprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), fmt,
+			ap);
 	va_end(ap);
 
 	(void)fputs(buf, stderr);
     }
 }
 
-struct map {
-    char	*legend;
-    char	test[MAX_PACKET_LENGTH+1];
-    size_t	testlen;
-    int 	garbage_offset;
-    int 	type;
+struct map
+{
+    char *legend;
+    char test[MAX_PACKET_LENGTH + 1];
+    size_t testlen;
+    int garbage_offset;
+    int type;
 };
 
+/* *INDENT-OFF* */
 /*@ -initallelements +charint -usedef @*/
-static struct map tests[] = {
+static struct map singletests[] = {
     /* NMEA tests */
     {
 	.legend = "NMEA packet with checksum (1)",
 	.test = "$GPVTG,308.74,T,,M,0.00,N,0.0,K*68\r\n",
 	.testlen = 36,
-	0,
+	.garbage_offset = 0,
 	NMEA_PACKET,
     },
     {
@@ -230,29 +239,47 @@ static struct map tests[] = {
     },
 };
 /*@ +initallelements -charint +usedef @*/
+/* *INDENT-ON* */
+
+/* *INDENT-OFF* */
+/*@ -initallelements +charint -usedef @*/
+static struct map runontests[] = {
+    /* NMEA tests */
+    {
+	.legend = "Double NMEA packet with checksum",
+	.test = "$GPVTG,308.74,T,,M,0.00,N,0.0,K*68\r\n$GPGGA,110534.994,4002.1425,N,07531.2585,W,0,00,50.0,172.7,M,-33.8,M,0.0,0000*7A\r\n",
+	.testlen = 118,
+	0,
+	NMEA_PACKET,
+    },
+};
+/*@ +initallelements -charint +usedef @*/
+/* *INDENT-ON* */
 
 static int packet_test(struct map *mp)
 {
     struct gps_packet_t packet;
     int failure = 0;
 
-    packet.type = BAD_PACKET;
-    packet.state = 0;
-    /*@i@*/memcpy(packet.inbufptr = packet.inbuffer, mp->test, mp->testlen);
+    packet_init(&packet);
+    /*@i@*/ memcpy(packet.inbufptr = packet.inbuffer, mp->test, mp->testlen);
     packet.inbuflen = mp->testlen;
     /*@ -compdef -uniondef -usedef -formatcode @*/
     packet_parse(&packet);
     if (packet.type != mp->type)
-	printf("%2zi: %s test FAILED (packet type %d wrong).\n", mp-tests+1, mp->legend, packet.type);
-    else if (memcmp(mp->test + mp->garbage_offset, packet.outbuffer, packet.outbuflen)) {
-	printf("%2zi: %s test FAILED (data garbled).\n", mp-tests+1, mp->legend);
+	printf("%2zi: %s test FAILED (packet type %d wrong).\n",
+	       mp - singletests + 1, mp->legend, packet.type);
+    else if (memcmp
+	     (mp->test + mp->garbage_offset, packet.outbuffer,
+	      packet.outbuflen)) {
+	printf("%2zi: %s test FAILED (data garbled).\n", mp - singletests + 1,
+	       mp->legend);
 	++failure;
     } else
-	printf("%2zi: %s test succeeded.\n", mp-tests+1, mp->legend);
+	printf("%2zi: %s test succeeded.\n", mp - singletests + 1, mp->legend);
 #ifdef DUMPIT
-    for (cp = packet.outbuffer; 
-	 cp < packet.outbuffer + packet.outbuflen; 
-	 cp++) {
+    for (cp = packet.outbuffer;
+	 cp < packet.outbuffer + packet.outbuflen; cp++) {
 	if (lexer->type != NMEA_PACKET)
 	    (void)printf(" 0x%02x", *cp);
 	else if (*cp == '\r')
@@ -271,6 +298,25 @@ static int packet_test(struct map *mp)
     return failure;
 }
 
+static void runon_test(struct map *mp)
+{
+    struct gps_packet_t packet;
+    int nullfd = open("/dev/null", O_RDONLY);
+    ssize_t st;
+
+    packet_init(&packet);
+    /*@i@*/ memcpy(packet.inbufptr = packet.inbuffer, mp->test, mp->testlen);
+    packet.inbuflen = mp->testlen;
+    /*@ -compdef -uniondef -usedef -formatcode @*/
+    (void)fputs(mp->test, stdout);
+    do {
+	st = packet_get(nullfd, &packet);
+	printf("packet_parse() returned %zd\n", st);	
+    } while
+	    (st > 0);
+    /*@ +compdef +uniondef +usedef +formatcode @*/
+}
+
 int main(int argc, char *argv[])
 {
     struct map *mp;
@@ -278,24 +324,26 @@ int main(int argc, char *argv[])
     int option, singletest = 0;
 
     verbose = 0;
-    while ((option = getopt(argc, argv, "Vt:v:")) != -1) {
+    while ((option = getopt(argc, argv, "t:v:")) != -1) {
 	switch (option) {
 	case 't':
 	    singletest = atoi(optarg);
 	    break;
 	case 'v':
-	    verbose = atoi(optarg); 
+	    verbose = atoi(optarg);
 	    break;
-	case 'V':
-	    (void)fprintf(stderr, "SVN ID: $Id$ \n");
-	    exit(0);
 	}
     }
 
     if (singletest)
-	failcount += packet_test(tests + singletest - 1);
+	failcount += packet_test(singletests + singletest - 1);
     else
-	for (mp = tests; mp < tests + sizeof(tests)/sizeof(tests[0]); mp++) 
+    {
+	(void)fputs("=== Packet identification tests\n ===", stdout);
+	for (mp = singletests; mp < singletests + sizeof(singletests) / sizeof(singletests[0]); mp++)
 	    failcount += packet_test(mp);
+	(void)fputs("=== EOF with buffer nonempty test ===\n", stdout);
+	runon_test(&runontests[0]);
+    }
     exit(failcount > 0 ? 1 : 0);
 }

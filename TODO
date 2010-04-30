@@ -1,5 +1,3 @@
-$Id$
-
 This is the gpsd to-do list.  If you're viewing it with Emacs, try
 doing Ctl-C Ctl-t and browsing through the outline headers.  Ctl-C Ctl-a 
 will unfold them again.
@@ -10,48 +8,64 @@ For contribution guidelines and internals documentation, please see
 The list of bugs exposed by gpsd in other software has moved to
 <http://gpsd.berlios.de/upstream-bugs.html>.
 
-See also the GPSD bug tracker at 
-<https://developer.berlios.de/bugs/?group_id=2116>
-
 ** Bugs in gpsd and its clients:
 
-*** Support for the True North magnetic compass is currently broken
+*** Tracker bugs
 
-Massimo Burcheri reported that it broke somewhere between rev 3654 and
-3722.  We think this is a shallow bug, but we can't fix it without
-test hardware.  If TNT support is a problem for you, and you can't
-fix the driver yourself and send us the patch, contact Bill Powell 
-<bpowell@tntc.com> at True North Technologies and tell him he needs
-to reverse his refusal to send us an eval unit.
+See the GPSD bug tracker at https://developer.berlios.de/bugs/?group_id=2116
+but don't be surprised if it's empty or very sparse.  Our rate of new defects
+per month is quite low.
 
 *** Driver issues
 
-**** Geodetic fix computation is numerically unstable: 
+**** gpsctl -b should work on UBX, but does not.
 
-In the bu303-nofix.log test, the expected-correct output has an
-altitude of -6378137m, about earth radius, with lat/lon of 180,0.  On
-NetBSD 5.0/i386, the altitude is -6378253m, on NetBSD 5.0/amd64 it is
--6378253m, and on NetBSD 5.0/sparc64 it is -6378171m.  On Linux/i386,
-it is -6378143m.
+Presently this means there's no way to kick a UBX into returning
+binary data.
 
-Altitude is computed by geoid.c:ecef_to_wgs84fix(), which is a pile of
-trig calculations.  As usual, sin() and cos() aren't guaranteed to be
-cross-architecture stable throughout their range. Note that bu303 logs
-with valid fixes have not been problematic.  It is not clear that
-anyone has hand-validated the expected output.
+*** gpsmon failures
 
-(amd64 is what NetBSD labels all implementations of AMD's 64-bit
-architecture; the machine in question above is an Intel CPU under
-Xen.)
+There have been persistent reports of gpsmon failing with 0-length
+reads or select(2) failures, in both daemon-mediated and
+direct-to-device modes.  Cause is unknown, but is related to
+zero-length reads somehow.
 
-**** superstar2.chk:
+** Ports
 
-Packet detection appears to fail completely on big-endian machines.
-Greg Troxel reports this from netbsd-5/sparc64. Output at
-<http://www.lexort.com/gpsd/>. The problem is very likely in the
-packet-checksum computation, which looks a bit dodgy.
+*** Qt port 
+
+Nearly done. Chase Chris Browet <cbro@semperpax.com> about this
+
+*** Windows port
+
+Partially complete. David Ludlow <dave@adsllc.com> is working on it.
 
 ** To do:
+
+*** Write advanced features for TNT Revolution device
+
+The baud-rate switcher in the TNT driver needs to be tested.
+
+gpsmon could support a number of TNT configuration commands, including
+unit changes. See http://gpsd.googlecode.com/truenorth-reference.pdf
+for possibilities.  
+
+Jon Schlueter has one of these on a flock machine, so testing 
+shouldn't be difficult.
+
+*** Python interface rework
+
+The Python client interface is buggy and overcomplicated and needs a
+rethink. (Much of the complication is a hangover from old protocol.)
+
+** Detect old-protocol daeemons from the library.
+
+Might be possible using read-with-timeout.  If so, maybe we don't
+deep-six old protocol support in 3.0 after all. 
+
+** Autodetect old-protocol daemons from library and leave in support?
+
+Might be possible to do this using a read-with-timeout.
 
 *** Finish gpssim
 
@@ -72,13 +86,6 @@ These are used for the '?DEVICE' (old 'B') command.  All work for 8N1.
 
 SiRF, UBX, TSIP, and even Zodiac can support non-8N1 modes; these need
 to be tested.
-
-*** Support the D-Bus signals recognized by libgypsy
-
-Ian Holmes's Gypsy daemon is a pale shadow of GPSD, but his ideas 
-about signalling D-Bus client apps only on fix changes are good.  We
-should support the signal set described here:
-<http://gypsy.freedesktop.org/why-not-gpsd.html>.
 
 *** Command to ship RTCM corrections to a specified device
 
@@ -146,76 +153,6 @@ standard.  We need to find a pair of files consisting of a
 representative set of RTCM3 sentences and some sort of ASCII dump of
 them so we can test whether our analyzer gets all the bitfield
 boundaries right.
-
-*** Do the research to figure out just what is going on with status bits
-
-NMEA actually has *four* kinds of validity bits: Mode, Status, the
-Active/Void bit (some sources interpret 'V' as 'Navigation receiver
-warning'), and in later versions the FAA indicator mode.  Sentences
-that have an Active/Void send V when there is no fix, so the position
-data is no good.
-
-Let's look at which sentences send what:
-
-                GPRMC     GPGLL     GPGGA     GPGSA
-Returns fix      Yes       Yes       Yes        No
-Returns status   No        Yes       Yes        No
-Returns mode     No        No        No         Yes
-Returns A/V      Yes       Yes       No         No
-
-In addition, some sentences use empty fields to signify invalid data.
-
-My first conclusion from looking at this table is that the designers
-of NMEA 0183 should be hung for galloping incompetence.  But never mind that.
-What are we to make of this mess?
-
-The fact that the FV18 sends GPRMC/GPGLL/GPGGA but not GPGSA
-argues that GPGSA is optional.  I don't see how it can be, since it
-seems to be the only status bit that applies to altitude.  Just how are
-we supposed to know when altitude is valid if it doesn't ship GSA?  
-Can a receiver ever ship a non-empty but invalid altitude?
-
-Which of these override which other bits?  I don't think status is ever
-nonzero when mode is zero. So status overrides mode.  What other such
-relationships are there?
-
-News flash: it develops that the "Navigation receiver warning" is
-supposed to indicate a valid fix that has a DOP too high or fails
-an elevation test.
-
-*** IPv6 Support
-
-gpsd should have support for IPv6.  Steps to get to full IPv6 support
-include:
-
-**** Detect IPv6 support and getaddrinfo(3) in configure.ac
-
-This web page may be helpful, but is probably overkill - the world has
-gotten simpler since then:
-http://cvs.deepspace6.net/view/example-ipv6-package/configure.ac?rev=1.2&content-type=text/vnd.viewcvs-markup
-
-**** Change from one listening socket to N
-
-Having multiple sockets will also support future changes to listen on
-specific addresses, rather than the -G option for INADDR_ANY instead
-of INADDR_LOCAL.
-
-**** If v6 support is present, open both AF_INET and AF_INET6.
-
-If either fails, just skip it.  gpsd should run on systems without
-"options INET" but with only "options INET6" (BSD) or the Linux
-equivalent.
-
-**** In libgps, if getaddrinfo is present, use it instead of gethostbyname.
-
-Loop through all the returned addresses until one works.  See telnet
-in NetBSD for an example (src/usr.bin/telnet/commands.c).
-
-**** (perhaps) Add a flag to connection libraries to force v4 or v6.
-
-Also add command line flags to force the library flags.  Perhaps this
-is not necessary; telnet and ntp have this feature but postfix and
-sendmail don't seem to.
 
 ** Future features (?)
 
@@ -299,16 +236,6 @@ http://www.twinsun.com/tz/tz-link.htm
 
 Free time-zone maps of the U.S.
 http://www.manifold.net/download/freemaps.html
-
-** Documentation
-
-*** GeoClue
-
-Figure out how gpsd should relate to GeoClue and explain this.  A
-particular question is the dbus interface to gpsd and the GeoClue
-provider interface.  There is quite possibly nothing to do; GeoClue
-using gpsd's published interfaces seems sensible.
-http://www.freedesktop.org/wiki/Software/GeoClue
 
 Local variables:
 mode: outline

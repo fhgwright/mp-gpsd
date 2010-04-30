@@ -1,4 +1,3 @@
-/* $Id$ */
 /*
  * Tachometer Widget Implementation
  *
@@ -6,6 +5,9 @@
  * Revised by Shinji Sumimoto, 1989/9 (xtachos)
  * Modifications : ilham@mit.edu   (July 10 '90)
  * Cleaned up and simplified by Eric S. Raymond, December 2004.
+ *
+ * This file is Copyright (c) 2010 by the GPSD project
+ * BSD terms apply: see the file COPYING in the distribution root for details.
  */
 #include <sys/types.h>
 #include <X11/IntrinsicP.h>
@@ -74,24 +76,6 @@ static StringRec	char_data[] = {
 			{12, 5},
 			{2, 5},
 			 {2, -5}}}};
-#if 0
-{{{{			{2, -5}}},
-		{ 5, 				/* "%" */
-			{{17, -5},
-			{20, -5},
-			{20, -2},
-			{17, -2},
-			{17, -5}}},
-		{ 2, 
-			{{27, -5},
-			{17, 5}}},
-		{5, 	
-			{{24, 2},
-			{27, 2},
-			{27, 5},
-			{24, 5},
-			{24, 2}}}};
-#endif
 /*@ -initallelements @*/
 /*@ -charint @*/
 

@@ -1,25 +1,26 @@
-#!/bin/bash 
+#!/bin/sh 
 #
-# Upload gpsd docs
+# Upload gpsd website contents.
+# Plesase do not introduce bashims into this script.
 #
 # No CGI copy yet, hosting site won't let us send mail
 #
 webdir=shell.berlios.de:/home/groups/gpsd/htdocs
 #cgidir=shell.berlios.de:/home/groups/gpsd/cgi-bin
 
-make all	# Ensure all derived HTML and checksums are up to date.
+# Ensure all derived HTML and checksums are up to date.
+(cd ..; make website)
 
 if [ $1 ]
 then
     for f in $*; do scp $f $webdir/$f; done
 else
-    (cd performance; xmlto xhtml-nochunks performance.xml)
-    scp start-kismet *.html *.png *.pdf *.gif *.css *.js *.txt \
-	performance/{*.html,*.txt,*.png} \
+    scp *.html *.png *.gif *.css *.js *.txt \
+	performance/*.html performance/*.txt performance/*.png \
 	../TODO ../NEWS \
 	$webdir
     #scp gps_report.cgi $cgidir
 fi
 
-# To refresh the vendor-docs and standards directories just do this:
-#scp -r standards library vendor-docs $webdir
+# End
+

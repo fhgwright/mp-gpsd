@@ -1,4 +1,3 @@
-/* $Id$ */
 /*
  * Driver for AIS/AIVDM messages.
  *
@@ -7,6 +6,9 @@
  * Code for message types 1-15, 18-21, and 24 has been tested against
  * live data with known-good decodings. Code for message types 16-17,
  * 22-23, and 25-26 has not.
+ *
+ * This file is Copyright (c) 2010 by the GPSD project
+ * BSD terms apply: see the file COPYING in the distribution root for details.
  */
 #include <sys/types.h>
 #include <stdio.h>
@@ -34,14 +36,15 @@ static void from_sixbit(char *bitvec, uint start, int count, char *to)
     /* the real string causes a splint internal error */
     const char sixchr[] = "abcd";
 #else
-    const char sixchr[64] = "@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^- !\"#$%&`()*+,-./0123456789:;<=>?";
+    const char sixchr[64] =
+	"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^- !\"#$%&`()*+,-./0123456789:;<=>?";
 #endif /* S_SPLINT_S */
     int i;
     char newchar;
 
     /* six-bit to ASCII */
-    for (i = 0; i < count-1; i++) {
-	newchar = sixchr[ubits(bitvec, start + 6*i, 6U)];
+    for (i = 0; i < count - 1; i++) {
+	newchar = sixchr[ubits(bitvec, start + 6 * i, 6U)];
 	if (newchar == '@')
 	    break;
 	else
@@ -49,7 +52,7 @@ static void from_sixbit(char *bitvec, uint start, int count, char *to)
     }
     to[i] = '\0';
     /* trim spaces on right end */
-    for (i = count-2; i >= 0; i--)
+    for (i = count - 2; i >= 0; i--)
 	if (to[i] == ' ' || to[i] == '@')
 	    to[i] = '\0';
 	else
@@ -58,24 +61,24 @@ static void from_sixbit(char *bitvec, uint start, int count, char *to)
 }
 
 /*@ +charint @*/
-bool aivdm_decode(const char *buf, size_t buflen, 
+bool aivdm_decode(const char *buf, size_t buflen,
 		  struct aivdm_context_t *ais_context, struct ais_t *ais)
 {
 #ifdef __UNUSED_DEBUG__
     char *sixbits[64] = {
 	"000000", "000001", "000010", "000011", "000100",
 	"000101", "000110", "000111", "001000", "001001",
-	"001010", "001011", "001100", "001101",	"001110",
+	"001010", "001011", "001100", "001101", "001110",
 	"001111", "010000", "010001", "010010", "010011",
-	"010100", "010101", "010110", "010111",	"011000",
-	"011001", "011010", "011011", "011100",	"011101",
-	"011110", "011111", "100000", "100001",	"100010",
-	"100011", "100100", "100101", "100110",	"100111",
-	"101000", "101001", "101010", "101011",	"101100",
-	"101101", "101110", "101111", "110000",	"110001",
-	"110010", "110011", "110100", "110101",	"110110",
-	"110111", "111000", "111001", "111010",	"111011",
-	"111100", "111101", "111110", "111111",   
+	"010100", "010101", "010110", "010111", "011000",
+	"011001", "011010", "011011", "011100", "011101",
+	"011110", "011111", "100000", "100001", "100010",
+	"100011", "100100", "100101", "100110", "100111",
+	"101000", "101001", "101010", "101011", "101100",
+	"101101", "101110", "101111", "110000", "110001",
+	"110010", "110011", "110100", "110101", "110110",
+	"110111", "111000", "111001", "111010", "111011",
+	"111100", "111101", "111110", "111111",
     };
 #endif /* __UNUSED_DEBUG__ */
     int nfields = 0;
@@ -93,8 +96,7 @@ bool aivdm_decode(const char *buf, size_t buflen,
     (void)strlcpy((char *)ais_context->fieldcopy, buf, buflen);
     ais_context->field[nfields++] = (unsigned char *)buf;
     for (cp = ais_context->fieldcopy;
-	 cp < ais_context->fieldcopy + buflen;
-	 cp++)
+	 cp < ais_context->fieldcopy + buflen; cp++)
 	if (*cp == ',') {
 	    *cp = '\0';
 	    ais_context->field[nfields++] = cp + 1;
@@ -104,9 +106,7 @@ bool aivdm_decode(const char *buf, size_t buflen,
     data = ais_context->field[5];
     pad = ais_context->field[6][0];
     gpsd_report(LOG_PROG, "await=%d, part=%d, data=%s\n",
-		ais_context->await,
-		ais_context->part,
-		data);
+		ais_context->await, ais_context->part, data);
 
     /* assemble the binary data */
     if (ais_context->part == 1) {
@@ -127,7 +127,8 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	/*@ -shiftnegative @*/
 	for (i = 5; i >= 0; i--) {
 	    if ((ch >> i) & 0x01) {
-		ais_context->bits[ais_context->bitlen / 8] |= (1 << (7 - ais_context->bitlen % 8));
+		ais_context->bits[ais_context->bitlen / 8] |=
+		    (1 << (7 - ais_context->bitlen % 8));
 	    }
 	    ais_context->bitlen++;
 	}
@@ -139,13 +140,13 @@ bool aivdm_decode(const char *buf, size_t buflen,
 
     /* time to pass buffered-up data to where it's actually processed? */
     if (ais_context->part == ais_context->await) {
-	size_t clen = (ais_context->bitlen + 7)/8;
+	size_t clen = (ais_context->bitlen + 7) / 8;
 	gpsd_report(LOG_INF, "AIVDM payload is %zd bits, %zd chars: %s\n",
 		    ais_context->bitlen, clen,
-		    gpsd_hexdump_wrapper(ais_context->bits,
-					 clen, LOG_INF));
+		    gpsd_hexdump_wrapper(ais_context->bits, clen, LOG_INF));
 
 
+#define BITS_PER_BYTE	8
 #define UBITS(s, l)	ubits((char *)ais_context->bits, s, l)
 #define SBITS(s, l)	sbits((char *)ais_context->bits, s, l)
 #define UCHARS(s, to)	from_sixbit((char *)ais_context->bits, s, sizeof(to), to)
@@ -154,6 +155,12 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	ais->mmsi = UBITS(8, 30);
 	gpsd_report(LOG_INF, "AIVDM message type %d, MMSI %09d:\n",
 		    ais->type, ais->mmsi);
+	/*
+	 * Something about the shape of this switch statement confuses
+	 * GNU indent so badly that there is no point in trying to be
+	 * finer-grained than leaving it all alone.
+	 */
+	/* *INDENT-OFF* */
 	switch (ais->type) {
 	case 1:	/* Position Report */
 	case 2:
@@ -267,7 +274,7 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    ais->type6.app_id         = UBITS(72, 16);
 	    ais->type6.bitcount       = ais_context->bitlen - 88;
 	    (void)memcpy(ais->type6.bitdata,
-			 (char *)ais_context->bits+11,
+			 (char *)ais_context->bits + (88 / BITS_PER_BYTE),
 			 (ais->type6.bitcount + 7) / 8);
 	    gpsd_report(LOG_INF, "seqno=%d, dest=%u, id=%u, cnt=%zd\n",
 			ais->type6.seqno,
@@ -309,7 +316,7 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    ais->type8.app_id =       UBITS(40, 16);
 	    ais->type8.bitcount       = ais_context->bitlen - 56;
 	    (void)memcpy(ais->type8.bitdata,
-			 (char *)ais_context->bits+7,
+			 (char *)ais_context->bits + (56 / BITS_PER_BYTE),
 			 (ais->type8.bitcount + 7) / 8);
 	    gpsd_report(LOG_INF, "id=%u, cnt=%zd\n",
 			ais->type8.app_id,
@@ -436,10 +443,11 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    //ais->type17.spare         = UBITS(38, 2);
 	    ais->type17.lon		= UBITS(40, 18);
 	    ais->type17.lat		= UBITS(58, 17);
-	    ais->type8.bitcount       = ais_context->bitlen - 56;
+	    //ais->type17.spare	        = UBITS(75, 4);
+	    ais->type17.bitcount        = ais_context->bitlen - 80;
 	    (void)memcpy(ais->type17.bitdata,
-			 (char *)ais_context->bits + 10,
-			 (ais->type8.bitcount + 7) / 8);
+			 (char *)ais_context->bits + (80 / BITS_PER_BYTE),
+			 (ais->type17.bitcount + 7) / 8);
 	    gpsd_report(LOG_INF, "\n");
 	    break;
 	case 18:	/* Standard Class B CS Position Report */
@@ -696,7 +704,7 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    ais->type26.addressed	= (bool)UBITS(38, 1);
 	    ais->type26.structured	= (bool)UBITS(39, 1);
 	    if (ais->type26.addressed)
-		ais->type26.dest_mmsi      = UBITS(40, 30);
+		ais->type26.dest_mmsi   = UBITS(40, 30);
 	    if (ais->type26.structured)
 		ais->type26.app_id      = UBITS(40+ais->type26.addressed*30,16);
 	    ais->type26.bitcount        = ais_context->bitlen - 60 - 16*ais->type26.structured;
@@ -715,9 +723,11 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    gpsd_report(LOG_ERROR, "Unparsed AIVDM message type %d.\n",ais->type);
 	    break;
 	}
+	/* *INDENT-ON* */
 #undef UCHARS
 #undef SBITS
 #undef UBITS
+#undef BITS_PER_BYTE
 
 	/* data is fully decoded */
 	return true;
@@ -726,7 +736,7 @@ bool aivdm_decode(const char *buf, size_t buflen,
     /* we're still waiting on another sentence */
     return false;
 }
+
 /*@ -charint @*/
 
 /* driver_aivdm.c ends here */
-
