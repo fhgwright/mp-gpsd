@@ -74,8 +74,10 @@ static void merge_ddmmyy(char *ddmmyy, struct gps_device_t *session)
 /* sentence supplied ddmmyy, but no century part */
 {
     int yy = DD(ddmmyy + 4), year = session->driver.nmea.date.tm_year;
+    int mon = DD(ddmmyy + 2);
+    int mday = DD(ddmmyy);
 
-    if (year == 0) {
+    if (year <= 0) {
 	year = (CENTURY_BASE + yy) - 1900;
     } else if (year % 100 != yy) {
 	/* update year */
@@ -83,11 +85,19 @@ static void merge_ddmmyy(char *ddmmyy, struct gps_device_t *session)
 	    yy += 100;		/* century change */
 	year = year / 100 * 100 + yy;
     }
-    gpsd_report(LOG_DATA, "merge_ddmmyy(ddmmyy) sets year %d from %s\n",
-		year, ddmmyy);
-    session->driver.nmea.date.tm_year = year;
-    session->driver.nmea.date.tm_mon = DD(ddmmyy + 2) - 1;
-    session->driver.nmea.date.tm_mday = DD(ddmmyy);
+    if ( (1 > year ) || (2200 < year ) ) {
+	gpsd_report(LOG_WARN, "merge_ddmmyy(), bad year: %d\n",  year);
+    } else if ( (1 > mon ) || (12 < mon ) ) {
+	gpsd_report(LOG_WARN, "merge_ddmmyy(), malformed month: %2s\n",  ddmmyy + 2);
+    } else if ( (1 > mday ) || (31 < mday ) ) {
+	gpsd_report(LOG_WARN, "merge_ddmmyy(), malformed day: %2s\n",  ddmmyy);
+    } else {
+	gpsd_report(LOG_DATA, "merge_ddmmyy(ddmmyy) sets year %d from %s\n",
+		    year, ddmmyy);
+	session->driver.nmea.date.tm_year = year;
+	session->driver.nmea.date.tm_mon = mon - 1;
+	session->driver.nmea.date.tm_mday = mday;
+    }
 }
 
 static void merge_hhmmss(char *hhmmss, struct gps_device_t *session)
@@ -140,7 +150,7 @@ static gps_mask_t processGPRMC(int count, char *field[],
     /*
      * RMC,225446.33,A,4916.45,N,12311.12,W,000.5,054.7,191194,020.3,E,A*68
      * 1     225446.33    Time of fix 22:54:46 UTC
-     * 2     A          Status of Fix: A = Autonomous, valid; 
+     * 2     A          Status of Fix: A = Autonomous, valid;
      * D = Differential, valid; V = invalid
      * 3,4   4916.45,N    Latitude 49 deg. 16.45 min North
      * 5,6   12311.12,W   Longitude 123 deg. 11.12 min West
@@ -152,7 +162,7 @@ static gps_mask_t processGPRMC(int count, char *field[],
      * A=autonomous, D=differential, E=Estimated,
      * N=not valid, S=Simulator, M=Manual input mode
      * *68        mandatory nmea_checksum
-     * 
+     *
      * * SiRF chipsets don't return either Mode Indicator or magnetic variation.
      */
     gps_mask_t mask = 0;
@@ -220,16 +230,16 @@ static gps_mask_t processGPGLL(int count, char *field[],
 /* Geographic position - Latitude, Longitude */
 {
     /* Introduced in NMEA 3.0.
-     * 
+     *
      * $GPGLL,4916.45,N,12311.12,W,225444,A,A*5C
-     * 
+     *
      * 1,2: 4916.46,N    Latitude 49 deg. 16.45 min. North
      * 3,4: 12311.12,W   Longitude 123 deg. 11.12 min. West
      * 5:   225444       Fix taken at 22:54:44 UTC
      * 6:   A            Data valid
      * 7:   A            Autonomous mode
      * 8:   *5C          Mandatory NMEA checksum
-     * 
+     *
      * 1,2 Latitude, N (North) or S (South)
      * 3,4 Longitude, E (East) or W (West)
      * 5 UTC of position
@@ -241,18 +251,18 @@ static gps_mask_t processGPGLL(int count, char *field[],
      * M = Manual Input Mode
      * S = Simulated Mode
      * N = Data Not Valid
-     * 
+     *
      * I found a note at <http://www.secoh.ru/windows/gps/nmfqexep.txt>
      * indicating that the Garmin 65 does not return time and status.
      * SiRF chipsets don't return the Mode Indicator.
      * This code copes gracefully with both quirks.
-     * 
+     *
      * Unless you care about the FAA indicator, this sentence supplies nothing
      * that GPRMC doesn't already.  But at least one Garmin GPS -- the 48
      * actually ships updates in GPLL that aren't redundant.
      */
     char *status = field[7];
-    gps_mask_t mask = ERROR_IS;
+    gps_mask_t mask = 0;
 
     if (field[5][0] != '\0') {
 	merge_hhmmss(field[5], session);
@@ -267,7 +277,6 @@ static gps_mask_t processGPGLL(int count, char *field[],
     if (strcmp(field[6], "A") == 0 && (count < 8 || *status != 'N')) {
 	int newstatus = session->gpsdata.status;
 
-	mask &= ~ERROR_IS;
 	do_lat_lon(&field[1], &session->newdata);
 	mask |= LATLON_IS;
 	if (count >= 8 && *status == 'D')
@@ -425,7 +434,6 @@ static gps_mask_t processGPGSA(int count, char *field[],
 	else
 	    mask = MODE_IS;
 	gpsd_report(LOG_PROG, "GPGSA sets mode %d\n", session->newdata.mode);
-	clear_dop(&session->gpsdata.dop);
 	session->gpsdata.dop.pdop = atof(field[15]);
 	session->gpsdata.dop.hdop = atof(field[16]);
 	session->gpsdata.dop.vdop = atof(field[17]);
@@ -439,7 +447,6 @@ static gps_mask_t processGPGSA(int count, char *field[],
 		    prn;
 	}
 	mask |= DOP_IS | USED_IS;
-	/* FIXME: perhaps dump the satellite vector here? */
 	gpsd_report(LOG_DATA,
 		    "GPGSA: mode=%d used=%d pdop=%.2f hdop=%.2f vdop=%.2f mask=%s\n",
 		    session->newdata.mode,
@@ -471,20 +478,20 @@ static gps_mask_t processGPGSV(int count, char *field[],
     if (count <= 3) {
 	gpsd_zero_satellites(&session->gpsdata);
 	session->gpsdata.satellites_visible = 0;
-	return ERROR_IS;
+	return 0;
     }
     if (count % 4 != 0) {
 	gpsd_report(LOG_WARN, "malformed GPGSV - fieldcount %d %% 4 != 0\n",
 		    count);
 	gpsd_zero_satellites(&session->gpsdata);
 	session->gpsdata.satellites_visible = 0;
-	return ERROR_IS;
+	return 0;
     }
 
     session->driver.nmea.await = atoi(field[1]);
     if (sscanf(field[2], "%d", &session->driver.nmea.part) < 1) {
 	gpsd_zero_satellites(&session->gpsdata);
-	return ERROR_IS;
+	return 0;
     } else if (session->driver.nmea.part == 1)
 	gpsd_zero_satellites(&session->gpsdata);
 
@@ -521,7 +528,7 @@ static gps_mask_t processGPGSV(int count, char *field[],
     if (session->driver.nmea.part < session->driver.nmea.await) {
 	gpsd_report(LOG_PROG, "Partial satellite data (%d of %d).\n",
 		    session->driver.nmea.part, session->driver.nmea.await);
-	return ERROR_IS;
+	return 0;
     }
     /*
      * This sanity check catches an odd behavior of SiRFstarII receivers.
@@ -537,12 +544,11 @@ static gps_mask_t processGPGSV(int count, char *field[],
     gpsd_report(LOG_WARN, "Satellite data no good (%d of %d).\n",
 		session->driver.nmea.part, session->driver.nmea.await);
     gpsd_zero_satellites(&session->gpsdata);
-    return ERROR_IS;
+    return 0;
   sane:
     session->gpsdata.skyview_time = NAN;
     gpsd_report(LOG_DATA, "GSV: Satellite data OK (%d of %d).\n",
 		session->driver.nmea.part, session->driver.nmea.await);
-    // FIXME: Dump satellite state at LOG_DATA level on final sentence
     return SATELLITE_IS;
 }
 
@@ -571,7 +577,7 @@ static gps_mask_t processPGRME(int c UNUSED, char *field[],
 	session->newdata.epx =
 	    session->newdata.epy =
 	    session->newdata.epv = session->gpsdata.epe = 100;
-	mask = ERROR_IS;
+	mask = 0;
     } else {
 	session->newdata.epx = session->newdata.epy =
 	    atof(field[1]) * (1 / sqrt(2)) * (GPSD_CONFIDENCE / CEP50_SIGMA);
@@ -641,18 +647,19 @@ static gps_mask_t processGPZDA(int c UNUSED, char *field[],
      * 5) Local zone description, 00 to +- 13 hours
      * 6) Local zone minutes description, apply same sign as local hours
      * 7) Checksum
-     * 
+     *
      * Note: some devices, like the uBlox ANTARIS 4h, are known to ship ZDAs
      * with some fields blank under poorly-understood circumstances (probably
-     * when they don't have satellite lock yet). 
+     * when they don't have satellite lock yet).
      */
-    gps_mask_t mask;
+    gps_mask_t mask = 0;
 
     if (field[1][0] == '\0' || field[2][0] == '\0' || field[3][0] == '\0'
 	|| field[4][0] == '\0') {
 	gpsd_report(LOG_WARN, "malformed ZDA\n");
-	mask = ERROR_IS;
     } else {
+    	int year, mon, mday;
+
 	merge_hhmmss(field[1], session);
 	/*
 	 * We don't register fractional time here because want to leave
@@ -660,10 +667,22 @@ static gps_mask_t processGPZDA(int c UNUSED, char *field[],
 	 * when they have a fix, so watching for it can make them look
 	 * like they have a variable fix reporting cycle.
 	 */
-	session->driver.nmea.date.tm_year = atoi(field[4]) - 1900;
-	session->driver.nmea.date.tm_mon = atoi(field[3]) - 1;
-	session->driver.nmea.date.tm_mday = atoi(field[2]);
-	mask = TIME_IS;
+	year = atoi(field[4]);
+	mon = atoi(field[3]);
+	mday = atoi(field[2]);
+	if ( (1900 > year ) || (2200 < year ) ) {
+	    gpsd_report(LOG_WARN, "malformed ZDA year: %s\n",  field[4]);
+	} else if ( (1 > mon ) || (12 < mon ) ) {
+	    gpsd_report(LOG_WARN, "malformed ZDA month: %s\n",  field[3]);
+	} else if ( (1 > mday ) || (31 < mday ) ) {
+	    gpsd_report(LOG_WARN, "malformed ZDA day: %s\n",  field[2]);
+	} else {
+	    year -= 1900;	
+	    session->driver.nmea.date.tm_year = year;
+	    session->driver.nmea.date.tm_mon = mon - 1;
+	    session->driver.nmea.date.tm_mday = mday;
+	    mask = TIME_IS;
+	}
     };
     gpsd_report(LOG_DATA, "ZDA: mask=%s\n", gpsd_maskdump(mask));
     return mask;
@@ -747,7 +766,7 @@ static gps_mask_t processOHPR(int c UNUSED, char *field[],
      1. Azimuth
      2. Pitch Angle
      3. Roll Angle
-     4. Sensor temp, degrees centigrade 
+     4. Sensor temp, degrees centigrade
      5. Depth (feet)
      6. Magnetic Vector Length
      7-9. 3 axis Magnetic Field readings x,y,z
@@ -825,7 +844,6 @@ static gps_mask_t processPASHR(int c UNUSED, char *field[],
 	    session->newdata.track = atof(field[11]);
 	    session->newdata.speed = atof(field[12]) / MPS_TO_KPH;
 	    session->newdata.climb = atof(field[13]);
-	    clear_dop(&session->gpsdata.dop);
 	    session->gpsdata.dop.pdop = atof(field[14]);
 	    session->gpsdata.dop.hdop = atof(field[15]);
 	    session->gpsdata.dop.vdop = atof(field[16]);
@@ -897,10 +915,10 @@ gps_mask_t nmea_parse(char *sentence, struct gps_device_t * session)
 	     *
 	     * 1. A Garmin GPS in NMEA mode is detected.
 	     *
-	     * 2. PGRMC is sent to reconfigure to Garmin binary mode.  
+	     * 2. PGRMC is sent to reconfigure to Garmin binary mode.
 	     *    If successful, the GPS echoes the phrase.
 	     *
-	     * 3. nmea_parse() sees the echo as RMC because the talker ID is 
+	     * 3. nmea_parse() sees the echo as RMC because the talker ID is
 	     *    ignored, and fails to recognize the echo as PGRMC and ignore it.
 	     *
 	     * 4. The mode is changed back to NMEA, resulting in an infinite loop.
@@ -1028,9 +1046,15 @@ gps_mask_t nmea_parse(char *sentence, struct gps_device_t * session)
 	session->newdata.time =
 	    (double)mkgmtime(&session->driver.nmea.date) +
 	    session->driver.nmea.subseconds;
-	gpsd_report(LOG_DATA, "%s computed time is %2f = %s\n",
+	gpsd_report(LOG_DATA,
+		    "%s time (nearest sec) is %2f = %d-%d-%dT%d:%d%d\n",
 		    session->driver.nmea.field[0], session->newdata.time,
-		    asctime(&session->driver.nmea.date));
+		    1900 + session->driver.nmea.date.tm_year,
+		    session->driver.nmea.date.tm_mon + 1,
+		    session->driver.nmea.date.tm_mday,
+		    session->driver.nmea.date.tm_hour,
+		    session->driver.nmea.date.tm_min,
+		    session->driver.nmea.date.tm_sec);
     }
 
     /*

@@ -2,7 +2,7 @@ dnl This file is Copyright (c)2010 by the GPSD project
 dnl BSD terms apply: see the file COPYING in the distribution root for details.
 
 AC_INIT
-AM_INIT_AUTOMAKE(gpsd, 2.94)
+AM_INIT_AUTOMAKE(gpsd, 2.95)
 dnl AC_PREFIX_PROGRAM(gcc)
 AM_CONFIG_HEADER(gpsd_config.h)
 AC_LANG([C])
@@ -53,6 +53,13 @@ if test "x$ac_python" = "xyes"; then
 
 	PYTHON_CFLAGS="-DHAVE_PYTHON -I$PYTHON_PREFIX/include/python$PYTHON_VERSION"
 
+	# Define the directories we ask setup.py to install the
+	# modules/extensions and scripts to. The way chosen here reproduces
+	# the internal behaviour of distutils. Unfortunately distutils does
+	# not export the pre-defined/configured directories, so we have to
+	# define them on our own. For default installations of distutils the
+	# chosen values here will match what distutils uses.
+	# See Makefile.am to see how they're used with setup.py.
 	PYTHON_DISTUTILS_LIBDIR=[`$PYTHON -c 'import distutils.util; import sys; print ("build/lib.%s-%s" %(distutils.util.get_platform(), sys.version[0:3]))'`]
 	PYTHON_DISTUTILS_SCRIPTDIR=[`$PYTHON  -c 'import sys; print ("build/scripts-%s" %(sys.version[0:3], ))'`]
 
@@ -233,30 +240,12 @@ AC_CHECK_LIB(pthread, pthread_setcancelstate,
 	AC_DEFINE([HAVE_LIBPTHREAD], [], [pthread libraries are present])])
 AC_SUBST(LIBPTHREAD)
 
-#
-# We want libusb-1.x or later.  Checking for this is messy in 2010
-# since many Linux systems ship with .0,1.x versions and that's 
-# what you get if you check naively for -lusb.  
-#
-# We use the fact that the obsolete versions put their include file in
-# /usr/include/usb.h, while the newer ones have it in 
-# /usr/include/libusb-*/libusb.h
-#
-AC_MSG_CHECKING([for libusb version >= 1.0.0])
-if test -f /usr/include/libusb-*/libusb.h ;
-then
-    usb=$(basename /usr/lib/libusb-*.so | sed -e s/\.so// -e s/^lib//)
-    AC_DEFINE([HAVE_LIBUSB], [], [will link with -l$usb; ])
-    LIBUSB=-l${usb}
-    INCUSB=-I/usr/include/lib${usb}
-    ac_libusb=yes
-    AC_MSG_RESULT([found.])
-else
-    ac_libusb=yes
-    AC_MSG_RESULT([not found.])
+PKG_CHECK_MODULES(LIBUSB, libusb-1.0 >= 1.0.0, [ac_libusb=yes], [ac_libusb=no])
+AC_SUBST(LIBUSB_LIBS)
+AC_SUBST(LIBUSB_CFLAGS)
+if test x"$ac_libusb" = x"yes" ; then
+	AC_DEFINE([HAVE_LIBUSB], 1, [libusb support])
 fi
-AC_SUBST(LIBUSB)
-AC_SUBST(INCUSB)
 
 AH_VERBATIM([_GNU_SOURCE],
 	  [/* Some libc's don't have strlcat/strlcpy. Local copies are provided */
@@ -281,69 +270,7 @@ size_t strlcpy(/*@out@*/char *dst, /*@in@*/const char *src, size_t size);
 
 #define GPSD_CONFIG_H])
 
-dnl Check for X libraries
-ac_x="no"
-if test x"$with_x" != "xno" -a x"$have_x" != "xdisabled"
-  then
-  X_LIBS=-lX11
-  AC_CHECK_HEADERS(X11/xpm.h xpm.h)
-  if test x"$ac_cv_header_X11_xpm_h" = "xno" &&
-     test x"$ac_cv_header_xpm_h" = "xno"; then
-    AC_MSG_WARN([xpm.h problem - xgpsspeed won't be built.])
-  fi
-  AC_PATH_XTRA
-  if test x"$ac_cv_have_x" = "xno"; then
-    AC_MSG_WARN([X problem - xgps won't be built.])
-  fi
-  LIBS="$LIBS $X_EXTRA_LIBS"
-  CFLAGS="$CFLAGS $X_CFLAGS"
-  CPPFLAGS="$CPPFLAGS $X_CFLAGS"
-  AC_SUBST(X_LIBS)
-  AC_SUBST(X11_LIBS)
-  AC_SUBST(X_PRE_LIBS)
 
-  dnl Check for some auxiliary X libraries we'll need
-  AC_CHECK_LIB(Xt, XtToolkitInitialize, XT_LIBS="-lXt",,
-	  ${X_PRE_LIBS} ${X11_LIBS})
-  AC_SUBST(XT_LIBS)
-  if test x"$ac_cv_lib_Xt_XtToolkitInitialize" = "xno"; then
-    AC_MSG_WARN([libXt problem - xgps won't be built.])
-  fi
-  dnl We can't use AC_SEARCH_LIBS because it always modifies LIBS.
-  dnl Instead, check for two common places (xorg way and the
-  dnl traditional way) by hand.
-  AC_CHECK_LIB(Xaw8, XawInitializeWidgetSet, XAW_LIBS="-lXaw8",
-     AC_CHECK_LIB(Xaw7, XawInitializeWidgetSet, XAW_LIBS="-lXaw7",
-	AC_CHECK_LIB(Xaw, XawInitializeWidgetSet, XAW_LIBS="-lXaw",
-		     ,${X_PRE_LIBS} ${X11_LIBS}),
-		  ${X_PRE_LIBS} ${X11_LIBS}),
-	  ${X_PRE_LIBS} ${X11_LIBS})
-  AC_SUBST(XAW_LIBS)
-  if test x"$XAW_LIBS" = "x"; then
-    AC_MSG_WARN([libXaw problem - xgpsspeed won't be built.])
-    AM_CONDITIONAL([HAVE_XAW],false)
-  else
-    AM_CONDITIONAL([HAVE_XAW],true)
-  fi
-  AC_CHECK_LIB(Xext, XShapeQueryVersion, XEXT_LIBS="-lXext",,
-	  ${X_PRE_LIBS} ${X11_LIBS})
-  AC_SUBST(XEXT_LIBS)
-  if test x"$ac_cv_lib_Xext_XShapeQueryVersion" = "xno"; then
-    AC_MSG_WARN([libXext problem - xgpsspeed won't be built.])
-  fi
-  AC_CHECK_LIB(Xpm, XpmCreatePixmapFromXpmImage,
-	  XPM_LIBS="-lXpm"
-	  AC_DEFINE([HAVE_XPM],1,[Xpm available]),,${X_PRE_LIBS} ${X11_LIBS})
-  AC_SUBST(XPM_LIBS)
-  if test x"$ac_cv_lib_Xpm_XpmCreatePixmapFromXpmImage" = "xno"; then
-    AC_MSG_WARN([libXpm problem - xgpsspeed won't be built.])
-  fi
-else
-  dnl X11 disabled
-  AM_CONDITIONAL([HAVE_XAW],false)
-  AC_MSG_WARN([Not including X11 support])
-fi
-dnl End of X11 checks
 
 dnl Check for curses headers and libraries.  The presence of the
 dnl library is used to decide whether or not to build some programs.
@@ -814,6 +741,25 @@ else
   AC_MSG_RESULT([no])
 fi
 
+dnl Check for BlueZ support
+AC_ARG_ENABLE(bluetooth, AC_HELP_STRING([--enable-bluetooth], [Enable support for Bluetooth GPS devices via BlueZ (experimental)]),
+  [ac_bluetooth=$enableval], [ac_bluetooth=no])
+AC_MSG_CHECKING([for BlueZ support])
+if test x"$ac_bluetooth" = x"yes"; then
+    AC_MSG_RESULT([yes])
+    AC_DEFINE(HAVE_BLUEZ,1,[Define if we have Bluez])
+    # Older versions of autotools barf and die on this.
+    #PKG_CHECK_MODULES(BLUEZ, bluez )
+    BLUEZ_CFLAGS=`pkg-config --cflags bluez`
+    BLUEZ_LIBS=`pkg-config --libs bluez`
+    AC_SUBST(BLUEZ_CFLAGS)
+    AC_SUBST(BLUEZ_LIBS)
+else
+    AC_MSG_RESULT([no])
+fi
+
+
+
 dnl Manually configure DBUS until we figure out a
 dnl distro-independent was to check for both libraries and headers
 AC_ARG_ENABLE(dbus,
@@ -934,6 +880,7 @@ dnl    AC_SUBST(DBUS_GLIB_CFLAGS)
 dnl    AC_SUBST(DBUS_GLIB_LIBS)
 dnl fi
 AM_CONDITIONAL([HAVE_DBUS], [test x"$ac_dbus" = x"yes"])
+AM_CONDITIONAL([HAVE_BLUEZ], [test x"$ac_bluetooth" = x"yes"])
 
 dnl mute logging functions?
 AC_ARG_ENABLE(squelch,
@@ -971,6 +918,44 @@ fi
 
 AM_CONDITIONAL([LIBGPSMM_ENABLE], [test x"$ac_libgpsmm" = x"yes"])
 
+
+
+dnl Check for QtNetwork library and qmake. Both are necessary
+dnl to build libQgpsmm. We use pkgconfig to check for the library
+dnl and AC_CHECK_PROGS to search for qmake. As it is possible to
+dnl install qmake from qt and qt4 in parallel, check for qmake-qt4
+dnl first as this ensures we're using qmake for qt4.
+AC_ARG_ENABLE(libQgpsmm,
+		AC_HELP_STRING([--disable-libQgpsmm],
+		[don't build QT bindings]),
+		[ac_libQgpsmm=$enableval], [ac_libQgpsmm=$ISCXX])
+AC_MSG_CHECKING([for QT support])
+if test x"$ac_libQgpsmm" = "xyes"; then
+  PKG_CHECK_MODULES(QtNetwork, [QtNetwork >= 4.4],  ac_qt="yes", ac_qt="no")
+  if test x"$ac_qt" != "xyes"; then
+    AC_MSG_WARN([QtNetwork library not found. Not including QT support])
+    ac_libQgpsmm="no"
+    AM_CONDITIONAL([LIB_Q_GPSMM_ENABLE], false)
+    AC_MSG_RESULT([no])
+  else
+    AC_CHECK_PROGS(QMAKE, [qmake-qt4 qmake], [no])
+    if test x"$QMAKE" != "xno"; then
+      AM_CONDITIONAL([LIB_Q_GPSMM_ENABLE], true)
+      AC_MSG_RESULT([yes])
+    else
+      AC_MSG_WARN([qmake not found. Not including QT support])
+      ac_libQgpsmm="no"
+      AM_CONDITIONAL([LIB_Q_GPSMM_ENABLE], false)
+      AC_MSG_RESULT([no])
+    fi
+  fi
+else
+  AC_MSG_RESULT([no])
+  AM_CONDITIONAL([LIB_Q_GPSMM_ENABLE], false)
+fi
+
+
+
 AC_ARG_ENABLE(ipv6,
   AC_HELP_STRING([--disable-ipv6],
 		 [don't build IPv6 support]),
@@ -987,12 +972,13 @@ AM_CONDITIONAL([IPV6_ENABLE], [test x"$ac_ipv6" = x"yes"])
 
 dnl Test for XSLT processor (xsltproc or xmlto)
 AC_CHECK_PROG(WITH_XSLTPROC,[xsltproc],[yes],[no])
-MANGENERATOR=
+XMLPROC=
 MANTARGET=
-MANFLAGS=
+XMLPROCFLAGS=
 if test "x$WITH_XSLTPROC" = "xyes"; then
     AC_MSG_CHECKING([whether xsltproc knows about docbook xsl])
-    DOCBOOK_URI='http://docbook.sourceforge.net/release/xsl/current/manpages/docbook.xsl'
+    DOCBOOK_MAN_URI='http://docbook.sourceforge.net/release/xsl/current/manpages/docbook.xsl'
+    DOCBOOK_HTML_URI='http://docbook.sourceforge.net/release/xsl/current/html/docbook.xsl'
     cat >conftest.xml <<_EOF
        <refentry id="foo.1">
 	  <refmeta>
@@ -1006,32 +992,36 @@ if test "x$WITH_XSLTPROC" = "xyes"; then
 	  </refnamediv>
 	</refentry>
 _EOF
-    if xsltproc --nonet --noout "$DOCBOOK_URI" conftest.xml >/dev/null 2>&1; then
-	MANGENERATOR=xsltproc
-	MANTARGET="$DOCBOOK_URI"
-	MANFLAGS="--nonet"
+    if xsltproc --nonet --noout "$DOCBOOK_MAN_URI" conftest.xml >/dev/null 2>&1; then
+	XMLPROC=xsltproc
+	MANTARGET="$DOCBOOK_MAN_URI"
+	HTMLTARGET="$DOCBOOK_HTML_URI"
+	XMLPROCFLAGS="--nonet"
 	AC_MSG_RESULT([yes])
     else
 	AC_MSG_RESULT([no])
     fi
     rm -f conftest.xml foo.1
 fi
-if test x"$MANGENERATOR" = x; then
+if test x"$XMLPROC" = x; then
     AC_CHECK_PROG(WITH_XMLTO,[xmlto],[yes],[no])
     if test "x$WITH_XMLTO" = "xyes"; then
-	MANGENERATOR=xmlto
+	XMLPROC=xmlto
 	MANTARGET=man
-	MANFLAGS=
+	HTMLTARGET=xhtml-nochunks
+	XMLPROCFLAGS=
     else
 	AC_MSG_WARN([Neither xsltproc nor xmlto works: I will not build man pages.])
 	AC_MSG_WARN([To build man pages, install xsltproc/xsltlib or xmlto and run autogen.sh again.])
     fi
 fi
 AM_CONDITIONAL([HAVE_XSLT_PROCESSOR],
-	       [test x"$MANGENERATOR" != x])
-AC_SUBST(MANGENERATOR)
+	       [test x"$XMLPROC" != x])
+AM_CONDITIONAL([XMLTOSTDOUT], [test x"$XMLPROC" = x"xsltproc"])
+AC_SUBST(XMLPROC)
 AC_SUBST(MANTARGET)
-AC_SUBST(MANFLAGS)
+AC_SUBST(HTMLTARGET)
+AC_SUBST(XMLPROCFLAGS)
 
 dnl Gentoo systems can have a problem with the Python path
 if test -e /etc/gentoo-release; then
@@ -1082,6 +1072,7 @@ echo "Fixed port speed        : $ac_baud"
 echo "Priv-drop user          : $ac_user"
 echo "Enable shared libraries : $enable_shared"
 echo "Enable DBUS support     : $ac_dbus"
+echo "Enable BlueZ support    : $ac_bluetooth"
 echo "Enable IPv6 support     : $ac_ipv6"
 echo "Limited max clients     : $ac_maxclients"
 echo "Limited max devices     : $ac_maxdevices"
@@ -1094,9 +1085,9 @@ echo "	Client Features"
 echo "	---------------"
 echo "Old protocol in libgps  : $ac_oldstyle"
 echo "Build ncurses programs  : $ac_ncurses"
-echo "Enable X11 support      : $ac_x"
 echo "Enable Python support   : $ac_python"
 echo "Enable C++ support      : $ac_libgpsmm"
+echo "Enable Qt support       : $ac_libQgpsmm"
 echo "------------------------------------------"
 echo ""
 
@@ -1121,7 +1112,7 @@ if test "xdummy" = "xdummy" -a \
     x"$ac_ubx" = "xno"; then
     AC_MSG_ERROR(Can't build gpsd with no protocols enabled)
 fi
-AC_OUTPUT(Makefile packaging/gpsd.spec libgps.pc libgpsd.pc
+AC_OUTPUT(Makefile packaging/rpm/gpsd.spec libgps.pc libgpsd.pc
 		   jsongen.py maskaudit.py
 		   valgrind-audit,
 		   [chmod +x jsongen.py maskaudit.py gpscat gpsfake gpsprof xgps valgrind-audit])

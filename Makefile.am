@@ -4,12 +4,6 @@
 # BSD terms apply: see the file COPYING in the distribution root for details.
 #
 
-# Exclude version-control state from the tarball.  Needed because we 
-# grab the test directory wholesale. Hack appropriately when and if we 
-# change version control systems.
-# \bug This is non-portable and depends on GNU tar beyond-POSIX extensions.
-am__tar += --exclude '*git*'
-
 CLEANFILES =
 
 # For a detailed explanation of what this ugly code is doing, see
@@ -37,14 +31,14 @@ XMLTO = xmlto
 if HAVE_NCURSES
 CURSESPROGS = cgps gpsmon
 endif
-if HAVE_XAW
-XAW_PROGS = xgpsspeed
-endif
 
 # Conditional includes.
-INCLUDES = $(INCUSB)
+INCLUDES = $(LIBUSB_CFLAGS)
 if HAVE_DBUS
 INCLUDES += $(DBUS_CFLAGS) $(DBUS_GLIB_CFLAGS) -DDBUS_API_SUBJECT_TO_CHANGE=1
+endif
+if HAVE_BLUEZ
+INCLUDES += $(BLUEZ_CFLAGS)
 endif
 
 RTCM104PAGES_DIST = gpsdecode.1
@@ -65,28 +59,23 @@ check_PROGRAMS = test_float test_trig test_bits test_packet test_mkgmtime test_g
 if LIBGPSMM_ENABLE
 check_PROGRAMS += test_gpsmm
 endif
+if LIB_Q_GPSMM_ENABLE
+check_PROGRAMS += test_qgpsmm
+endif
 
-PYTHONSCRIPTS_DIST = gpscat gpsfake gpsprof xgps
-PYTHONMODULES_DIST = gps/__init__.py gps/misc.py gps/fake.py gps/gps.py
+# List of Python scripts and modules, which are handled by setup.py.
+# Required to ensure that the extensions/modules/scripts are rebuilt via
+# setup.py in case they changed.
+# Also used to specify which files to include during make dist.
+PYTHONSCRIPTS_DIST = gpscat gpsfake gpsprof xgps xgpsspeed
+PYTHONMODULES_DIST = gps/__init__.py gps/misc.py gps/fake.py gps/gps.py gps/client.py
 
-PYTHONPAGES_DIST = gpsprof.1 gpsfake.1 gpscat.1
+PYTHONPAGES_DIST = gpsprof.1 gpsfake.1 gpscat.1 xgpsspeed.1 xgps.1
 if HAVE_PYTHON
 python_PYTHON = gpscap.py
 PYTHONPAGES = $(PYTHONPAGES_DIST)
 endif
 
-#
-# Build xgpsspeed
-#
-xgpsspeed_c_sources = \
-	xgpsspeed.c \
-	Tachometer.c \
-	TachometerP.h \
-	Tachometer.h
-xgpsspeed_SOURCES = \
-	$(xgpsspeed_c_sources) \
-	xgpsspeed.icon
-xgpsspeed_LDADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(XAW_LIBS) $(XT_LIBS) $(X_LIBS) $(X_PRE_LIBS) libgps.la -lm $(LIBPTHREAD)
 
 #
 # Build cgps
@@ -105,13 +94,13 @@ gpxlogger_LDADD = $(DBUS_GLIB_LIBS) libgps.la -lm
 #
 gpsd_c_sources = gpsd_dbus.c gpsd.c
 gpsd_SOURCES = $(gpsd_c_sources) gpsd_dbus.h
-gpsd_LDADD = $(DBUS_LIBS) $(LIBM) libgpsd.la libgps.la -lm $(LIBPTHREAD) $(LIBUSB)
+gpsd_LDADD = $(DBUS_LIBS) $(LIBM) libgpsd.la libgps.la -lm $(LIBPTHREAD) $(LIBUSB_LIBS)
 
 #
 # Build gpsctl
 #
 gpsctl_SOURCES = gpsctl.c
-gpsctl_LDADD = $(LIBM) libgpsd.la libgps.la -lm $(LIBPTHREAD) $(LIBUSB)
+gpsctl_LDADD = $(LIBM) libgpsd.la libgps.la -lm $(LIBPTHREAD) $(LIBUSB_LIBS)
 
 #
 # Build gpspipe
@@ -131,19 +120,38 @@ lcdgps_LDADD = $(LIBM) libgps.la -lm
 gpsmon_SOURCES = gpsmon.c monitor_nmea.c monitor_sirf.c \
 	monitor_italk.c monitor_ubx.c monitor_superstar2.c \
 	monitor_oncore.c monitor_tnt.c
-gpsmon_LDADD = $(LIBM) $(NCURSES_LIBS) libgpsd.la libgps.la -lm $(LIBPTHREAD)  $(LIBUSB)
+gpsmon_LDADD = $(LIBM) $(NCURSES_LIBS) libgpsd.la libgps.la -lm $(LIBPTHREAD)  $(LIBUSB_LIBS)
 
 #
 # Build gpsdecode
 #
 gpsdecode_SOURCES = gpsdecode.c
-gpsdecode_LDADD = $(LIBM) libgpsd.la libgps.la -lm $(LIBPTHREAD)  $(LIBUSB)
+gpsdecode_LDADD = $(LIBM) libgpsd.la libgps.la -lm $(LIBPTHREAD)  $(LIBUSB_LIBS)
 
 #
 # Build shared libraries
 #
-libgps_la_LDFLAGS = -version-number 19:0:0
+# As we need to retrieve the version from qmake to build the Qt library,
+# we provide targets to print the necessary informations.
+libgps_VERSION_CURRENT = 19
+libgps_VERSION__REVISION = 0
+libgps_VERSION_AGE = 0
+libgps_VERSION_NUMBER = $(libgps_VERSION_AGE):$(libgps_VERSION__REVISION):$(libgps_VERSION_AGE)
+libgps_la_LDFLAGS = -version-number $(libgps_VERSION_CURRENT):$(libgps_VERSION__REVISION):$(libgps_VERSION_AGE)
 lib_LTLIBRARIES = libgps.la libgpsd.la
+
+libgps_SONAME = $(shell expr $(libgps_VERSION_CURRENT) - $(libgps_VERSION_AGE))
+libgps_VERSION = $(libgps_SONAME).$(libgps_VERSION_AGE).$(libgps_VERSION__REVISION)
+print_libgps_VERSION_CURRENT:
+	echo $(libgps_VERSION_CURRENT)
+print_libgps_VERSION__REVISION:
+	echo $(libgps_VERSION__REVISION)
+print_libgps_VERSION_AGE:
+	echo $(libgps_VERSION_AGE)
+print_libgps_SONAME:
+	echo $(libgps_SONAME)
+print_libgps_VERSION:
+	echo $(libgps_VERSION)
 
 libgps_c_sources = \
 	ais_json.c \
@@ -232,7 +240,7 @@ gps_maskdump.c: gps.h maskaudit.py
 	$(PYTHON) maskaudit.py -c >gps_maskdump.c && \
 	chmod a-w gps_maskdump.c
 
-gpsd_maskdump.c: gpsd.h-tail maskaudit.py
+gpsd_maskdump.c: gpsd.h maskaudit.py
 	rm -f gpsd_maskdump.c && \
 	$(PYTHON) maskaudit.py -d >gpsd_maskdump.c && \
 	chmod a-w gpsd_maskdump.c
@@ -252,22 +260,30 @@ endif
 
 nodist_libgpsd_la_SOURCES = packet_names.h ais_json.i
 libgps_la_LIBADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(LIBPTHREAD)
-libgpsd_la_LIBADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(LIBPTHREAD)
+libgpsd_la_LIBADD = $(LIBM) $(LIBC) $(LIBNSL) $(LIBSOCKET) $(LIBPTHREAD) $(BLUEZ_LIBS) libgps.la
 
-#
+noinst_SCRIPTS =
+
 # Build Python binding
 #
 if HAVE_PYTHON
 PYEXTENSIONS = gpspacket.so gpslib.so
-noinst_SCRIPTS = stamp-python-modules setup.py
+noinst_SCRIPTS += stamp-python setup.py
 
 # Multiple-outputs hack.  See
 # http://www.gnu.org/software/automake/manual/automake.html#Multiple-Outputs
-$(PYEXTENSIONS): stamp-python-modules
-	+@WITNESS=stamp-python-modules; $(MULTIOUT_RECOVER_DELETED)
+$(PYEXTENSIONS): stamp-python
+	+@WITNESS=stamp-python; $(MULTIOUT_RECOVER_DELETED)
 # TODO:  Should the dependency on libgps.la be enforced inside
 # setup.py?  (See the variable 'needed_files' in setup.py.)
-stamp-python-modules: gpspacket.c gpsclient.c libgps.la setup.py
+stamp-python: gpspacket.c gpsclient.c libgps.la setup.py $(PYTHONMODULES_DIST) $(PYTHONSCRIPTS_DIST)
+# Build Python modules and scripts using distutils via setup.py.
+# We define build-lib and build-scripts as distutils might have been
+# configured to use different directories, but we want to use the
+# produced files within the regress-driver script - therefore we
+# need to build them in directories we know about.
+# See configure.ac for the definition of PYTHON_DISTUTILS_LIBDIR
+# and PYTHON_DISTUTILS_SCRIPTDIR.
 	@rm -f '$@' '$@.tmp'
 	@echo 'timestamp for $@' > '$@.tmp'
 	(cd '$(srcdir)' && \
@@ -276,20 +292,96 @@ stamp-python-modules: gpspacket.c gpsclient.c libgps.la setup.py
 		$(PYTHON) setup.py build \
 			--build-lib '$(srcdir)/$(PYTHON_DISTUTILS_LIBDIR)' \
 			--build-scripts '$(srcdir)/$(PYTHON_DISTUTILS_SCRIPTDIR)' \
-			--mangenerator '$(MANGENERATOR)') && \
+			--mangenerator '$(XMLPROC)') && \
 	(cd '$(srcdir)/gps' && \
 	    rm -f *.so && \
 	    ln -s ../$(PYTHON_DISTUTILS_LIBDIR)/gps/*.so . ) && \
 	mv -f '$@.tmp' '$@'
-CLEANFILES += stamp-python-modules stamp-python-modules.tmp
+CLEANFILES += stamp-python stamp-python.tmp
+endif
 
-# Clean up after Python
+QTLIB_DIST = libQgpsmm/libQgpsmm.pro \
+             libQgpsmm/gpsutils.cpp \
+             libQgpsmm/libgps_core.cpp \
+             libQgpsmm/libQgpsmm_global.h
+
+QTLIB_DIST_MINGW = libQgpsmm/mingw/gpsd_config.h \
+		   libQgpsmm/mingw/test_qgpsmm.pro
+
+if LIB_Q_GPSMM_ENABLE
+noinst_SCRIPTS += stamp-qt
+QTLIBS = libQgpsmm/binaries/libQgpsmm.so \
+	 libQgpsmm/binaries/libQgpsmm.so.$(libgps_SONAME) \
+	 libQgpsmm/binaries/libQgpsmm.so.$(libgps_SONAME).$(libgps_VERSION_AGE) \
+	 libQgpsmm/binaries/libQgpsmm.so.$(libgps_VERSION)
+
+QTLIB_sources = gpsutils.c \
+		libgps_core.c \
+		libgpsmm.cpp \
+		libgps_json.c \
+		hex.c \
+		gpsd_report.c \
+		strl.c \
+		shared_json.c \
+		rtcm2_json.c \
+		ais_json.c \
+		json.c \
+		gps.h \
+		libgpsmm.h \
+		gps_json.h \
+		json.h \
+		ais_json.i \
+		gpsd.h \
+		$(QTLIB_DIST)
+
+QMAKE_OPTS = "PREFIX=${prefix}" \
+	     "MAKE=$(MAKE)" \
+	     "QMAKE_CXX=$(CXX)" \
+	     "QMAKE_CC=$(CC)" \
+	     "QMAKE_CFLAGS+=$(CFLAGS)" \
+	     "QMAKE_LFLAGS+=$(LDFLAGS)" \
+	     "VERSION=$(libgps_VERSION)" \
+	     "TARGET_LIBDIR=${libdir}" \
+	     "TARGET_INCLUDEDIR=${includedir}"
+
+libQgpsmm/Makefile: libQgpsmm/libQgpsmm.pro gpsd.h ais_json.i
+	cd $(srcdir)/libQgpsmm && $(QMAKE) $(QMAKE_OPTS)
+# Yet another multiple-outputs hack:
+$(QTLIBS): stamp-qt
+	        +@WITNESS=stamp-qt; $(MULTIOUT_RECOVER_DELETED)
+stamp-qt: $(QTLIB_sources) libQgpsmm/Makefile
+	$(MAKE) -C $(srcdir)/libQgpsmm
+	touch $@
+CLEANFILES += stamp-qt
+endif
+
+# Clean up after Python and QT
 clean-local:
+if HAVE_PYTHON
 	rm -rf build gps/*.so
+endif
+if LIB_Q_GPSMM_ENABLE
+	if test -r $(srcdir)/libQgpsmm/Makefile; then \
+		$(MAKE) -C $(srcdir)/libQgpsmm distclean || true;  \
+	fi
+	rm -rf $(srcdir)/libQgpsmm/binaries
+	rm -f $(srcdir)/libQgpsmm/*.o $(srcdir)/libQgpsmm/Makefile
+endif
 
-# Install Python modules
+# Install Python modules and QT library
 install-exec-local:
-	$(PYTHON) setup.py install --prefix=${prefix} --root=$(DESTDIR)
+if HAVE_PYTHON
+# Make sure we do not use --root as option to setup.py install
+# when DESTDIR is not defined as distutils would use the current
+# working directory as root directory and not install to ${prefix}.
+	if test -z "$(DESTDIR)"; then \
+		$(PYTHON) setup.py install --prefix=${prefix} ;\
+	else \
+		$(PYTHON) setup.py install --prefix=${prefix} --root=$(DESTDIR) ;\
+	fi
+endif
+if LIB_Q_GPSMM_ENABLE
+	$(MAKE) -C libQgpsmm install INSTALL_ROOT=$(DESTDIR)
 endif
 
 #
@@ -309,20 +401,30 @@ if LIBGPSMM_ENABLE
 # Build test_gpsmm
 #
 test_gpsmm_SOURCES = test_gpsmm.cpp
-test_gpsmm_LDADD = $(LIBC) libgps.la -lm  $(LIBUSB)
+test_gpsmm_LDADD = $(LIBC) libgps.la -lm  $(LIBUSB_LIBS)
+endif
+
+if LIB_Q_GPSMM_ENABLE
+#
+# Build test_qgpsmm
+#
+test_qgpsmm_SOURCES = test_gpsmm.cpp
+test_qgpsmm_LDFLAGS = -Wl,-rpath,$(srcdir)/libQgpsmm/binaries
+test_qgpsmm_LDADD = $(LIBC) $(LIBUSB) $(QtNetwork_LIBS) -LlibQgpsmm/binaries -lQgpsmm
+test_qgpsmm_DEPENDENCIES = libQgpsmm/binaries/libQgpsmm.so
 endif
 
 #
 # Build test_bits tester
 #
 test_bits_SOURCES = test_bits.c
-test_bits_LDADD = $(LIBC) libgpsd.la libgps.la  $(LIBUSB)
+test_bits_LDADD = $(LIBC) libgpsd.la libgps.la  $(LIBUSB_LIBS)
 
 #
 # Build packets tester
 #
 test_packet_SOURCES = test_packet.c
-test_packet_LDADD = $(LIBC) libgpsd.la libgps.la -lm  $(LIBUSB)
+test_packet_LDADD = $(LIBC) libgpsd.la libgps.la -lm  $(LIBUSB_LIBS)
 
 #
 # Build geoid model tester
@@ -344,8 +446,6 @@ test_json_LDADD = $(LIBC) libgps.la -lm
 MANPAGES_BASE = \
 	gpsd.8 \
 	gps.1 \
-	xgps.1 \
-	xgpsspeed.1 \
 	cgps.1 \
 	lcdgps.1 \
 	libgps.3 \
@@ -374,16 +474,16 @@ man_MANS = \
 BUILT_MANPAGES = $(MANPAGES_DIST)
 
 .xml.1:
-	$(MANGENERATOR) $(MANFLAGS) $(MANTARGET) $<
+	$(XMLPROC) $(XMLPROCFLAGS) $(MANTARGET) $<
 
 .xml.3:
-	$(MANGENERATOR) $(MANFLAGS) $(MANTARGET) $<
+	$(XMLPROC) $(XMLPROCFLAGS) $(MANTARGET) $<
 
 .xml.5:
-	$(MANGENERATOR) $(MANFLAGS) $(MANTARGET) $<
+	$(XMLPROC) $(XMLPROCFLAGS) $(MANTARGET) $<
 
 .xml.8:
-	$(MANGENERATOR) $(MANFLAGS) $(MANTARGET) $<
+	$(XMLPROC) $(XMLPROCFLAGS) $(MANTARGET) $<
 
 # Another instance of the multiple-outputs hack.
 gps.1 xgps.1 xgpsspeed.1 cgps.1 lcdgps.1: stamp-gps-manpages
@@ -391,7 +491,7 @@ gps.1 xgps.1 xgpsspeed.1 cgps.1 lcdgps.1: stamp-gps-manpages
 stamp-gps-manpages: gps.xml
 	@rm -f '$@' '$@.tmp'
 	echo 'timestamp for $@' > '$@.tmp' && \
-	$(MANGENERATOR) $(MANFLAGS) $(MANTARGET) '$(srcdir)/gps.xml' && \
+	$(XMLPROC) $(XMLPROCFLAGS) $(MANTARGET) '$(srcdir)/gps.xml' && \
 	mv -f '$@.tmp' '$@'
 CLEANFILES += stamp-gps-manpages stamp-gps-manpages.tmp
 endif
@@ -399,8 +499,7 @@ endif
 noinst_HEADERS = gpsd_config.h \
 	driver_italk.h driver_rtcm2.h driver_superstar2.h \
 	driver_ubx.h gpsmon.h gpsdclient.h json.h gps_json.h \
-	revision.h
-
+	revision.h TachometerP.h Tachometer.h
 nodist_include_HEADERS = gpsd.h
 
 if LIBGPSMM_ENABLE
@@ -425,8 +524,8 @@ XML = \
 	rtcm-104.xml \
 	srec.xml
 
-# Note: packaging/gpsd.spec is generated, but it needs to be in the
-# tarball in order for 'make diat-rpm' to work.  The BUILT_SOURCES
+# Note: packaging/rpm/gpsd.spec is generated, but it needs to be in the
+# tarball in order for 'make dist-rpm' to work.  The BUILT_SOURCES
 # files are here in order to minimize build dependencies for package
 # builders who never alter anything, especially the Python dependency.
 # Also note that the test and gps directories are here rather than
@@ -453,7 +552,6 @@ EXTRA_DIST = \
 	$(XML) \
 	$(BUILT_SOURCES) \
 	$(MANPAGES_DIST) \
-	xgpsspeed.ad \
 	gpsd.rules \
 	gpsd.hotplug \
 	gpsd.hotplug.wrapper \
@@ -469,21 +567,33 @@ EXTRA_DIST = \
 	libgps.pc.in \
 	libgpsd.pc.in \
 	gpscap.ini \
-	packaging/gpsd.spec \
-	packaging/etc_default_gpsd \
-	packaging/etc_init.d_gpsd \
-	packaging/etc_init.d_gpsd_rpm \
+	packaging/deb/etc_default_gpsd \
+	packaging/deb/etc_init.d_gpsd \
+	packaging/rpm/gpsd.spec \
+	packaging/rpm/gpsd.init \
+	packaging/rpm/gpsd.sysconfig \
+	packaging/X11/xgps.desktop \
+	packaging/X11/xgpsspeed.desktop \
+	packaging/X11/gpsd-logo.png \
 	do-tests \
 	regress-driver \
 	$(PYTHONSCRIPTS_DIST) \
 	$(PYTHONMODULES_DIST) \
+	$(QTLIB_DIST) \
+	$(QTLIB_DIST_MINGW) \
 	test
 
-#dist-hook:
-#	$(MKDIR_P) '$(distdir)/contrib' && \
-#	cp -p '$(srcdir)/contrib/'* '$(distdir)/contrib'
-#distclean-local:
-#	rm -rf '$(distdir)/contrib'
+
+# Prepare necessary files to build the mingw-port of libQgpsmm
+# while creating the dist tarball.
+dist-hook: ais_json.i gpsd_config.h
+	$(MKDIR_P) '$(distdir)/libQgpsmm/mingw'
+	cp -p ais_json.i $(distdir)/libQgpsmm/mingw
+	grep "#define VERSION" gpsd_config.h > $(distdir)/libQgpsmm/mingw/version.h
+	echo "VERSION=$(libgps_VERSION)" > $(distdir)/libQgpsmm/mingw/version.pri
+distclean-local:
+	rm -f $(distdir)/libQgpsmm/mingw/version.* $(distdir)/libQgpsmm/mingw/ais_json.i
+
 
 CLEANFILES += $(BUILT_SOURCES) *.core $(PYEXTENSIONS) $(BUILT_MANPAGES)
 
@@ -495,14 +605,12 @@ libgps: libgps_core.c gps.h .libs/libgps.a
 	$(CC) $(CFLAGS) -o libgps -lm -DTESTMAIN $(LIBPTHREAD) -g libgps_core.c .libs/libgps.a
 
 # Report splint warnings
-SPLINTOPTS = -I/usr/include/dbus-1.0/ $(INCUSB) +quiet
+SPLINTOPTS = -I/usr/include/dbus-1.0/ $(LIBUSB_CFLAGS) +quiet
 splint: gpsd.h packet_names.h
 	@echo "Running splint on daemon and libraries..."
 	-splint $(SPLINTOPTS) -exportlocal -redef $(gpsd_c_sources) $(libgpsd_c_sources) $(libgps_c_sources)
 	@echo "Running splint on cgps..."
 	-splint $(SPLINTOPTS) -exportlocal $(cgps_SOURCES)
-	@echo "Running splint on xgpsspeed..."
-	-splint $(SPLINTOPTS) -exportlocal $(xgpsspeed_c_sources)
 	@echo "Running splint on gpsctl..."
 	-splint $(SPLINTOPTS) $(gpsctl_SOURCES)
 	@echo "Running splint on gpsmon..."
@@ -528,8 +636,11 @@ splint: gpsd.h packet_names.h
 cppcheck: gpsd.h packet_names.h
 	cppcheck --template gcc --all --force .
 
-# Re-indent the codebase in aa uniform style for readability.
-# FIXME: Except for xgpsspeed - Tachometer.c makes GNI indent lose it.
+# Check the documentation for bogons, too
+xmllint: $(XML)
+	for xml in $(XML); do xmllint --nonet --noout --valid $$xml; done
+
+# Re-indent the codebase in a uniform style for readability.
 INDENT_FILES = $(gpsd_c_sources) $(libgpsd_c_sources) $(libgps_c_sources) \
 	$(cgps_SOURCES) $(gpsmon_SOURCES) $(gpspipe_SOURCES) \
 	$(gpxlogger_SOURCES) $(gpsdecode_SOURCES) \
@@ -581,20 +692,22 @@ version:
 # depends on each TEST as well as invokes it (with TESTS_ENVIRONMENT)
 # the entire list of tests is run twice.
 
-run_regress_driver = PYTHON=$(PYTHON) $(srcdir)/regress-driver
+# Use make REGRESSOPTS=-u to force running with UDP rather than pty devices
+
+run_regress_driver = PYTHON=$(PYTHON) $(srcdir)/regress-driver $(REGRESSOPTS)
 
 # Regression-test the daemon
-gps-regress: gpsd 
+gps-regress: gpsd stamp-python
 	$(run_regress_driver) $(srcdir)/test/daemon/*.log
 
 # Test that super-raw mode works. Compare each logfile against itself 
 # dumped through the daemon running in R=2 mode.  (This test is not
 # included in the normal regressions.)
-raw-regress:
+raw-regress: stamp-python
 	$(run_regress_driver) -r  $(srcdir)/test/daemon/*.log
 
 # Build the regression tests for the daemon.
-gps-makeregress: gpsd
+gps-makeregress: gpsd stamp-python
 	$(run_regress_driver) -b $(srcdir)/test/daemon/*.log
 
 # To build an individual test for a load named foo.log, put it in
@@ -696,18 +809,25 @@ TESTS = do-tests
 #
 # None of these productions are fired by 'make all'.
 
-# FIXME: Needs to be replaced by a $(MANGENERATOR) rule
-%.html: %.xml
-	xmlto xhtml-nochunks $<
+if XMLTOSTDOUT
+www/%.html: %.xml
+	$(XMLPROC) $(XMLPROCFLAGS) $(HTMLTARGET) $< >$(<:.xml=.html) ; cp $(<:.xml=.html) $@
+else
+www/%.html: %.xml
+	$(XMLPROC) $(XMLPROCFLAGS) $(HTMLTARGET) $<; cp $(<:.xml=.html) $@
+endif
 
-website: $(XML:.xml=.html) \
+website: www/gpscat.html www/gpsctl.html www/gpsdecode.html \
+		www/gpsd.html www/gpsfake.html www/gpsmon.html \
+		www/gpspipe.html www/gpsprof.html www/gps.html \
+		www/libgpsd.html www/libgpsmm.html www/libgps.html \
+		www/rtcm-104.html www/srec.html \
 		www/AIVDM.html www/NMEA.html \
 		www/protocol-evolution.html www/protocol-transition.html \
 		www/client-howto.html www/writing-a-driver.html \
 		www/index.html www/hardware.html \
 		www/performance/performance.html \
 		www/internals.html
-	@cp $(XML:.xml=.html) www
 
 www/AIVDM.html: www/AIVDM.txt
 	asciidoc -a toc -o www/AIVDM.html www/AIVDM.txt
@@ -739,15 +859,26 @@ www/performance/performance.html: www/performance/performance.xml
 www/internals.html: $(shell ls doc/*.xml)
 	cd doc; xmlto xhtml-nochunks explanation.xml; cp explanation.html ../www/internals.html
 
+if HAVE_PYTHON
 # Experimenting with pydoc.  Not yet fired by any other productions.
 
 pydoc: www/pydoc/index.html
 
-www/pydoc/index.html: gps gpsfake gpscat gpsprof stamp-python-modules
-	mkdir -p www/pydoc
-	epydoc -v -q --html --graph all -n GPSD gps gpsfake gpscat gpsprof -o www/pydoc
+# We need to run epydoc with the Python version we built the modules for.
+# So we define our on epydoc instead of using /usr/bin/epydoc
+EPYDOC = $(PYTHON) -c 'from epydoc.cli import cli; cli()'
 
-.PHONY: pydoc
+# We have pre-compiled python scripts in the script directory, so we exclude
+# all files ending on c here. Needs a better solution as soon as we have a
+# script ending with c.
+EPYDOCSCRIPTS = $(shell find $(PYTHON_DISTUTILS_SCRIPTDIR) -name '*c' -o -type f -print)
+EPYDOCMODULES = $(PYTHON_DISTUTILS_LIBDIR)/gps
+
+www/pydoc/index.html: gps gpsfake gpscat gpsprof stamp-python
+	mkdir -p www/pydoc
+	$(EPYDOC) -v --html --graph all -n GPSD $(EPYDOCSCRIPTS) $(EPYDOCMODULES) -o www/pydoc
+
+endif
 
 # Productions for setting up and performing udev tests.
 #
@@ -757,15 +888,13 @@ www/pydoc/index.html: gps gpsfake gpscat gpsprof stamp-python-modules
 # is plugged in.
 
 udev-install:
-	cp $(srcdir)/gpsd.rules /etc/udev/
-	ln -sf /etc/udev/gpsd.rules /etc/udev/rules.d/025_gpsd.rules
-	cp $(srcdir)/gpsd.hotplug /lib/udev/
-	cp $(srcdir)/gpsd.hotplug.wrapper /lib/udev/
+	cp $(srcdir)/gpsd.rules /lib/udev/rules.d/025_gpsd.rules
+	cp $(srcdir)/gpsd.hotplug $(srcdir)/gpsd.hotplug.wrapper /lib/udev/
 	chmod a+x /lib/udev/gpsd.hotplug /lib/udev/gpsd.hotplug.wrapper
 
 udev-uninstall:
-	rm -f /etc/udev/{gpsd.rules,gpsd.hotplug,gpsd.hotplug.wrapper}
-	rm -f /etc/udev/rules.d/025_gpsd.rules
+	rm -f /lib/udev/{gpsd.hotplug,gpsd.hotplug.wrapper}
+	rm -f /lib/udev/rules.d/025_gpsd.rules
 
 udev-test:
 	$(srcdir)/gpsd -N -F /var/run/gpsd.sock -D 4
@@ -801,3 +930,10 @@ release-tag:
 #
 ship: testregress clean dist upload-ftp release-tag
 
+
+.PHONY: print_libgps_VERSION_CURRENT \
+        print_libgps_VERSION__REVISION \
+        print_libgps_VERSION_AGE \
+        print_libgps_SONAME \
+        print_libgps_VERSION \
+	pydoc

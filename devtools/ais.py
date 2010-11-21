@@ -11,13 +11,7 @@
 # and a small amount of code for interpreting it.
 #
 # Known bugs:
-# *  A subtle problem near certain variable-length messages: CSV
-#    reports will sometimes have fewer fields than expected, because the
-#    unpacker never generates cooked tuples for the omitted part of the
-#    message.  Presently a known issue for types 15 and 16 only.  (Will
-#    never affect variable-length messages in which the last field type
-#    is 'string' or 'raw').
-# * Does not join the type 21 name extension field to the name fields.
+# * Doesn't join parts A and B of Type 24 together yet.
 # * Only handles the broadcast case of type 22.  The problem is that the
 #   addressed field is located *after* the variant parts. Grrrr... 
 # * Message type 26 is presently unsupported. It hasn't been observed
@@ -97,7 +91,7 @@ def cnb_rot_format(n):
     elif n == 127:
         return "fastright"
     else:
-        return str(n * n / 4.733);
+        return str((n / 4.733) ** 2);
 
 def cnb_latlon_format(n):
     return str(n / 600000.0)
@@ -315,7 +309,8 @@ type6 = (
     bitfield("dest_mmsi",       30, 'unsigned', None, "Destination MMSI"),
     bitfield("retransmit",       1, 'unsigned', None, "Retransmit flag"),
     spare(1),
-    bitfield("application_id",  16, 'unsigned', 0,    "Application ID"),
+    bitfield("dac",             10, 'unsigned', 0,    "DAC"),
+    bitfield("fid",              6, 'unsigned', 0,    "Functional ID"),
     bitfield("data",           920, 'raw',      None, "Data"),
     )
 
@@ -333,8 +328,9 @@ type7 = (
 
 type8 = (
     spare(2),
-    bitfield("application_id",  16, 'unsigned', 0,    "Application ID"),
-    bitfield("data",           952, 'raw',      None, "Data"),
+    bitfield("dac",            10,  'unsigned', 0,     "DAC"),
+    bitfield("fid",            6,   'unsigned', 0,     "Functional ID"),
+    bitfield("data",           952, 'raw',      None,  "Data"),
     )
 
 def type9_alt_format(n):
@@ -399,7 +395,7 @@ type15 = (
     bitfield("offset1_1", 12, 'unsigned', 0, "First slot offset"),
     spare(2),
     bitfield("type1_2",   6,  'unsigned', 0, "Second message type"),
-    bitfield("offset1_2", 12, 'unsifned', 0, "Second slot offset"),
+    bitfield("offset1_2", 12, 'unsigned', 0, "Second slot offset"),
     spare(2),
     bitfield("mmsi2",     30, 'unsigned', 0, "Second interrogated MMSI"),
     bitfield("type2_1",   6,  'unsigned', 0, "Message type"),
@@ -412,12 +408,9 @@ type16 = (
     bitfield("mmsi1",     30, 'unsigned', 0, "Interrogated MMSI 1"),
     bitfield("offset1",   12, 'unsigned', 0, "First slot offset"),
     bitfield("increment1",10, 'unsigned', 0, "First slot increment"),
-    bitfield("mmsi2",     30, 'unsigned', 0, "Interrogated MMSI 2",
-             conditional=lambda i, v: v['length'] >= 144),
-    bitfield("offset2",   12, 'unsigned', 0, "Second slot offset",
-             conditional=lambda i, v: v['length'] >= 144),
-    bitfield("increment2",10, 'unsigned', 0, "Second slot increment",
-             conditional=lambda i, v: v['length'] >= 144),
+    bitfield("mmsi2",     30, 'unsigned', 0, "Interrogated MMSI 2"),
+    bitfield("offset2",   12, 'unsigned', 0, "Second slot offset"),
+    bitfield("increment2",10, 'unsigned', 0, "Second slot increment"),
     spare(2),
     )
 
@@ -511,7 +504,7 @@ type20 = (
     )
 
 aide_type_legends = (
-	"Unspcified",
+	"Unspecified",
 	"Reference point",
 	"RACON",
 	"Fixed offshore structure",
@@ -728,11 +721,11 @@ field_groups = (
     # This one occurs in message type 4
     (3, ["year", "month", "day", "hour", "minute", "second"],
      "time", "Timestamp",
-     lambda y, m, d, h, n, s: "%02d:%02d:%02dT%02d:%02d:%02dZ" % (y, m, d, h, n, s)),
+     lambda y, m, d, h, n, s: "%02d-%02d-%02dT%02d:%02d:%02dZ" % (y, m, d, h, n, s)),
     # This one is in message 5
     (13, ["month", "day", "hour", "minute", "second"],
      "eta", "Estimated Time of Arrival",
-     lambda m, d, h, n, s: "%02d:%02dT%02d:%02d:%02dZ" % (m, d, h, n, s)),
+     lambda m, d, h, n, s: "%02d-%02dT%02d:%02d:%02dZ" % (m, d, h, n, s)),
 )
 
 # Message-type-specific information ends here.
@@ -756,6 +749,11 @@ class BitVector:
                 self.bitlen = len(data) * 8
             else:
                 self.bitlen = length
+    def extend_to(self, length):
+        "Extend vector to given bitlength."
+        if length > self.bitlen:
+            self.bits.extend([0]*((length - self.bitlen +7 )/8))
+            self.bitlen = length
     def from_sixbit(self, data, pad=0):
         "Initialize bit vector from AIVDM-style six-bit armoring."
         self.bits.extend([0] * len(data))
@@ -791,7 +789,7 @@ class BitVector:
         "Used for dumping binary data."
         return str(self.bitlen) + ":" + "".join(map(lambda d: "%02x" % d, self.bits[:(self.bitlen + 7)/8]))
 
-import sys, exceptions
+import sys, exceptions, re
 
 class AISUnpackingException(exceptions.Exception):
     def __init__(self, lc, fieldname, value):
@@ -826,7 +824,7 @@ def aivdm_unpack(lc, data, offset, values, instructions):
                 # of a variable-length string field, as in messages 12 and 14
                 try:
                     for i in range(inst.width/6):
-                        newchar = "@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^- !\"#$%&`()*+,-./0123456789:;<=>?"[data.ubits(offset + 6*i, 6)]
+                        newchar = "@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^- !\"#$%&'()*+,-./0123456789:;<=>?"[data.ubits(offset + 6*i, 6)]
                         if newchar == '@':
                             break
                         else:
@@ -848,11 +846,10 @@ def aivdm_unpack(lc, data, offset, values, instructions):
             cooked.append([inst, value])
     return cooked
 
-def parse_ais_messages(source, scaled=False, skiperr=False, verbose=0):
-    "Generator code - read forever from source stream, parsing AIS messages."
-    payload = ''
+def packet_scanner(source):
+    "Get a span of AIVDM packets with contiguous fragment numbers."
+    payloads = {'A':'', 'B':''}
     raw = ''
-    values = {}
     well_formed = False
     lc = 0
     while True:
@@ -861,8 +858,11 @@ def parse_ais_messages(source, scaled=False, skiperr=False, verbose=0):
         if not line:
             return
         raw += line
+        line = line.strip()
+        # Strip off USCG metadata 
+        line = re.sub(r"(?<=\*[0-9A-F][0-9A-F]),.*", "", line)
         # Compute CRC-16 checksum
-        packet = line.strip()[1:-3]	# Strip leading !, trailing * and CRC
+        packet = line[1:-3]	# Strip leading !, trailing * and CRC
         csum = 0
         for c in packet:
             csum ^= ord(c)
@@ -875,10 +875,11 @@ def parse_ais_messages(source, scaled=False, skiperr=False, verbose=0):
         try:
             expect = fields[1]
             fragment = fields[2]
+            channel = fields[4]
             if fragment == '1':
-                payload = ''
+                payloads[channel] = ''
                 well_formed = True
-            payload += fields[5]
+            payloads[channel] += fields[5]
             try:
                 # This works because a mangled pad literal means
                 # a malformed packet that will be caught by the CRC check. 
@@ -902,8 +903,30 @@ def parse_ais_messages(source, scaled=False, skiperr=False, verbose=0):
             continue
         # Render assembled payload to packed bytes
         bits = BitVector()
-        bits.from_sixbit(payload, pad)
+        bits.from_sixbit(payloads[channel], pad)
+        yield (lc, raw, bits)
+
+def postprocess(cooked):
+    "Postprocess cooked fields from a message."
+    # Handle type 21 name extension
+    if cooked[0][1] == 21:
+        cooked[4][1] += cooked[19][1]
+        cooked.pop(-1)
+    return cooked
+
+def parse_ais_messages(source, scaled=False, skiperr=False, verbose=0):
+    "Generator code - read forever from source stream, parsing AIS messages."
+    values = {}
+    for (lc, raw, bits) in packet_scanner(source):
         values['length'] = bits.bitlen
+        # Without the following magic, we'd have a subtle problem near
+        # certain variable-length messages: DSV reports would
+        # sometimes have fewer fields than expected, because the
+        # unpacker would never generate cooked tuples for the omitted
+        # part of the message.  Presently a known issue for types 15
+        # and 16 only.  (Would never affect variable-length messages in
+        # which the last field type is 'string' or 'raw').
+        bits.extend_to(168)
         # Magic recursive unpacking operation
         try:
             cooked = aivdm_unpack(lc, bits, 0, values, aivdm_decode)
@@ -915,6 +938,8 @@ def parse_ais_messages(source, scaled=False, skiperr=False, verbose=0):
                     group = formatter(*map(lambda x: x[1], segment))
                     group = (label, group, 'string', legend, None)
                     cooked = cooked[:offset]+[group]+cooked[offset+len(template):]
+            # Apply the postprocessor stage
+            cooked = postprocess(cooked)
             # Now apply custom formatting hooks.
             if scaled:
                 for (i, (inst, value)) in enumerate(cooked):
@@ -929,6 +954,7 @@ def parse_ais_messages(source, scaled=False, skiperr=False, verbose=0):
                         elif type(formatter) == type(lambda x: x):
                             cooked[i][1] = inst.formatter(value)
             expected = lengths.get(values['msgtype'], None)
+            # Check length; has to be done after so we have the type field 
             bogon = False
             if expected is not None:
                 if type(expected) == type(0):
@@ -942,6 +968,7 @@ def parse_ais_messages(source, scaled=False, skiperr=False, verbose=0):
                         sys.stderr.write("%d: type %d expected %s bits but saw %s\n" % (lc, values['msgtype'], expected, actual))
                     else:
                         raise AISUnpackingException(lc, "length", actual)
+            # We're done, hand back a decoding
             values = {}                    
             yield (raw, cooked, bogon)
             raw = ''
@@ -957,7 +984,7 @@ def parse_ais_messages(source, scaled=False, skiperr=False, verbose=0):
                 raise e
         except:
             (exc_type, exc_value, exc_traceback) = sys.exc_info()
-            sys.stderr.write("Unknown exception on: %s\n" % (line))
+            sys.stderr.write("Unknown exception on line %d\n" % lc)
             if skiperr:
                 continue
             else:
@@ -974,7 +1001,7 @@ if __name__ == "__main__":
         print "ais.py: " + str(msg)
         raise SystemExit, 1
 
-    csv = False
+    dsv = False
     dump = False
     histogram = False
     json = False
@@ -987,7 +1014,7 @@ if __name__ == "__main__":
     skiperr = True
     for (switch, val) in options:
         if switch == '-c':
-            csv = True
+            dsv = True
         elif switch == '-d':
             dump = True
         elif switch == '-h':
@@ -1007,7 +1034,7 @@ if __name__ == "__main__":
         elif switch == '-x':
             skiperr = False
 
-    if not csv and not histogram and not json and not malformed and not quiet:
+    if not dsv and not histogram and not json and not malformed and not quiet:
             dump = True
     try:
         for (raw, parsed, bogon) in parse_ais_messages(sys.stdin, scaled, skiperr, verbose):
@@ -1019,8 +1046,8 @@ if __name__ == "__main__":
             if not bogon:
                 if json:
                     print "{" + ",".join(map(lambda x: '"' + x[0].name + '":' + str(x[1]), parsed)) + "}"
-                elif csv:
-                    print ",".join(map(lambda x: str(x[1]), parsed))
+                elif dsv:
+                    print "|".join(map(lambda x: str(x[1]), parsed))
                 elif histogram:
                     frequencies[msgtype] = frequencies.get(msgtype, 0) + 1
                 elif dump:

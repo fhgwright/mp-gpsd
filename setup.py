@@ -25,7 +25,8 @@ try:
     where = sys.argv.index('--mangenerator')
     # Doesn't matter what it is, just that we have one
     if sys.argv[where+1]:
-        manpages=[('share/man/man1', ['gpscat.1', 'gpsfake.1','gpsprof.1'])]
+        manpages=[('share/man/man1', ['gpscat.1', 'gpsfake.1','gpsprof.1',
+                                      'xgps.1', 'xgpsspeed.1'])]
         print("Installing manual pages, generator is %s" %( sys.argv[where+1]))
     sys.argv = sys.argv[:where] + sys.argv[where+2:]
 except ValueError:
@@ -33,6 +34,7 @@ except ValueError:
 if not manpages:
     print("No XML processor, omitting manual-page installation.")
 
+MAKE = ("MAKE" in os.environ) and os.environ["MAKE"] or "make"
 if not 'clean' in sys.argv:
     abs_builddir = ("abs_builddir" in os.environ) and os.environ["abs_builddir"] or ""
     if not os.path.exists(os.path.join(abs_builddir, 'gpsd_config.h')):
@@ -40,7 +42,6 @@ if not 'clean' in sys.argv:
         sys.exit(1)
 
     cdcmd = abs_builddir and ("cd '" + abs_builddir + "' && ") or ""
-    MAKE = ("MAKE" in os.environ) and os.environ["MAKE"] or "make"
     for f_name in needed_files:
         # TODO:  Shouldn't make be run unconditionally in case a
         # dependency of f_name has been updated?
@@ -56,7 +57,7 @@ if not 'clean' in sys.argv:
 gpspacket_sources = ["gpspacket.c", "packet.c", "isgps.c",
             "driver_rtcm2.c", "strl.c", "hex.c", "crc24q.c"]
 include_dirs = [ os.path.realpath(os.path.dirname(__file__)) ]
-version_out = os.popen(MAKE + " version")
+version_out = os.popen(MAKE + " -s version")
 version = version_out.read()
 print(version)
 if version_out.close():
@@ -76,6 +77,6 @@ setup( name="gps",
     	Extension("gps.clienthelpers", ["gpsclient.c", "geoid.c", "gpsdclient.c", "strl.c"], include_dirs=include_dirs)
         ],
        packages = ['gps'],
-       scripts = ['gpscat','gpsfake','gpsprof', 'xgps'],
+       scripts = ['gpscat','gpsfake','gpsprof', 'xgps', 'xgpsspeed'],
        data_files= manpages
      )

@@ -28,7 +28,6 @@ various additional capabilities and extensions:
 C++ compiler	       -> libgpsmm C++ wrapper for the library
 pthreads library       -> support for PPS timekeeping on serial GPSes
 DBUS                   -> gpsd will issue DBUS notifications 
-X windows              -> one test client depends on this
 ncurses                -> a test client and the GPS monitor depend on this
 libusb-1.0.x or later  -> better USB device discovery
 Qt + qmake             -> libQgpsmm depends on this
@@ -61,6 +60,7 @@ If you are going to modify the build, you will need these:
 autoconf 2.61 or later
 automake 1.10 or later
 libtool 2.26 or later
+pkg-config
 
 Once you have fetched the software prerequisites:
 
@@ -110,9 +110,8 @@ are in the same group.
 
 3. Install prerequisites
 
-Under Ubuntu, you will require libxp-dev and libxaw7-dev
-in addition to the standard build-support packages.  You can get
-all the build prerequisites installed with "apt-get build-dep gpsd".
+Under Debian and Ubuntu ou can get all the build prerequisites
+installed with "apt-get build-dep gpsd".
 
 Note: if you are going to use the RTCM-104 support, you should compile
 with gcc4; if you don't have it installed as your default 
@@ -126,9 +125,6 @@ from a binary package).  As usual, the sequence is:
      ./configure && make
 
 Mac OS X users may need to do "./configure --x-includes=/usr/X11R6/include"
-
-Optionally, copy the app-defaults files xgpsspeed.ad to your
-home directory or to the system-wide X app-defaults directory.
 
 5. Start gpsd.  You'll need to give it as an argument a path to 
 a serial or USB port with a GPS attached to it.
@@ -214,3 +210,13 @@ regression tests, first build gpsd from sources, and then run "make
 check".  It is not necessary to install first, but you do need
 to have "." in your $PATH to run regressions uninstalled.  Python is
 required for regression tests.
+
+17. If you installed from a .deb under Debian or a Debian-derived 
+system, you may need to `dpkg-reconfigure -plow gpsd' to enable the
+hotplug magic ("Start gpsd automatically").
+
+18. Note for people using gpsd as time source for ntpd: In case you're
+using dhcp3-client to configure your system, make sure you disable
+/etc/dhcp3/dhclient-exit-hooks.d/ntp as dhclient would restart
+ntpd with an automatically created ntp.conf otherwise - and gpsd
+would not be ablt to talk with ntpd anymore.

@@ -203,7 +203,7 @@ static void navcom_event_hook(struct gps_device_t *session, event_t event)
     }
     /* Request the following messages: */
     /*
-     * FIXME: It might not be necessary to call this on reactivate.
+     * FIX-ME: It might not be necessary to call this on reactivate.
      * Experiment to see if the holds its settings through a close.
      */
     if (event == event_identified || event == event_reactivate) {
@@ -419,7 +419,7 @@ static gps_mask_t handle_0xb1(struct gps_device_t *session)
     session->context->gps_tow = tow / 1000.0;
     session->newdata.time =
 	gpstime_to_unix((int)week, session->context->gps_tow)
-			- session->context->leap_seconds;
+	- session->context->leap_seconds;
 
     /* Satellites used */
     sats_used = (uint32_t) getleul(buf, 9);
@@ -494,10 +494,8 @@ static gps_mask_t handle_0xb1(struct gps_device_t *session)
     eph = fom / 100.0 * 1.96;
     /* approximate epx and epy errors from it */
     session->newdata.epx = session->newdata.epy = eph / sqrt(2);
-    /* FIXME - Which units is tfom in (spec doesn't say) */
     session->newdata.ept = tfom * 1.96 /*Two sigma */ ;
 
-    clear_dop(&session->gpsdata.dop);
     if (gdop != DOP_UNDEFINED)
 	session->gpsdata.dop.gdop = gdop / 10.0;
     if (pdop != DOP_UNDEFINED)
@@ -744,7 +742,7 @@ static gps_mask_t handle_0x86(struct gps_device_t *session)
     /*@ ignore @*//*@ splint is confused @ */
     session->gpsdata.skyview_time =
 	gpstime_to_unix((int)week, session->context->gps_tow)
-			- session->context->leap_seconds;
+	- session->context->leap_seconds;
     /*@ end @*/
     /* Give this driver a single point of truth about DOPs */
     //session->gpsdata.dop.pdop = (int)pdop / 10.0;
@@ -779,7 +777,7 @@ static gps_mask_t handle_0x86(struct gps_device_t *session)
 	    gpsd_report(LOG_ERROR,
 			"Navcom: packet type 0x86: too many satellites!\n");
 	    gpsd_zero_satellites(&session->gpsdata);
-	    return ERROR_IS;
+	    return 0;
 	}
 	prn = getub(buf, n);
 	tracking_status = getub(buf, n + 1);
@@ -844,8 +842,9 @@ static gps_mask_t handle_0xb0(struct gps_device_t *session)
     char time_str[24];
     session->context->gps_week = (unsigned short)week;
     session->context->gps_tow = (double)tow / 1000.0;
-    (void)unix_to_iso8601(gpstime_to_unix((int)week, session->context->gps_tow),
-			  time_str, sizeof(time_str));
+    (void)
+	unix_to_iso8601(gpstime_to_unix((int)week, session->context->gps_tow),
+			time_str, sizeof(time_str));
 
     gpsd_report(LOG_PROG,
 		"Navcom: received packet type 0xb0 (Raw Meas. Data Block)\n");
@@ -941,7 +940,7 @@ static gps_mask_t handle_0xb5(struct gps_device_t *session)
 	/*@ ignore @*//*@ splint is confused @ */
 	session->newdata.time =
 	    gpstime_to_unix((int)week, session->context->gps_tow)
-			    - session->context->leap_seconds;
+	    - session->context->leap_seconds;
 	/*@ end @*/
 	gpsd_report(LOG_PROG,
 		    "Navcom: received packet type 0xb5 (Pseudorange Noise Statistics)\n");

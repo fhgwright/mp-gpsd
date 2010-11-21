@@ -71,7 +71,7 @@ def fakehook(linenumber, fakegps):
         if progress:
             baton.twirl('*\010')
         elif not singleshot:
-            sys.stderr.write("gpsfake: log cycle of %s begins.\n" % fakegps.name)
+            sys.stderr.write("gpsfake: log cycle of %s begins.\n" % fakegps.testload.name)
     time.sleep(cycle)
     if linedump and fakegps.testload.legend:
         ml = fakegps.testload.sentences[linenumber % len(fakegps.testload.sentences)].strip()
@@ -88,7 +88,7 @@ def fakehook(linenumber, fakegps):
 
 if __name__ == '__main__':
     try:
-        (options, arguments) = getopt.getopt(sys.argv[1:], "1bc:D:fghilm:no:pr:s:vx")
+        (options, arguments) = getopt.getopt(sys.argv[1:], "1bc:D:fghilm:no:pr:s:uvx")
     except getopt.GetoptError, msg:
         print "gpsfake: " + str(msg)
         raise SystemExit, 1
@@ -106,10 +106,10 @@ if __name__ == '__main__':
     predump = False
     pipe = False
     singleshot = False
-    flicker = False
     promptme = False
     client_init = '?WATCH={"json":true,"nmea":true}'
     doptions = ""
+    udp = False
     verbose = 0
     for (switch, val) in options:
         if (switch == '-1'):
@@ -138,12 +138,11 @@ if __name__ == '__main__':
         elif (switch == '-p'):
             pipe = True
         elif (switch == '-r'):
-            if flicker:
-                client_init += val
-            else:
-                client_init = val
+            client_init = val
         elif (switch == '-s'):
             speed = int(val)
+        elif (switch == '-u'):
+            udp = True
         elif (switch == '-v'):
             verbose += 1
         elif (switch == '-h'):
@@ -155,7 +154,7 @@ if __name__ == '__main__':
     else:
         print >>sys.stderr, "Processing %s" % ",".join(arguments)
 
-    test = gps.fake.TestSession(prefix=monitor, port=port, options=doptions, verbose=verbose, predump=predump)
+    test = gps.fake.TestSession(prefix=monitor, port=port, options=doptions, udp=udp, verbose=verbose, predump=predump)
 
     if pipe:
         test.reporter = sys.stdout.write
@@ -190,7 +189,7 @@ if __name__ == '__main__':
                 # Without a delay here there's a window for test
                 # sentences to arrive before the watch takes effect.
                 # This needs to increase if leading sentences in
-                # test loads aren't being process.
+                # test loads aren't being processed.
                 time.sleep(1)
             test.run()
         except socket.error, msg:

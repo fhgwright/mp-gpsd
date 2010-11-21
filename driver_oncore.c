@@ -372,7 +372,7 @@ gps_mask_t oncore_dispatch(struct gps_device_t * session, unsigned char *buf,
 	return oncore_msg_pps_delay(session, buf, len);
 
     default:
-	/* XXX This gets noisy in a hurry. Change once your driver works */
+	/* FIX-ME: This gets noisy in a hurry. Change once your driver works */
 	gpsd_report(LOG_WARN, "unknown packet id @@%c%c length %zd: %s\n",
 		    type >> 8, type & 0xff, len, gpsd_hexdump_wrapper(buf,
 								      len,
@@ -424,7 +424,7 @@ static void oncore_event_hook(struct gps_device_t *session, event_t event)
 	(void)oncore_control_send(session, getfirmware, sizeof(getfirmware));
 
     /*
-     * FIXME: It might not be necessary to call this on reactivate.
+     * FIX-ME: It might not be necessary to call this on reactivate.
      * Experiment to see if the holds its settings through a close.
      */
     if (event == event_identified || event == event_reactivate) {

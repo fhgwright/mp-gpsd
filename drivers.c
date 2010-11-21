@@ -64,7 +64,7 @@ gps_mask_t nmea_parse_input(struct gps_device_t * session)
     } else {			/* session->packet.type == NMEA_PACKET) */
 
 	gps_mask_t st = 0;
-	/* 
+	/*
 	 * Some packets do not end in \n, append one
 	 * for good logging
 	 */
@@ -140,7 +140,7 @@ static void nmea_event_hook(struct gps_device_t *session, event_t event)
 	     * Thus the only reliable probe is to try to flip the SiRF into
 	     * binary mode, cluing in the library to revert it on close.
 	     *
-	     * SiRFs dominate the GPS-mouse market, so we used to put this test 
+	     * SiRFs dominate the GPS-mouse market, so we used to put this test
 	     * first. Unfortunately this causes problems for gpsctl, as it cannot
 	     * select the NMEA driver without switching the device back to
 	     * binary mode!  Fix this if we ever find a nondisruptive probe string.
@@ -283,8 +283,8 @@ static void garmin_nmea_event_hook(struct gps_device_t *session,
 	 */
 	switch (session->packet.counter) {
 	case 0:
-	    /* reset some config, AutoFix, WGS84, PPS 
-	     * Set the PPS pulse length to 40ms which leaves the Garmin 18-5hz 
+	    /* reset some config, AutoFix, WGS84, PPS
+	     * Set the PPS pulse length to 40ms which leaves the Garmin 18-5hz
 	     * with a 160ms low state.
 	     * NOTE: new PPS only takes effect after next power cycle
 	     */
@@ -358,7 +358,6 @@ static void ashtech_event_hook(struct gps_device_t *session, event_t event)
 {
     if (event == event_wakeup)
 	(void)nmea_send(session, "$PASHQ,RID");
-    /* FIXME: Do we need to do this on reactivate as well? */
     if (event == event_identified) {
 	/* turn WAAS on. can't hurt... */
 	(void)nmea_send(session, "$PASHS,WAS,ON");
@@ -471,7 +470,7 @@ static void gpsclock_event_hook(struct gps_device_t *session, event_t event)
      * ignore the trailing PPS edge when extracting time from this chip.
      */
     if (event == event_identified || event == event_reactivate) {
-	gpsd_report(LOG_INF, "PPS trailing edge will be ignored");
+	gpsd_report(LOG_INF, "PPS trailing edge will be ignored\n");
 	session->driver.nmea.ignore_trailing_edge = true;
     }
 }
@@ -663,10 +662,10 @@ static bool tnt_send(struct gps_device_t *session, const char *fmt, ...)
     va_end(ap);
     sent = tnt_control_send(session, buf, strlen(buf));
     if (sent == (ssize_t) strlen(buf)) {
-	gpsd_report(LOG_IO, "=> GPS: %s", buf);
+	gpsd_report(LOG_IO, "=> GPS: %s\n", buf);
 	return true;
     } else {
-	gpsd_report(LOG_WARN, "=> GPS: %s FAILED", buf);
+	gpsd_report(LOG_WARN, "=> GPS: %s FAILED\n", buf);
 	return false;
     }
 }
@@ -777,7 +776,7 @@ static void oceanserver_event_hook(struct gps_device_t *session,
 static const struct gps_type_t oceanServer = {
     .type_name      = "OceanServer Digital Compass OS5000", /* full name of type */
     .packet_type    = NMEA_PACKET,	/* associated lexer packet type */
-    .trigger	    = "$OHPR,",		/* detect their main sentence */ 
+    .trigger	    = "$OHPR,",		/* detect their main sentence */
     .channels       = 0,		/* not an actual GPS at all */
     .probe_detect   = NULL,
     .get_packet     = generic_get,	/* how to get a packet */
@@ -902,8 +901,24 @@ static const struct gps_type_t rtcm104v3 = {
 
 static gps_mask_t garmintxt_parse_input(struct gps_device_t *session)
 {
-    //gpsd_report(LOG_PROG, "Garmin Simple Text packet\n");
-    return garmintxt_parse(session);
+    if (session->packet.type == COMMENT_PACKET) {
+	return 0;
+    } else if (session->packet.type == GARMINTXT_PACKET) {	
+	//gpsd_report(LOG_PROG, "Garmin Simple Text packet\n");
+	return garmintxt_parse(session);
+    } else {
+	const struct gps_type_t **dp;
+
+	for (dp = gpsd_drivers; *dp; dp++) {
+	    if (session->packet.type == (*dp)->packet_type) {
+		gpsd_report(LOG_WARN, "%s packet seen when NMEA expected.\n",
+			    (*dp)->type_name);
+		(void)gpsd_switch_driver(session, (*dp)->type_name);
+		return (*dp)->parse_packet(session);
+	    }
+	}
+	return 0;
+    }
 }
 
 /* *INDENT-OFF* */
@@ -951,9 +966,9 @@ gps_mask_t processMTK3301(int c UNUSED, char *field[],
 
     switch (msg = atoi(&(field[0])[4])) {
     case 705:			/*  */
-	(void)strlcat(session->subtype, field[1], 64);
-	(void)strlcat(session->subtype, "-", 64);
-	(void)strlcat(session->subtype, field[2], 64);
+	(void)strlcat(session->subtype, field[1], sizeof(session->subtype));
+	(void)strlcat(session->subtype, "-", sizeof(session->subtype));
+	(void)strlcat(session->subtype, field[2], sizeof(session->subtype));
 	return 0;		/* return a unknown sentence, which will cause the driver switch */
     case 001:			/* ACK / NACK */
 	reason = atoi(field[2]);
@@ -992,7 +1007,7 @@ static void mtk3301_event_hook(struct gps_device_t *session, event_t event)
 "$PMTK314,1,1,1,1,1,5,1,1,0,0,0,0,0,0,0,0,0,1,0"
 
 */
-    /* FIXME: Do we need to resend this on reactivation? */
+    /* FIX-ME: Do we need to resend this on reactivation? */
     if (event == event_identified) {
 	(void)nmea_send(session, "$PMTK320,0");	/* power save off */
 	(void)nmea_send(session, "$PMTK300,1000,0,0,0.0,0.0");	/* Fix interval */
@@ -1059,7 +1074,7 @@ static gps_mask_t aivdm_analyze(struct gps_device_t *session)
     if (session->packet.type == AIVDM_PACKET) {
 	if (aivdm_decode
 	    ((char *)session->packet.outbuffer, session->packet.outbuflen,
-	     &session->aivdm, &session->gpsdata.ais)) {
+	     session->aivdm, &session->gpsdata.ais)) {
 	    return ONLINE_IS | AIS_IS;
 	} else
 	    return ONLINE_IS;

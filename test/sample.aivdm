@@ -155,7 +155,8 @@
 #	DestinationID:    313240222
 #	RetransmitFlag:   False
 #	Spare:            0
-#       ApplicationID:    42827
+#       DAC               669
+#       FID               11
 #	Data:             48:eb2f118f7ff1
 #
 # From AISHub.  This type 6 has no data.  It's paired with the
@@ -167,15 +168,16 @@
 #	Sequence Number          : 0
 #	Destination MMSI         : 2655651
 #	Retransmit flag          : 0
-#	Application ID           : 104
+#       DAC                      : 1
+#       FID                      : 40
 #	Data                     : 16:0000
 #
-# FIXME: We need a type 6 test case that requires more than one AIVDM fragment.
+# FIX-ME: We need a type 6 test case that requires more than one AIVDM fragment.
 #
 # Type 7:
 # From AISHub - reported immediately after the preceding type 6, 
-# which matches it.  One destination MMSI.  noaadata-04.2 fails
-# on this message.
+# which matches it.  One destination MMSI.  noaadata-0.43 fails
+# on this message (Kurt says his decoder only handles the longest case).
 !AIVDM,1,1,,A,702R5`hwCjq8,0*6B
 #	Message Type             : 7
 #	Repeat Indicator         : 0
@@ -193,8 +195,8 @@
 #	MMSI4:            0
 #
 # Type 7:
-# This was from Mike Greene and had a dump attached.
-# noaadata-04.2 fails on this message
+# This was from Mike Greene and had a dump attached. Decode is known good.
+# noaadata-0.43 fails on this message
 !AIVDM,1,1,,B,7`0Pv1L:Ac8rbgPKHA8`P,2*56
 #        Message Type:    7
 #        RepeatIndicator: 2
@@ -212,17 +214,22 @@
 #	RepeatIndicator:    0
 #       UserID:             366999712
 #       ApplicationID:      23480
+#       DAC                 366
+#       FID                 22
 #       Data:               256:3a53dbb7be4a773137f87d7b0445f040dea05d93f593783194ae9b9d9dbe05fb
 #
 # Type 8:
-# From Mike Greene. Spans more than one AIVDM fragment.
-!AIVDM,2,1,6,B,85MwpIiKf6<M7FdjukGh=9B73IpCcMckto=3DlNcU6:,0*04
-!AIVDM,2,2,5,A,?59R6P573,0*25
-#       Message Type:       8
-#       Repeat Indicator:   0
-#       MMSI:               366999655
-#       Application ID:     23480
-#       Binary Data:        256:631d1d6b32f735f03494870d9e13addaf3f373435347ab94628f1498868051c3
+# From Kurt Schwehr. Spans more than one AIVDM fragment. Known good.
+# Analyzed in <4BE6A423.8000007@ccom.unh.edu>, seems to be military traffic
+# with a mis-entered MMSI.
+!AIVDM,2,1,6,A,8>qc9wiKf>d=Cq5r0mdew:?DLq>1LmhHrsqmBCKnJ50,0*30
+!AIVDM,2,2,6,A,3OLc=UCRp,0*4A,b003660465
+#       Message Type        8
+#       Repeat Indicator    0
+#       MMSI                999999999
+#       DAC                 366
+#       FID                 22
+#       Data                256:eb0d4f917a035b2dfca3d4739381735c18ebbe754936f66850037dcacd9538b8
 #
 # Type 9:
 # From AISHub. Checked with the noaadata tools.
@@ -254,7 +261,7 @@
 #       Spare2:           0
 #
 # Type 10:
-# From Mike Greene. One destination MMSI.
+# From Mike Greene. One destination MMSI. Decode is known good.
 !AIVDM,1,1,,B,:6TMCD1GOS60,0*5B,s36310,d-081,T59.01777335
 #       Message Type:     10
 #       Repeat Indicator: 0
@@ -286,7 +293,7 @@
 #
 # Type 12:
 # From AIS Hub via Neal Arundale. Dumps by ais.py.
-# Verified by the text being readable
+# Verified by the text being readable.
 !AIVDM,1,1,,A,<02:oP0kKcv0@<51C5PB5@?BDPD?P:?2?EB7PDB16693P381>>5<PikP,0*37
 #       Message Type             : 12
 #       Repeat Indicator         : 0
@@ -356,7 +363,7 @@
 #
 # Type 14:
 # From AIS Hub via Neal Arundale.  Dumps by ais.py.
-# Verified by the text being readable
+# Verified by the text being readable.
 !AIVDM,1,1,,A,>5?Per18=HB1U:1@E=B0m<L,2*51
 #       Message Type             : 14
 #       Repeat Indicator         : 0
@@ -374,7 +381,8 @@
 #       Text                     : TEST
 #
 # Type 15:
-# From Mike Greene.
+# From Mike Greene. This is the 88-bit variant with one MMSI, 
+# message type and offset. Decode is known good.
 !AIVDM,1,1,,A,?5OP=l00052HD00,2*5B
 #       Message Type:       15
 #       Repeat Indicator:   0
@@ -382,6 +390,24 @@
 #       Destination MMSI:   5158
 #       First Message Type: 5
 #       First Slot Offset:  0
+#
+# Type 15:
+# From Kurt Schwehr. This is the 108/112-bit variant with one MMSI and two
+# message types. Includes USCG metadata. Decode is known good.
+!AIVDM,1,1,,B,?h3Ovn1GP<K0<P@59a0,2*04,d-077,S1832,t004248.00,T48.85520485,r07RPAL1,1272415370
+#	Message Type             : 15
+#	Repeat Indicator         : 3
+#	MMSI                     : 3669720
+#	First interrogated MMSI  : 367014320
+#	First message type       : 3
+#	First slot offset        : 516
+#	Second message type      : 5
+#	Second slot offset       : 617
+#	Second interrogated MMSI : 0
+#	Message type             : 0
+#	Slot offset              : 0
+#
+# FIX-ME: Need an example of the 160-bit variant of type 15 with two MMSIs.
 #
 # Type 16:
 # From AISHub. These are only a regression test to check that the C and Python
@@ -397,7 +423,7 @@
 #       First slot offset        : 200
 #       First slot increment     : 0
 #
-# FIXME: Need an example of the 144-bit variant with two MMSIs.
+# FIX-ME: Need an example of the 144-bit variant of type 16 with two MMSIs, g.
 #
 # Type 17:
 # From AISHub. This is only a regression test to check that the C and Python
@@ -477,7 +503,7 @@ DGNSS data               : 376:7c0556c07031febbf52924fe33fa2933ffa0fd2932fdb7062
 #       Sub Message:        6
 #
 # Type 19:
-# From Mike Greene.  Checked with the noaadata tools.
+# From Mike Greene.  Checked with the noaadata tools. Decode is known good.
 !AIVDM,1,1,,B,C5N3SRgPEnJGEBT>NhWAwwo862PaLELTBJ:V00000000S0D:R220,0*0B
 #        MessageID:         19
 #        RepeatIndicator:   0
@@ -534,7 +560,7 @@ DGNSS data               : 376:7c0556c07031febbf52924fe33fa2933ffa0fd2932fdb7062
 #
 # Type 21:
 # Has a Name Extension field
-# From Mike Greene
+# From Mike Greene. Decode is verified by the text being readable.
 !AIVDM,2,1,5,B,E1mg=5J1T4W0h97aRh6ba84<h2d;W:Te=eLvH50```q,0*46
 !AIVDM,2,2,5,B,:D44QDlp0C1DU00,2*36
 #        Message Type:             21
@@ -565,7 +591,7 @@ DGNSS data               : 376:7c0556c07031febbf52924fe33fa2933ffa0fd2932fdb7062
 # Verified only by the fact that the Python and C decoders get consistent
 # results, we haven't actually seen an independent dump of these fields. 
 # (The noaadata 0.42 dumper for this type doesn't seem to work.)
-!AIVDM,1,1,,A,F030ot22N2P6aoQbhe4736L20000,0*1
+!AIVDM,1,1,,A,F030ot22N2P6aoQbhe4736L20000,0*1A
 #        Message Type             : 22
 #        Repeat Indicator         : 0
 #        MMSI                     : 3160048
@@ -600,26 +626,68 @@ DGNSS data               : 376:7c0556c07031febbf52924fe33fa2933ffa0fd2932fdb7062
 #        Quiet time               : 0
 #
 # Type 24:
-# From Kurt Schwehr. Checked with the noaadata tools.
-# One pair of type A and Type B messages. Note, these have Coast Guard 
-# extended fields after them.
-!AIVDM,1,1,,B,H5NHcTP<51@4TrM>10584@U<D00,2*77,x337805,b003669710,1241895000
+# From Nirgal
+# One pair of type A and Type B messages.
+!AIVDM,1,1,,A,H42O55i18tMET00000000000000,2*6D
 #       MessageID:         24
 #       RepeatIndicator:   0
-#       UserID:            367405970
+#       UserID:            271041815
 #       partnum:           0
-#       name:              CAPTAIN`S PARADISE
-!AIVDM,1,1,,B,HU2K5NTn13BijklG44oppk103210,0*06,s23294,d-114,T44.21624911,x731910,r13RSMT1,1241894986
+#       name:              PROGUY
+!AIVDM,1,1,,A,H42O55lti4hhhilD3nink000?050,0*40
 #       MessageID:         24
-#       RepeatIndicator:   2
-#       UserID:            338085242
-#       partnum:           1
-#       shipandcargo:      54
-#       vendorid:          ACR1234
-#       callsign:          WDD7883
-#       dimA:              8
-#       dimB:              3
-#       dimC:              2
-#       dimD:              1
-#       mothership:        16789633
-#       spare:             0
+#       RepeatIndicator:   0
+#       UserID:            271041815
+#       partnum:           0
+#       shipandcargo:      60|
+#       vendorid:          1D00014
+#       callsign:          TC6163
+#       dimA:              0
+#       dimB:              15
+#       dimC:              0
+#       dimD:              5
+#
+#
+##############################################################################
+# Invalid packet tests:
+##############################################################################
+#
+# That fragment misses part 1, yields nothing:
+AIVDM,2,2,1,B,00000000000,2*26
+#
+#
+##############################################################################
+# Type 24 collisions:
+##############################################################################
+#
+# 24B from 271041815:
+# This sentence is missing 24A and is discarded
+!AIVDM,1,1,,A,H42O55lti4hhhilD3nink000?050,0*40
+# gpsdecode: AIVDM message type 24 collision on channel A: 24B sentence from 271041815 without 24A.
+#
+# 24A from mmsi 271041511:
+# context is updated
+!AIVDM,1,1,,A,H42O3qiA8U10Tp0000000000000,2*37
+#
+# 24A from mmsi 271040660:
+# Previous 24A from 271041511 is discarded, context is updated
+!AIVDM,1,1,,A,H42O0U0Lu`@Dno4000000000000,2*18
+# gpsdecode: AIVDM message type 24 collision on channel A : Discarding previous sentence 24A from 271041511.
+#
+# 24B from mmsi 271020195:
+# Mmsi mismatch: That packet is discarded and context still hold data from 271040660
+!AIVDM,1,1,,A,H42Mh`lUi2hhljiI=mikk000B050,0*17
+# gpsdecode: AIVDM message type 24 collision on channel A: MMSI mismatch: 271040660 vs 271020195.
+#
+# 24B from mmsi 271040660:
+# Success
+!AIVDM,1,1,,A,H42O0U4Ui3hhhlmI=mmhl000H060,0*2E
+# 
+##############################################################################
+# Channel multiplexing test:
+##############################################################################
+# simultaneous use of buffers of channels A & B
+!AIVDM,2,1,6,B,542M92h00001@<7;?G0PD4i@R0<tqA8tj37>220o0h:2240Ht50000000000,0*3B
+!AIVDM,2,1,2,A,542M92h00001@<7;?G0PD4i@R0<tqA8tj37>220o0h:2240Ht500000000000000,0*3C
+!AIVDM,2,2,2,A,0000002,2*24
+!AIVDM,2,2,6,B,00000000000,2*21

@@ -12,12 +12,12 @@
  * serial port.  These receivers provide adequate NMEA support, so it
  * often makes sense to just put them into NMEA mode.
  *
- * On Linux, USB Garmins (091e:0003) need the Linux garmin_gps driver and 
- * will not function without it.  On other operating systems, it is clear 
- * garmin_usb_binary_old does not work since it requires the Linux 
+ * On Linux, USB Garmins (091e:0003) need the Linux garmin_gps driver and
+ * will not function without it.  On other operating systems, it is clear
+ * garmin_usb_binary_old does not work since it requires the Linux
  * garmin_gps module.
  *
- * This code has been tested and at least at one time is known to work on 
+ * This code has been tested and at least at one time is known to work on
  * big- and little-endian CPUs and 32 and 64 bit cpu modes.
  *
  *
@@ -30,7 +30,7 @@
  * An older version of iop_spec.pdf that describes only Serial Binary
  * is available at:
  *   http://vancouver-webpages.com/pub/peter/iop_spec.pdf
- * Information about the GPS 18 
+ * Information about the GPS 18
  *   http://www.garmin.com/manuals/425_TechnicalSpecification.pdf
  *
  * There is one physical link protocol for serial which uses DLE/ETX
@@ -209,7 +209,8 @@ typedef struct
     // next 3 items
     float msl_hght;		/* height of WGS 84 above MSL (meters) */
     int16_t leap_sec;		/* diff between GPS and UTC (seconds) */
-    int32_t grmn_days;
+    int32_t grmn_days;		/* days from UTC December 31st, 1989 to the
+				 * beginning of the current week */
 } cpo_pvt_data;
 
 typedef struct
@@ -373,11 +374,13 @@ gps_mask_t PrintSERPacket(struct gps_device_t *session, unsigned char pkt_id,
 
 	// 631065600, unix seconds for 31 Dec 1989 Zulu
 	time_l = (time_t) (631065600 + (pvt->grmn_days * 86400));
+	// TODO, convert grmn_days to context->gps_week
 	time_l -= pvt->leap_sec;
 	session->context->leap_seconds = pvt->leap_sec;
 	session->context->valid = LEAP_SECOND_VALID;
 	// gps_tow is always like x.999 or x.998 so just round it
 	time_l += (time_t) round(pvt->gps_tow);
+	session->context->gps_tow = pvt->gps_tow;
 	session->newdata.time = (double)time_l;
 	gpsd_report(LOG_PROG, "Garmin: time_l: %ld\n", (long int)time_l);
 
@@ -549,7 +552,7 @@ gps_mask_t PrintSERPacket(struct gps_device_t *session, unsigned char pkt_id,
 	    if (session->gpsdata.ss[j] < 0.0) {
 		session->gpsdata.ss[j] = 0.0;
 	    }
-	    // FIXME: Garmin documents this, but Daniel Dorau
+	    // FIX-ME: Garmin documents this, but Daniel Dorau
 	    // <daniel.dorau@gmx.de> says the behavior on his GPSMap60CSX
 	    // doesn't match it.
 	    if ((uint8_t) 0 != (sats->status & 4)) {
@@ -741,7 +744,7 @@ static void Build_Send_USB_Packet(struct gps_device_t *session,
 
 /* build and send a packet in serial protocol */
 /* layer_id unused */
-// FIXME: This should go through the common message buffer someday
+// FIX-ME: This should go through the common message buffer someday
 static void Build_Send_SER_Packet(struct gps_device_t *session,
 				  uint32_t layer_id UNUSED, uint32_t pkt_id,
 				  uint32_t length, uint32_t data)
@@ -807,81 +810,81 @@ static void Build_Send_SER_Packet(struct gps_device_t *session,
 /*
  * is_usb_device() - is a specified device USB matching given vendor/product?
  *
- * BUG: Doesn't actually match against path yet. Must finish this function 
+ * BUG: Doesn't actually match against path yet. Must finish this function
  * by querying /sys/dev/char, either directly or using libudev. Greg KH
  * assures this is possible, though he is vague about how.
  *
- * libudev: http://www.kernel.org/pub/linux/utils/kernel/hotplug/libudev/ 
+ * libudev: http://www.kernel.org/pub/linux/utils/kernel/hotplug/libudev/
  */
 /*@-compdef -usedef@*/
 static bool is_usb_device(const char *path UNUSED, int vendor, int product)
 {
-	// discover devices
-	libusb_device **list;
-	ssize_t cnt;
-	ssize_t i = 0;
-	bool found = false;
+    // discover devices
+    libusb_device **list;
+    ssize_t cnt;
+    ssize_t i = 0;
+    bool found = false;
 
-	gpsd_report(LOG_SHOUT, "attempting USB device enumeration.\n");
-	/*@i2@*/libusb_init(NULL);
+    gpsd_report(LOG_SHOUT, "attempting USB device enumeration.\n");
+    /*@i2@*/ libusb_init(NULL);
 
-	/*@-nullpass@*/
-	if ((cnt = libusb_get_device_list(NULL, &list)) < 0) {
-	    gpsd_report(LOG_ERROR, "USB device list call failed.\n");
-	    /*@i1@*/libusb_exit(NULL);
-	    return false;
-	}
-	/*@+nullpass@*/
+    /*@-nullpass@*/
+    if ((cnt = libusb_get_device_list(NULL, &list)) < 0) {
+	gpsd_report(LOG_ERROR, "USB device list call failed.\n");
+	/*@i1@*/ libusb_exit(NULL);
+	return false;
+    }
+    /*@+nullpass@*/
 
-	for (i = 0; i < cnt; i++) {
-	    struct libusb_device_descriptor desc;
-	    libusb_device *dev = list[i];
+    for (i = 0; i < cnt; i++) {
+	struct libusb_device_descriptor desc;
+	libusb_device *dev = list[i];
 
-	    int r = libusb_get_device_descriptor(dev, &desc);
-	    if (r < 0) {
-		gpsd_report(LOG_ERROR, 
-			    "USB descriptor fetch failed on device %zd.\n",
-			    i);
-		continue;
-	    }
-
-	    /* we can extract device descriptor data */
-	    gpsd_report(LOG_SHOUT, "%04x:%04x (bus %d, device %d)\n",
-			desc.idVendor, desc.idProduct,
-			libusb_get_bus_number(dev), 
-			libusb_get_device_address(dev));
-
-	    /* we match if vendor and product ID are right */
-	    if (desc.idVendor == 0x91e && desc.idProduct == 3) {
-		found = true;
-		break;
-	    }
+	int r = libusb_get_device_descriptor(dev, &desc);
+	if (r < 0) {
+	    gpsd_report(LOG_ERROR,
+			"USB descriptor fetch failed on device %zd.\n", i);
+	    continue;
 	}
 
-	gpsd_report(LOG_SHOUT, "vendor/product match with %04x:%04x %sfound\n",
-		    vendor, product, found ? "" : "not ");
-	libusb_free_device_list(list, 1);
-	/*@i1@*/libusb_exit(NULL);
-	return found;
+	/* we can extract device descriptor data */
+	gpsd_report(LOG_SHOUT, "%04x:%04x (bus %d, device %d)\n",
+		    desc.idVendor, desc.idProduct,
+		    libusb_get_bus_number(dev),
+		    libusb_get_device_address(dev));
+
+	/* we match if vendor and product ID are right */
+	if (desc.idVendor == 0x91e && desc.idProduct == 3) {
+	    found = true;
+	    break;
+	}
+    }
+
+    gpsd_report(LOG_SHOUT, "vendor/product match with %04x:%04x %sfound\n",
+		vendor, product, found ? "" : "not ");
+    libusb_free_device_list(list, 1);
+    /*@i1@*/ libusb_exit(NULL);
+    return found;
 }
+
 /*@-compdef -usedef@*/
 #endif /* HAVE_LIBUSB || S_SPLINT_S */
 
 /*
- * garmin_usb_detect() - detect a Garmin USB device connected to ession fd. 
+ * garmin_usb_detect() - detect a Garmin USB device connected to ession fd.
  *
  * This is ONLY for USB devices reporting as: 091e:0003.
  *
  * This driver ONLY works in Linux and ONLY when the the garmin_gps kernel
  * module is installed.
  *
- * This is only necessary because under Linux Garmin USB devices need a 
+ * This is only necessary because under Linux Garmin USB devices need a
  * kernel module rather than being normal USB-serial devices.
  *
  * The actual wire protocol from the Garmin device is very strange. There
  * are no delimiters.  End of packet is signaled by a zero-length read
  * on the USB device, and start of packet is the next read.  You can't just
- * ignore the zero reads and pass the data through - you'd never be able 
+ * ignore the zero reads and pass the data through - you'd never be able
  * to tell where the packet boundaries are.
  *
  * The garmin_usb module's job is to grab the packet and frame it in
@@ -998,7 +1001,7 @@ static bool garmin_usb_detect(struct gps_device_t *session)
 static void garmin_event_hook(struct gps_device_t *session, event_t event)
 {
     /*
-     * FIXME: It might not be necessary to call this on reactivate.
+     * FIX-ME: It might not be necessary to call this on reactivate.
      * Experiment to see if the holds its settings through a close.
      */
     if (event == event_identified || event == event_reactivate) {
@@ -1023,7 +1026,7 @@ static void garmin_event_hook(struct gps_device_t *session, event_t event)
 #endif
     }
     if (event == event_deactivate)
-	/* FIXME: is any action needed, or is closing the port sufficient? */
+	/* FIX-ME: is any action needed, or is closing the port sufficient? */
 	gpsd_report(LOG_PROG, "Garmin: garmin_close()\n");
 }
 

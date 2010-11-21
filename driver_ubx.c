@@ -75,9 +75,9 @@ ubx_msg_nav_sol(struct gps_device_t *session, unsigned char *buf,
 	session->context->gps_week = gw;
 	session->context->gps_tow = tow / 1000.0;
 
-	t = gpstime_to_unix((int)session->context->gps_week, 
-				session->context->gps_tow)
-			    - session->context->leap_seconds;
+	t = gpstime_to_unix((int)session->context->gps_week,
+			    session->context->gps_tow)
+	    - session->context->leap_seconds;
 	session->newdata.time = t;
 	mask |= TIME_IS;
     }
@@ -106,7 +106,7 @@ ubx_msg_nav_sol(struct gps_device_t *session, unsigned char *buf,
 	break;
     case UBX_MODE_2D:
     case UBX_MODE_DR:		/* consider this too as 2D */
-    case UBX_MODE_GPSDR:	/* XXX DR-aided GPS may be valid 3D */
+    case UBX_MODE_GPSDR:	/* FIX-ME: DR-aided GPS may be valid 3D */
 	session->newdata.mode = MODE_2D;
 	break;
     default:
@@ -144,7 +144,12 @@ ubx_msg_nav_dop(struct gps_device_t *session, unsigned char *buf,
     if (data_len != 18)
 	return 0;
 
-    clear_dop(&session->gpsdata.dop);
+    /*
+     * We make a deliberate choice not to clear DOPs from the
+     * last skyview here, but rather to treat this as a supplement
+     * to our calculations from the visiniolity matrix, trusting
+     * the firmware algorithms over ours.
+     */
     session->gpsdata.dop.gdop = (double)(getleuw(buf, 4) / 100.0);
     session->gpsdata.dop.pdop = (double)(getleuw(buf, 6) / 100.0);
     session->gpsdata.dop.tdop = (double)(getleuw(buf, 8) / 100.0);
@@ -183,8 +188,8 @@ ubx_msg_nav_timegps(struct gps_device_t *session, unsigned char *buf,
 
     session->context->gps_tow = tow / 1000.0;
     t = gpstime_to_unix((int)session->context->gps_week,
-    			session->context->gps_tow)
-			- session->context->leap_seconds;
+			session->context->gps_tow)
+	- session->context->leap_seconds;
     session->newdata.time = t;
 
     gpsd_report(LOG_DATA, "TIMEGPS: time=%.2f mask={TIME}\n",

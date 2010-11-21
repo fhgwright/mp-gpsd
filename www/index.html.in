@@ -92,7 +92,7 @@ src="http://www.ohloh.net/p/3944/widgets/project_cocomo.js"></script>
 <p>We've been warning it was coming for years, and it's here: in 2.90,
 the request/response protocol used by <code>gpsd</code> has changed in
 ways that will break your application if you're not careful.  The old
-protocol is gone from the damon.  It is still supported in the client
+protocol is gone from the daemon.  It is still supported in the client
 library, but will remain so only for a very limited time.  Read <a
 href="protocol-transition.html">"Moving to GPSD-NG: a Guide for Client
 Developers"</a> to find out why this is happening and what you need to
@@ -137,7 +137,10 @@ href="http://viking.sf.net">viking</a>, <a
 href="http://www.tangogps.org/">tangogps</a>, <a
 href="http://www.foxtrotGPS.org/">foxtrot</a>, <a
 href="http://sourceforge.net/projects/opencpn/">opencpn</a>, <a
-href="http://icculus.org/obdgpslogger/">obdgpslogger</a>, and <a
+href="http://icculus.org/obdgpslogger/">obdgpslogger</a>, <a 
+href="http://www.virtualroadside.com/geoHist/">geohist</a>, <a 
+href="http://wiki.openstreetmap.org/wiki/JOSM/Plugins/LiveGPS">LiveGPS</a>,
+and <a
 href="http://www.freedesktop.org/wiki/Software/GeoClue">geoclue</a>.</p>
 
 <p>Under Linux, <code>gpsd</code> normally runs with zero
@@ -177,7 +180,7 @@ USB-serial devices.</p>
 <p>If you represent a GPS manufacturer interested in qualifying your 
 device for use with Linux and other open-source operating systems, 
 we are your contact point.  We'll need (1) on-line access to interface
-documentation, (2) a few (as in, no more than three) eval units. and (3)
+documentation, (2) a few (as in, no more than three) eval units, and (3)
 an engineering contact at your firm.  For more, see our page
 <a href='for-vendors.html'>welcoming vendor cooperation</a>.</p>
 
@@ -377,7 +380,7 @@ Alliance for Code Excellence</a> on how GPSD drives out bad code.</dd>
 <dt><a href="http://esr.ibiblio.org/?p=1859">Scenes from the Life of a System Architect</a></dt>
 <dd>The GPSD lead describes some work in progress on the core code of
 GPSD. A slice of what doing software architecture is like in the
-real world, where historyt can weigh neatrly as much as today's
+real world, where history can weigh nearly as much as today's
 requirements list.</dd>
 
 </dl>
@@ -396,6 +399,12 @@ project</a> is a small program which reads GPS data from a running
 gpsd process and forwards it to a remote server via an UDP
 connection. GPSDproxy is intended to be run on GPS enabled mobile
 devices.</p>
+
+<p>You can read detailed intructions on <a
+href="http://www.rjsystems.nl/en/2100-ntpd-garmin-gps-18-lvc-gpsd.php">
+Synchronizing ntpd to a Garmin GPS 18 LVC via gpsd</a>. This may be a
+useful tutorial even if your actual device isn't a Garmin 18; many
+of the setup steps and caveats will be the same.</p>
 
 <p>Diego Berge has written a prototype <a
 href="http://www.navlost.eu/survey/gpsd/">Qt-based client</a>,

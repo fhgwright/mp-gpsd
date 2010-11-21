@@ -37,7 +37,6 @@
 #endif
 #endif
 
-
 int gpsd_switch_driver(struct gps_device_t *session, char *type_name)
 {
     const struct gps_type_t **dp;
@@ -254,7 +253,7 @@ static /*@null@*/ void *gpsd_ppsmonitor(void *arg)
 		log = "Too long for 5Hz, too short for 1Hz\n";
 	    } else if (1001000 > cycle) {
 		/* looks like PPS pulse or square wave */
-		    if (0 == duration) {
+		if (0 == duration) {
 		    ok = 1;
 		    log = "PPS invisible pulse\n";
 		} else if (499000 > duration) {
@@ -295,7 +294,7 @@ static /*@null@*/ void *gpsd_ppsmonitor(void *arg)
 	}
 	/*@ -boolint @*/
 	if (NULL != log) {
-	    gpsd_report(LOG_RAW, "%s", log);
+	    gpsd_report(LOG_RAW, "%s\n", log);
 	}
 	if (0 != ok) {
 	    (void)ntpshm_pps(session, &tv);
@@ -317,30 +316,51 @@ int gpsd_activate(struct gps_device_t *session)
     if (netgnss_uri_check(session->gpsdata.dev.path)) {
 	session->gpsdata.gps_fd = netgnss_uri_open(session->context,
 						   session->gpsdata.dev.path);
-	session->sourcetype = source_socket;
+	session->sourcetype = source_tcp;
 	gpsd_report(LOG_SPIN,
 		    "netgnss_uri_open(%s) returns socket on fd %d\n",
 		    session->gpsdata.dev.path, session->gpsdata.gps_fd);
-	/* otherwise, could be an AIS data feed */
-    } else if (strncmp(session->gpsdata.dev.path, "ais://", 6) == 0) {
+	/* otherwise, could be an TCP data feed */
+    } else if (strncmp(session->gpsdata.dev.path, "tcp://", 6) == 0) {
 	char server[GPS_PATH_MAX], *port;
 	socket_t dsock;
 	(void)strlcpy(server, session->gpsdata.dev.path + 6, sizeof(server));
 	session->gpsdata.gps_fd = -1;
 	port = strchr(server, ':');
 	if (port == NULL) {
-	    gpsd_report(LOG_ERROR, "Missing colon in AIS feed spec.\n");
+	    gpsd_report(LOG_ERROR, "Missing colon in TCP feed spec.\n");
 	    return -1;
 	}
 	*port++ = '\0';
-	gpsd_report(LOG_INF, "opening AIS feed at %s, port %s.\n", server,
+	gpsd_report(LOG_INF, "opening TCP feed at %s, port %s.\n", server,
 		    port);
 	if ((dsock = netlib_connectsock(AF_UNSPEC, server, port, "tcp")) < 0) {
-	    gpsd_report(LOG_ERROR, "AIS device open error %s.\n",
+	    gpsd_report(LOG_ERROR, "TCP device open error %s.\n",
 			netlib_errstr(dsock));
 	    return -1;
 	}
 	session->gpsdata.gps_fd = dsock;
+	session->sourcetype = source_tcp;
+    } else if (strncmp(session->gpsdata.dev.path, "udp://", 6) == 0) {
+	char server[GPS_PATH_MAX], *port;
+	socket_t dsock;
+	(void)strlcpy(server, session->gpsdata.dev.path + 6, sizeof(server));
+	session->gpsdata.gps_fd = -1;
+	port = strchr(server, ':');
+	if (port == NULL) {
+	    gpsd_report(LOG_ERROR, "Missing colon in UDP feed spec.\n");
+	    return -1;
+	}
+	*port++ = '\0';
+	gpsd_report(LOG_INF, "opening UDP feed at %s, port %s.\n", server,
+		    port);
+	if ((dsock = netlib_connectsock(AF_UNSPEC, server, port, "udp")) < 0) {
+	    gpsd_report(LOG_ERROR, "UDP device open error %s.\n",
+			netlib_errstr(dsock));
+	    return -1;
+	}
+	session->gpsdata.gps_fd = dsock;
+	session->sourcetype = source_udp;
     }
     /* otherwise, ordinary serial device */
     else
@@ -383,6 +403,7 @@ int gpsd_activate(struct gps_device_t *session)
 	session->gpsdata.separation = NAN;
 	session->mag_var = NAN;
 	session->releasetime = 0;
+	session->getcount = 0;
 
 	/* clear the private data union */
 	memset(&session->driver, '\0', sizeof(session->driver));
@@ -451,7 +472,7 @@ char /*@observer@*/ *gpsd_id( /*@in@ */ struct gps_device_t *session)
 }
 
 static void gpsd_error_model(struct gps_device_t *session,
-		      struct gps_fix_t *fix, struct gps_fix_t *oldfix)
+			     struct gps_fix_t *fix, struct gps_fix_t *oldfix)
 /* compute errors and derived quantities */
 {
     /*
@@ -486,13 +507,21 @@ static void gpsd_error_model(struct gps_device_t *session,
 	(session->gpsdata.status ==
 	 STATUS_DGPS_FIX ? P_UERE_WITH_DGPS : P_UERE_NO_DGPS);
 
-
     /*
-     * OK, this is not an error computation, but
-     * we're at the right place in the architrcture for it.
-     * Compute climb/sink in the simplest possible way.
-     * FIXME: Someday we should compute speed here too.
+     * OK, this is not an error computation, but we're at the right
+     * place in the architecture for it.  Compute speed over ground
+     * and climb/sink in the simplest possible way.
      */
+    if (fix->mode >= MODE_2D && oldfix->mode >= MODE_2D
+	&& isnan(fix->speed) != 0) {
+	if (fix->time == oldfix->time)
+	    fix->speed = 0;
+	else
+	    fix->speed =
+		earth_distance(fix->latitude, fix->longitude,
+			       oldfix->latitude, oldfix->longitude)
+		/ (fix->time - oldfix->time);
+    }
     if (fix->mode >= MODE_3D && oldfix->mode >= MODE_3D
 	&& isnan(fix->climb) != 0) {
 	if (fix->time == oldfix->time)
@@ -627,26 +656,34 @@ gps_mask_t gpsd_poll(struct gps_device_t *session)
 	gpsd_report(LOG_RAW,
 		    "packet sniff on %s finds type %d\n",
 		    session->gpsdata.dev.path, session->packet.type);
-	if (session->packet.type > COMMENT_PACKET) {
+	if (session->packet.type == COMMENT_PACKET) {
+	    gpsd_report (LOG_PROG, "comment, sync lock deferred\n");
+	} else if (session->packet.type > COMMENT_PACKET) {
 	    first_sync = (session->device_type == NULL);
 	    for (dp = gpsd_drivers; *dp; dp++)
 		if (session->packet.type == (*dp)->packet_type) {
 		    (void)gpsd_switch_driver(session, (*dp)->type_name);
 		    break;
 		}
-	} else if (!gpsd_next_hunt_setting(session))
+	} else if (session->getcount++ > 1 && !gpsd_next_hunt_setting(session))
 	    return ERROR_IS;
     }
 
     /* update the scoreboard structure from the GPS */
     gpsd_report(LOG_RAW + 2, "%s sent %zd new characters\n",
 		session->gpsdata.dev.path, newlen);
-    if (newlen <= 0) {		/* read error or EOF */
+    if (newlen < 0) {		/* read error */
+	gpsd_report(LOG_INF, "GPS on %s returned error %zd (%lf sec since data)\n",
+		    session->gpsdata.dev.path, newlen,
+		    timestamp() - session->gpsdata.online);
+	session->gpsdata.online = 0;
+	return ERROR_IS;
+    } else if (newlen == 0) {		/* zero length read, possible EOF */
 	gpsd_report(LOG_INF, "GPS on %s is offline (%lf sec since data)\n",
 		    session->gpsdata.dev.path,
 		    timestamp() - session->gpsdata.online);
 	session->gpsdata.online = 0;
-	return 0;
+	return NODATA_IS;
     } else if (session->packet.outbuflen == 0) {	/* got new data, but no packet */
 	gpsd_report(LOG_RAW + 3, "New data on %s, not yet a packet\n",
 		    session->gpsdata.dev.path);
@@ -687,15 +724,13 @@ gps_mask_t gpsd_poll(struct gps_device_t *session)
 
 	/*
 	 * If this is the first time we've achieved sync on this
-	 * device, or the the driver type has changed for any other
+	 * device, or the driver type has changed for any other
 	 * reason, that's a significant event that the caller needs to
-	 * know about.  Using DEVICE_IS this way is a bit shaky but
-	 * we're short of bits in the flag mask (client library uses
-	 * it differently).
+	 * know about.
 	 */
 	if (first_sync || session->notify_clients) {
 	    session->notify_clients = false;
-	    received |= DEVICE_IS;
+	    received |= DRIVER_IS;
 	}
 
 	/* Get data from current packet into the fix structure */
@@ -811,4 +846,5 @@ void gpsd_zero_satellites( /*@out@*/ struct gps_data_t *out)
     (void)memset(out->azimuth, 0, sizeof(out->azimuth));
     (void)memset(out->ss, 0, sizeof(out->ss));
     out->satellites_visible = 0;
+    clear_dop(&out->dop);
 }

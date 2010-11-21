@@ -90,7 +90,7 @@ static void gps_trace(int errlevel, const char *fmt, ...)
 #endif /* LIBGPS_DEBUG */
 
 /*@-nullderef@*/
-int gps_open_r(const char *host, const char *port,
+int gps_open_r(/*@null@*/const char *host, /*@null@*/const char *port,
 	       /*@out@*/ struct gps_data_t *gpsdata)
 {
     /*@ -branchstate @*/
@@ -181,7 +181,7 @@ static void libgps_dump_state(struct gps_data_t *collect, time_t now)
     char *status_values[] = { "NO_FIX", "FIX", "DGPS_FIX" };
     char *mode_values[] = { "", "NO_FIX", "MODE_2D", "MODE_3D" };
 
-    /* FIXME: We don't dump the entire state here yet */
+    /* no need to dump the entire state, this is a sanity check */
 #ifndef USE_QT
     (void)fprintf(debugfp, "flags: (0x%04x) %s\n",
 		  collect->set, gps_maskdump(collect->set));
@@ -267,8 +267,6 @@ static void libgps_dump_state(struct gps_data_t *collect, time_t now)
 int gps_unpack(char *buf, struct gps_data_t *gpsdata)
 /* unpack a gpsd response into a status structure, buf must be writeable */
 {
-    char *ns, *sp, *tp;
-
     libgps_debug_trace((1, "gps_unpack(%s)\n", buf));
 
     /* detect and process a JSON response */
@@ -297,6 +295,8 @@ int gps_unpack(char *buf, struct gps_data_t *gpsdata)
 	 * This looks thread-unsafe, but it's not.  The key is that
 	 * character assignment is atomic.
 	 */
+	char *ns, *sp, *tp;
+
 	static char decimal_point = '\0';
 	if (decimal_point == '\0') {
 	    struct lconv *locale_data = localeconv();
@@ -540,7 +540,8 @@ bool gps_waiting(struct gps_data_t * gpsdata)
 #endif
 }
 
-int gps_poll(struct gps_data_t *gpsdata)
+/*@-compdef -usedef -uniondef@*/
+int gps_read(/*@out@*/struct gps_data_t *gpsdata)
 /* wait for and read data being streamed from the daemon */
 {
     char *eol;
@@ -602,7 +603,6 @@ int gps_poll(struct gps_data_t *gpsdata)
     }
 
     assert(eol != NULL);
-    // FIXME: Make the JSON parser stop on \n so this isn't needed
     *eol = '\0';
     response_length = eol - priv->buffer + 1;
     received = gpsdata->online = timestamp();
@@ -614,7 +614,19 @@ int gps_poll(struct gps_data_t *gpsdata)
     priv->waiting -= response_length;
     gpsdata->set |= PACKET_SET;
 
-    return 0;
+    return status;
+}
+/*@+compdef -usedef +uniondef@*/
+
+int gps_poll(/*@out@*/struct gps_data_t *gpsdata)
+/* for backwards compatibility */
+{
+    int status = gps_read(gpsdata);
+
+    if (status > 0)
+	status = 0;
+
+    return status;
 }
 
 int gps_send(struct gps_data_t *gpsdata, const char *fmt, ...)
@@ -803,10 +815,10 @@ int main(int argc, char *argv[])
 	exit(1);
     } else if (optind < argc) {
 	gps_set_raw_hook(collect, dumpline);
-	strlcpy(buf, argv[optind], BUFSIZ);
-	strlcat(buf, "\n", BUFSIZ);
-	gps_send(collect, buf);
-	gps_poll(collect);
+	(void)strlcpy(buf, argv[optind], BUFSIZ);
+	(void)strlcat(buf, "\n", BUFSIZ);
+	(void)gps_send(collect, buf);
+	(void)gps_read(collect);
 	libgps_dump_state(collect, time(NULL));
 	(void)gps_close(collect);
     } else {
@@ -824,8 +836,8 @@ int main(int argc, char *argv[])
 		break;
 	    }
 	    collect->set = 0;
-	    gps_send(collect, buf);
-	    gps_poll(collect);
+	    (void)gps_send(collect, buf);
+	    (void)gps_read(collect);
 	    libgps_dump_state(collect, time(NULL));
 	}
 	(void)gps_close(collect);

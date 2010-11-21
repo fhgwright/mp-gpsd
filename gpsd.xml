@@ -238,18 +238,28 @@ sensor is attached. Example:
 </listitem>
 </varlistentry>
 <varlistentry>
-<term>AIS feed</term>
+<term>TCP feed</term>
 <listitem>
-<para>A URI with the prefix "ais://", followed by a hostname, a
+<para>A URI with the prefix "tcp://", followed by a hostname, a
 colon, and a port number. The daemon will open a socket to the
-indicated server and read AIVDM/AIVDO packets from it. Example:
-<filename>ais://data.aishub.net:4006</filename>.</para>
+indicated address and port and read data packets from it, which will 
+be interpreted as though they had been issued by a serial device. Example:
+<filename>tcp://data.aishub.net:4006</filename>.</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term>UDP feed</term>
+<listitem>
+<para>A URI with the prefix "udp://", followed by a hostname, a
+colon, and a port number. The daemon will open a socket listening for
+UDP datagrams arriving on the indicated address and port, which will 
+be interpreted as though they had been issued by a serial device. Example:
+<filename>udp://127.0.0.1:5000</filename>.</para>
 </listitem>
 </varlistentry>
 <varlistentry>
 <term>Ntrip caster</term>
 <listitem>
-
 <para>A URI with the prefix "ntrip://" followed by the name of an
 Ntrip caster (Ntrip is a protocol for broadcasting differential-GPS
 fixes over the net). For Ntrip services that require authentication, a
@@ -276,6 +286,10 @@ to accept them.Example:
 </listitem>
 </varlistentry>
 </variablelist>
+
+<para>(The "ais:://" source type supported in some older versions of
+the daemon has been retired in favor of the more general
+"tcp://".)</para>
 
 <para>Internally, the daemon maintains a device pool holding the
 pathnames of devices and remote servers known to the
@@ -1401,7 +1415,7 @@ TCP/IP source such as an Ntrip, DGPSIP, or AIS feed.</para>
 <row>
 	<entry>SEEN_AIS</entry>
 	<entry>0x08</entry>
-	<entry>GPS data has been seen on this device</entry>
+	<entry>AIS data has been seen on this device</entry>
 </row>
 </tbody>
 </tgroup>

@@ -11,7 +11,19 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <ctype.h>
+
 #include "gpsd_config.h"
+
+#ifdef HAVE_BLUEZ
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+
+#include <bluetooth/bluetooth.h>
+#include <bluetooth/hci.h>
+#include <bluetooth/hci_lib.h>
+#include <bluetooth/rfcomm.h>
+#endif
 
 #if defined(HAVE_SYS_MODEM_H)
 #include <sys/modem.h>
@@ -37,8 +49,9 @@ static sourcetype_t gpsd_classify(const char *path)
 	return source_unknown;
     else if (S_ISREG(sb.st_mode))
 	return source_blockdev;
+    /* this assumes we won't get UDP from a filesystem socket */
     else if (S_ISSOCK(sb.st_mode))
-	return source_socket;
+	return source_tcp;
     else if (S_ISCHR(sb.st_mode)) {
 	sourcetype_t devtype = source_unknown;
 #ifdef __linux__
@@ -50,6 +63,8 @@ static sourcetype_t gpsd_classify(const char *path)
 	    devtype = source_rs232;
 	else if (devmajor == 188)
 	    devtype = source_usb;
+	else if (devmajor == 216 || devtype == 217)
+	    devtype = source_bluetooth;
 	else if (devmajor == 3 || (devmajor >= 136 && devmajor <= 143))
 	    devtype = source_pty;
 #endif /* __linux__ */
@@ -71,6 +86,8 @@ void gpsd_tty_init(struct gps_device_t *session)
     session->shmTimeP = -1;
 # endif	/* PPS_ENABLE */
 #endif /* NTPSHM_ENABLE */
+    session->zerokill = false;
+    session->reawake = 0;
 }
 
 #if defined(__CYGWIN__)
@@ -296,21 +313,46 @@ int gpsd_open(struct gps_device_t *session)
 		    (int)session->sourcetype, session->gpsdata.dev.path);
     }
     /*@ +boolops +type @*/
-
-    if ((session->gpsdata.gps_fd =
-	 open(session->gpsdata.dev.path,
-	      (int)(mode | O_NONBLOCK | O_NOCTTY))) == -1) {
-	gpsd_report(LOG_ERROR,
-		    "device open failed: %s - retrying read-only\n",
-		    strerror(errno));
-	if ((session->gpsdata.gps_fd =
-	     open(session->gpsdata.dev.path,
-		  O_RDONLY | O_NONBLOCK | O_NOCTTY)) == -1) {
-	    gpsd_report(LOG_ERROR, "read-only device open failed: %s\n",
+#ifdef HAVE_BLUEZ
+    if (bachk(session->gpsdata.dev.path) == 0) {
+        session->gpsdata.gps_fd = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
+        struct sockaddr_rc addr = { 0 };
+        addr.rc_family = AF_BLUETOOTH;
+        addr.rc_channel = (uint8_t) 1;
+        str2ba(session->gpsdata.dev.path, &addr.rc_bdaddr);
+        if (connect(session->gpsdata.gps_fd, (struct sockaddr *) &addr, sizeof (addr)) == -1) {
+	    if (errno != EINPROGRESS && errno != EAGAIN) {
+		gpsd_report(LOG_ERROR, "bluetooth socket connect failed: %s\n",
+			    strerror(errno));
+		return -1;
+	    }
+	    gpsd_report(LOG_ERROR, "bluetooth socket connect in progress or again : %s\n",
 			strerror(errno));
-	    return -1;
+        }
+	(void)fcntl(session->gpsdata.gps_fd, F_SETFL, (int)mode | O_NONBLOCK);
+	gpsd_report(LOG_PROG, "bluez device open success: %s %s\n",
+		    session->gpsdata.dev.path, strerror(errno));
+    } else 
+#endif /* BLUEZ */
+    {
+        if ((session->gpsdata.gps_fd =
+	     open(session->gpsdata.dev.path,
+		      (int)(mode | O_NONBLOCK | O_NOCTTY))) == -1) {
+            gpsd_report(LOG_ERROR,
+			    "device open failed: %s - retrying read-only\n",
+			    strerror(errno));
+	    if ((session->gpsdata.gps_fd =
+		 open(session->gpsdata.dev.path,
+			  O_RDONLY | O_NONBLOCK | O_NOCTTY)) == -1) {
+		gpsd_report(LOG_ERROR, "read-only device open failed: %s\n",
+				strerror(errno));
+		return -1;
+	    }
+	    gpsd_report(LOG_PROG, "file device open success: %s\n",
+			strerror(errno));
 	}
     }
+
 #ifdef FIXED_PORT_SPEED
     session->saved_baud = FIXED_PORT_SPEED;
 #endif
@@ -434,11 +476,12 @@ void gpsd_assert_sync(struct gps_device_t *session)
      * 1pps derived time data to ntpd.
      */
 
-    gpsd_report(LOG_INF, "NTPD ntpd_link_activate: %d\n",
-		(int)session->shmindex >= 0);
     /* do not start more than one ntp thread */
     if (!(session->shmindex >= 0))
 	ntpd_link_activate(session);
+
+    gpsd_report(LOG_INF, "NTPD ntpd_link_activate: %d\n",
+		(int)session->shmindex >= 0);
 
 #endif /* NTPSHM_ENABLE */
 }

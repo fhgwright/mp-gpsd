@@ -24,6 +24,7 @@
  */
 
 #include <stdlib.h>
+#include <time.h>
 #include "gpsd_config.h"
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -46,7 +47,7 @@
 #include "gpsdclient.h"
 #include "revision.h"
 
-static struct gps_data_t *gpsdata;
+static struct gps_data_t gpsdata;
 static void spinner(unsigned int, unsigned int);
 
 /* NMEA-0183 standard baud rate */
@@ -144,6 +145,7 @@ static void usage(void)
 		  "-w Dump gpsd native data.\n"
 		  "-l Sleep for ten seconds before connecting to gpsd.\n"
 		  "-t Time stamp the data.\n"
+		  "-T [format] set the timestamp format (strftime(3)-like; implies '-t')\n"
 		  "-s [serial dev] emulate a 4800bps NMEA GPS on serial port (use with '-r').\n"
 		  "-n [count] exit after count packets.\n"
 		  "-v Print a little spinner.\n"
@@ -157,6 +159,8 @@ int main(int argc, char **argv)
 {
     char buf[4096];
     bool timestamp = false;
+    char *format = "%c";
+    char tmstr[200];
     bool daemon = false;
     bool binary = false;
     bool sleepy = false;
@@ -173,8 +177,9 @@ int main(int argc, char **argv)
     char *serialport = NULL;
     char *outfile = NULL;
 
+    /*@-branchstate@*/
     flags = WATCH_ENABLE;
-    while ((option = getopt(argc, argv, "?dD:lhrRwtvVn:s:o:")) != -1) {
+    while ((option = getopt(argc, argv, "?dD:lhrRwtT:vVn:s:o:")) != -1) {
 	switch (option) {
 	case 'D':
 	    debug = atoi(optarg);
@@ -206,6 +211,10 @@ int main(int argc, char **argv)
 	case 't':
 	    timestamp = true;
 	    break;
+	case 'T':
+	    timestamp = true;
+	    format = optarg;
+	    break;
 	case 'v':
 	    vflag++;
 	    break;
@@ -230,6 +239,7 @@ int main(int argc, char **argv)
 	    exit(1);
 	}
     }
+    /*@+branchstate@*/
 
     /* Grok the server, port, and device. */
     if (optind < argc) {
@@ -285,8 +295,7 @@ int main(int argc, char **argv)
 	open_serial(serialport);
 
     /*@ -nullpass -onlytrans @*/
-    gpsdata = gps_open(source.server, source.port);
-    if (gpsdata == NULL) {
+    if (gps_open_r(source.server, source.port, &gpsdata) != 0) {
 	(void)fprintf(stderr,
 		      "gpspipe: could not connect to gpsd %s:%s, %s(%d)\n",
 		      source.server, source.port, strerror(errno), errno);
@@ -296,7 +305,7 @@ int main(int argc, char **argv)
 
     if (source.device != NULL)
 	flags |= WATCH_DEVICE;
-    (void)gps_stream(gpsdata, flags, source.device);
+    (void)gps_stream(&gpsdata, flags, source.device);
 
     if ((isatty(STDERR_FILENO) == 0) || daemon)
 	vflag = 0;
@@ -309,8 +318,8 @@ int main(int argc, char **argv)
 	if (vflag)
 	    spinner(vflag, l++);
 
-	/* reading directly from the socket avoides decode overhead */
-	readbytes = (int)read(gpsdata->gps_fd, buf, sizeof(buf));
+	/* reading directly from the socket avoids decode overhead */
+	readbytes = (int)read(gpsdata.gps_fd, buf, sizeof(buf));
 	if (readbytes > 0) {
 	    for (i = 0; i < readbytes; i++) {
 		char c = buf[i];
@@ -320,8 +329,10 @@ int main(int argc, char **argv)
 		if (new_line && timestamp) {
 		    time_t now = time(NULL);
 
+		    struct tm *tmp_now = localtime(&now);
+		    (void)strftime(tmstr, sizeof(tmstr), format, tmp_now);
 		    new_line = 0;
-		    if (fprintf(fp, "%.24s :", ctime(&now)) <= 0) {
+		    if (fprintf(fp, "%.24s :", tmstr) <= 0) {
 			(void)fprintf(stderr,
 				      "gpspipe: write error, %s(%d)\n",
 				      strerror(errno), errno);

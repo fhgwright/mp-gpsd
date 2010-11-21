@@ -64,8 +64,8 @@ static gps_mask_t decode_itk_navfix(struct gps_device_t *session,
     session->context->gps_week = gps_week;
     tow = (uint) getleul(buf, 7 + 84);
     session->context->gps_tow = tow / 1000.0;
-    t = gpstime_to_unix((int)gps_week,session->context->gps_tow)
-			- session->context->leap_seconds;
+    t = gpstime_to_unix((int)gps_week, session->context->gps_tow)
+	- session->context->leap_seconds;
     session->newdata.time = t;
     mask |= TIME_IS;
 
@@ -89,7 +89,6 @@ static gps_mask_t decode_itk_navfix(struct gps_device_t *session,
     mask |= USED_IS;
 
     if (flags & FIX_CONV_DOP_VALID) {
-	clear_dop(&session->gpsdata.dop);
 	session->gpsdata.dop.hdop = (double)(getleuw(buf, 7 + 56) / 100.0);
 	session->gpsdata.dop.gdop = (double)(getleuw(buf, 7 + 58) / 100.0);
 	session->gpsdata.dop.pdop = (double)(getleuw(buf, 7 + 60) / 100.0);
@@ -134,14 +133,14 @@ static gps_mask_t decode_itk_prnstatus(struct gps_device_t *session,
 
     if (len < 62) {
 	gpsd_report(LOG_PROG, "ITALK: runt PRN_STATUS (len=%zu)\n", len);
-	mask = ERROR_IS;
+	mask = 0;
     } else {
 	gps_week = (ushort) getleuw(buf, 7 + 4);
 	session->context->gps_week = gps_week;
 	tow = (uint) getleul(buf, 7 + 6);
 	session->context->gps_tow = tow / 1000.0;
-	t = gpstime_to_unix((int)gps_week,session->context->gps_tow)
-			    - session->context->leap_seconds;
+	t = gpstime_to_unix((int)gps_week, session->context->gps_tow)
+	    - session->context->leap_seconds;
 	session->gpsdata.skyview_time = t;
 
 	gpsd_zero_satellites(&session->gpsdata);
@@ -190,7 +189,7 @@ static gps_mask_t decode_itk_utcionomodel(struct gps_device_t *session,
 	gpsd_report(LOG_PROG,
 		    "ITALK: bad UTC_IONO_MODEL (len %zu, should be 64)\n",
 		    len);
-	return ERROR_IS;
+	return 0;
     }
 
     flags = (ushort) getleuw(buf, 7);
@@ -205,8 +204,8 @@ static gps_mask_t decode_itk_utcionomodel(struct gps_device_t *session,
     session->context->gps_week = gps_week;
     tow = (uint) getleul(buf, 7 + 38);
     session->context->gps_tow = tow / 1000.0;
-    t = gpstime_to_unix((int)gps_week,session->context->gps_tow)
-			- session->context->leap_seconds;
+    t = gpstime_to_unix((int)gps_week, session->context->gps_tow)
+	- session->context->leap_seconds;
     session->newdata.time = t;
 
     gpsd_report(LOG_DATA,
@@ -224,7 +223,7 @@ static gps_mask_t decode_itk_subframe(struct gps_device_t *session,
     if (len != 64) {
 	gpsd_report(LOG_PROG,
 		    "ITALK: bad SUBFRAME (len %zu, should be 64)\n", len);
-	return ERROR_IS;
+	return 0;
     }
 
     flags = (ushort) getleuw(buf, 7 + 4);
@@ -235,17 +234,66 @@ static gps_mask_t decode_itk_subframe(struct gps_device_t *session,
 		flags & SUBFRAME_WORD_FLAG_MASK ? "error" : "ok",
 		flags & SUBFRAME_GPS_PREAMBLE_INVERTED ? "(inverted)" : "");
     if (flags & SUBFRAME_WORD_FLAG_MASK)
-	return ONLINE_IS | ERROR_IS;	// don't try decode an erroneous packet
+	return 0;	// don't try decode an erroneous packet
 
     /*
      * Timo says "SUBRAME message contains decoded navigation message subframe
      * words with parity checking done but parity bits still present."
      */
     for (i = 0; i < 10; i++)
-	words[i] = (unsigned int)(getleul(buf, 7 + 14 + 4*i) >> 6) & 0xffffff;
+	words[i] =
+	    (unsigned int)(getleul(buf, 7 + 14 + 4 * i) >> 6) & 0xffffff;
 
     gpsd_interpret_subframe(session, words);
     return ONLINE_IS;
+}
+
+static gps_mask_t decode_itk_pseudo(struct gps_device_t *session,
+				      unsigned char *buf, size_t len)
+{
+    unsigned short gps_week, flags, n, i;
+    unsigned int tow;
+    union long_double l_d;
+    double t;
+
+    n = (ushort) getleuw(buf, 7 + 4);
+    if ((n < 1) || (n > MAXCHANNELS)){
+	gpsd_report(LOG_INF, "ITALK: bad PSEUDO channel count\n");
+	return 0;
+    }
+
+    if (len != (size_t)((n+1)*36)) {
+	gpsd_report(LOG_PROG,
+		    "ITALK: bad PSEUDO len %zu\n", len);
+    }
+
+    gpsd_report(LOG_PROG, "iTalk PSEUDO [%u]\n", n);
+    flags = (unsigned short)getleuw(buf, 7 + 6);
+    if ((flags & 0x3) != 0x3)
+	return 0; // bail if measurement time not valid.
+
+    gps_week = (ushort) getleuw(buf, 7 + 8);
+    tow = (uint) getleul(buf, 7 + 38);
+    session->context->gps_week = gps_week;
+    session->context->gps_tow = tow / 1000.0;
+    t = gpstime_to_unix((int)gps_week, session->context->gps_tow)
+	- session->context->leap_seconds;
+
+    /*@-type@*/
+    for (i = 0; i < n; i++){
+	session->gpsdata.PRN[i] = getleuw(buf, 7 + 26 + (i*36)) & 0xff;
+	session->gpsdata.ss[i] = getleuw(buf, 7 + 26 + (i*36 + 2)) & 0x3f;
+	session->gpsdata.raw.satstat[i] = getleul(buf, 7 + 26 + (i*36 + 4));
+	session->gpsdata.raw.pseudorange[i] = getled(buf, 7 + 26 + (i*36 + 8));
+	session->gpsdata.raw.doppler[i] = getled(buf, 7 + 26 + (i*36 + 16));
+	session->gpsdata.raw.carrierphase[i] = getleuw(buf, 7 + 26 + (i*36 + 28));
+
+	session->gpsdata.raw.mtime[i] = t;
+	session->gpsdata.raw.codephase[i] = NAN;
+	session->gpsdata.raw.deltarange[i] = NAN;
+    }
+    /*@+type@*/
+    return RAW_IS;
 }
 
 /*@ +charint @*/
@@ -287,6 +335,7 @@ static gps_mask_t italk_parse(struct gps_device_t *session,
 	break;
     case ITALK_PSEUDO:
 	gpsd_report(LOG_IO, "iTalk PSEUDO len %zu\n", len);
+	mask = decode_itk_pseudo(session, buf, len);
 	break;
     case ITALK_RAW_ALMANAC:
 	gpsd_report(LOG_IO, "iTalk RAW_ALMANAC len %zu\n", len);
@@ -340,10 +389,7 @@ static gps_mask_t italk_parse(struct gps_device_t *session,
 	gpsd_report(LOG_IO, "iTalk unknown packet: id 0x%02x length %zu\n",
 		    type, len);
     }
-    if (mask == ERROR_IS)
-	mask = 0;
-    else
-	(void)snprintf(session->gpsdata.tag, sizeof(session->gpsdata.tag),
+    (void)snprintf(session->gpsdata.tag, sizeof(session->gpsdata.tag),
 		       "ITK-%02x", type);
 
     return mask | ONLINE_IS;
@@ -431,7 +477,7 @@ static void italk_mode(struct gps_device_t *session, int mode)
 static void italk_event_hook(struct gps_device_t *session, event_t event)
 {
     /*
-     * FIXME: It might not be necessary to call this on reactivate.
+     * FIX-ME: It might not be necessary to call this on reactivate.
      * Experiment to see if the holds its settings through a close.
      */
     if ((event == event_identified || event == event_reactivate)

@@ -6,7 +6,7 @@
  * The disadvantages: Doesn't return PDOP or VDOP, just HDOP.
  *
  * Chris Kuethe, our SiRF expert, tells us:
- * 
+ *
  * "I don't see any indication in any of my material that PDOP, GDOP
  * or VDOP are output. There are quantities called Estimated
  * {Horizontal Position, Vertical Position, Time, Horizonal Velocity}
@@ -14,9 +14,9 @@
  * active."
  *
  * "(SiRFdrive is their Dead Reckoning augmented firmware. It
- * allows you to feed odometer ticks, gyro and possibly 
- * accelerometer inputs to the chip to allow it to continue 
- * to navigate in the absence of satellite information, and 
+ * allows you to feed odometer ticks, gyro and possibly
+ * accelerometer inputs to the chip to allow it to continue
+ * to navigate in the absence of satellite information, and
  * to improve fixes when you do have satellites.)"
  *
  * "[When we need RINEX data, we can get it from] SiRF Message #5.
@@ -49,7 +49,7 @@
 
 #ifdef ALLOW_RECONFIGURE
 /*@ +charint @*/
-/* message to enable: 
+/* message to enable:
  *   MID 7 Clock Status
  *   MID 8 50Bps subframe data
  *   MID 17 Differential  Corrections
@@ -201,8 +201,8 @@ static bool sirf_speed(int ttyfd, speed_t speed, char parity, int stopbits)
     /*@ +charint @*/
     static unsigned char msg[] = {
 	0xa0, 0xa2, 0x00, 0x09,
-	0x86,			/* byte 4: 
-				 * Set Binary Serial Port 
+	0x86,			/* byte 4:
+				 * Set Binary Serial Port
 				 * MID 134 */
 	0x00, 0x00, 0x12, 0xc0,	/* bytes 5-8: 4800 bps */
 	0x08,			/* byte  9: 8 data bits */
@@ -475,8 +475,8 @@ static gps_mask_t sirf_msg_svinfo(struct gps_device_t *session,
     /*@ ignore @*//*@ splint is confused @ */
     session->gpsdata.skyview_time
 	=
-	gpstime_to_unix( session->context->gps_week, session->context->gps_tow)
-				- session->context->leap_seconds;
+	gpstime_to_unix(session->context->gps_week, session->context->gps_tow)
+	- session->context->leap_seconds;
     /*@ end @*/
     for (i = st = 0; i < SIRF_CHANNELS; i++) {
 	int off = 8 + 15 * i;
@@ -523,7 +523,7 @@ static gps_mask_t sirf_msg_svinfo(struct gps_device_t *session,
 	session->driver.sirf.time_seen |= TIME_SEEN_GPS_1;
 	mask |= TIME_IS;
 	/*
-	 * This time stamp, at 4800bps, is so close to 1 sec old as to 
+	 * This time stamp, at 4800bps, is so close to 1 sec old as to
 	 * be confusing to ntpd, but ntpshm_put() will ignore it if a better
 	 * time already seen
 	 */
@@ -538,40 +538,55 @@ static gps_mask_t sirf_msg_svinfo(struct gps_device_t *session,
 static double sirf_ntp_offset(struct gps_device_t *session)
 /* return NTP time-offset fudge factor for this device */
 {
+    double retval = NAN;
+
     /* we need to have seen UTC time with a valid leap-year offset */
-    if ((session->driver.sirf.time_seen & TIME_SEEN_UTC_2) != 0)
-	return NAN;
+    if ((session->driver.sirf.time_seen & TIME_SEEN_UTC_2) != 0) {
+	retval = NAN;
+    }
 
     /* the PPS time message */
-    if (strcmp(session->gpsdata.tag, "MID52") == 0)
-	return 0.3;
+    else if (strcmp(session->gpsdata.tag, "MID52") == 0) {
+	retval = 0.3;
+    }
 
     /* uBlox EMND message */
-    if (strcmp(session->gpsdata.tag, "MID98") == 0)
-	return 0.570;
-
+    else if (strcmp(session->gpsdata.tag, "MID98") == 0) {
+	retval = 0.570;
+    }
 #ifdef __UNUSED__
     /* geodetic-data message */
-    if (strcmp(session->gpsdata.tag, "MID41") == 0)
-	return 0.570;
+    else if (strcmp(session->gpsdata.tag, "MID41") == 0) {
+	retval = 0.570;
+    }
 #endif /* __UNUSED__ */
 
     /* the Navigation Solution message */
-    if (strcmp(session->gpsdata.tag, "MID2") == 0)
-	switch (session->gpsdata.dev.baudrate) {
-	default:
-	    return 0.704;	/* WAG */
-	case 4800:
-	    return 0.704;	/* fudge valid at 4800bps */
-	case 9600:
-	    return 0.688;
-	case 19200:
-	    return 0.484;
-	case 38400:
-	    return 0.845;	/*  0.388; ?? */
+    else if (strcmp(session->gpsdata.tag, "MID2") == 0) {
+	if (session->sourcetype == source_usb) {
+	    retval = 0.640;	/* USB, expect +/- 50mS jitter */
+	} else {
+	    switch (session->gpsdata.dev.baudrate) {
+	    default:
+		retval = 0.704;	/* WAG */
+		break;
+	    case 4800:
+		retval = 0.704;	/* fudge valid at 4800bps */
+		break;
+	    case 9600:
+		retval = 0.688;
+		break;
+	    case 19200:
+		retval = 0.484;
+		break;
+	    case 38400:
+		retval = 0.845;	/*  0.388; ?? */
+		break;
+	    }
 	}
+    }
 
-    return NAN;
+    return retval;
 }
 #endif /* NTPSHM_ENABLE */
 
@@ -617,7 +632,8 @@ static gps_mask_t sirf_msg_navsol(struct gps_device_t *session,
     session->context->gps_tow = (double)getbeul(buf, 24) * 1e-2;
     /*@ ignore @*//*@ splint is confused @ */
     session->newdata.time =
-	gpstime_to_unix(session->context->gps_week, session->context->gps_tow) -
+	gpstime_to_unix(session->context->gps_week,
+			session->context->gps_tow) -
 	session->context->leap_seconds;
     /*@ end @*/
 #ifdef NTPSHM_ENABLE
@@ -636,7 +652,6 @@ static gps_mask_t sirf_msg_navsol(struct gps_device_t *session,
     }
 #endif /* NTPSHM_ENABLE */
     /* fix quality data */
-    clear_dop(&session->gpsdata.dop);
     session->gpsdata.dop.hdop = (double)getub(buf, 20) / 5.0;
     mask |=
 	TIME_IS | LATLON_IS | ALTITUDE_IS | TRACK_IS | SPEED_IS | STATUS_IS |
@@ -660,8 +675,8 @@ static gps_mask_t sirf_msg_navsol(struct gps_device_t *session,
    so for a while) don't report a valid time field, leading to annoying
    twice-per-second jitter in client displays.
 
-2) What we wanted out of this that MND didn't give us was horizontal and 
-   vertical error estimates. But we have to do our own error estimation by 
+2) What we wanted out of this that MND didn't give us was horizontal and
+   vertical error estimates. But we have to do our own error estimation by
    computing DOPs from the skyview covariance matrix anyway, because we
    want separate epx and epy errors a la NMEA 3.0.
 
@@ -729,7 +744,7 @@ static gps_mask_t sirf_msg_geodetic(struct gps_device_t *session,
 	struct tm unpacked_date;
 	double subseconds;
 	/*
-	 * Early versions of the SiRF protocol manual don't document 
+	 * Early versions of the SiRF protocol manual don't document
 	 * this sentence at all.  Some that do incorrectly
 	 * describe UTC Day, Hour, and Minute as 2-byte quantities,
 	 * not 1-byte. Chris Kuethe, our SiRF expert, tells us:
@@ -743,10 +758,10 @@ static gps_mask_t sirf_msg_geodetic(struct gps_device_t *session,
 	 * To work around the incomplete implementation of this
 	 * packet in 231, we used to assume that only the altitude field
 	 * from this packet is valid.  But even this doesn't necessarily
-	 * seem to be the case.  Instead, we do our own computation 
+	 * seem to be the case.  Instead, we do our own computation
 	 * of geoid separation now.
 	 *
-	 * UTC is left all zeros in 231 and older firmware versions, 
+	 * UTC is left all zeros in 231 and older firmware versions,
 	 * and misdocumented in version 1.4 of the Protocol Reference.
 	 *            Documented:        Real:
 	 * UTC year       2               2
@@ -902,7 +917,6 @@ static gps_mask_t sirf_msg_ublox(struct gps_device_t *session,
 	session->context->valid |= LEAP_SECOND_VALID;
     }
 
-    clear_dop(&session->gpsdata.dop);
     session->gpsdata.dop.gdop = (int)getub(buf, 34) / 5.0;
     session->gpsdata.dop.pdop = (int)getub(buf, 35) / 5.0;
     session->gpsdata.dop.hdop = (int)getub(buf, 36) / 5.0;
@@ -1185,7 +1199,7 @@ static void sirfbin_event_hook(struct gps_device_t *session, event_t event)
 	/* do this every time */
 	{
 	    /*@ +charint @*/
-	    /* Poll Navigation Parameters MID 152 
+	    /* Poll Navigation Parameters MID 152
 	     * query for MID 19 */
 	    static unsigned char navparams[] = {
 		0xa0, 0xa2, 0x00, 0x02,

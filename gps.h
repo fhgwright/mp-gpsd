@@ -35,8 +35,12 @@ extern "C" {
 #include <pthread.h>	/* pacifies OpenBSD's compiler */
 #endif
 
+/*
+ * 4.1 - Base version for initial JSON protocol (Dec 2009)
+ * 4.2 - AIS application IDs split into DAC and FID (May 2010)
+ */
 #define GPSD_API_MAJOR_VERSION	4	/* bump on incompatible changes */
-#define GPSD_API_MINOR_VERSION	1	/* bump on compatible changes */
+#define GPSD_API_MINOR_VERSION	2	/* bump on compatible changes */
 
 #define MAXTAGLEN	8	/* maximum length of sentence tag name */
 #define MAXCHANNELS	20	/* maximum GPS channels (*not* satellites!) */
@@ -565,7 +569,8 @@ struct ais_t
 	    unsigned int dest_mmsi;	/* destination MMSI */
 	    bool retransmit;		/* retransmit flag */
 	    //unsigned int spare;	spare bit(s) */
-	    unsigned int app_id;        /* Application ID */
+	    unsigned int dac;           /* Application ID */
+	    unsigned int fid;           /* Functional ID */
 #define AIS_TYPE6_BINARY_MAX	920	/* 920 bits */
 	    size_t bitcount;		/* bit count of the data */
 	    char bitdata[(AIS_TYPE6_BINARY_MAX + 7) / 8];
@@ -581,7 +586,8 @@ struct ais_t
 	/* Type 8 - Broadcast Binary Message */
 	struct {
 	    //unsigned int spare;	spare bit(s) */
-	    unsigned int app_id;       	/* Application ID */
+	    unsigned int dac;       	/* Designated Area Code */
+	    unsigned int fid;       	/* Functional ID */
 #define AIS_TYPE8_BINARY_MAX	952	/* 952 bits */
 	    size_t bitcount;		/* bit count of the data */
 	    char bitdata[(AIS_TYPE8_BINARY_MAX + 7) / 8];
@@ -1038,12 +1044,13 @@ struct gps_data_t {
     void *privdata;
 };
 
-extern int gps_open_r(const char *host, const char *, 
+extern int gps_open_r(/*@null@*/const char *, /*@null@*/const char *, 
 		      /*@out@*/struct gps_data_t *);
 extern /*@null@*/struct gps_data_t *gps_open(const char *, const char *);
 extern int gps_close(struct gps_data_t *);
 extern int gps_send(struct gps_data_t *, const char *, ... );
-extern int gps_poll(struct gps_data_t *);
+extern int gps_read(/*@out@*/struct gps_data_t *);
+extern int gps_poll(/*@out@*/struct gps_data_t *);
 extern bool gps_waiting(struct gps_data_t *);
 extern int gps_stream(struct gps_data_t *, unsigned int, /*@null@*/void *);
 extern void gps_set_raw_hook(struct gps_data_t *, 
@@ -1092,7 +1099,7 @@ extern double wgs84_separation(double, double);
 #define WGS84F 298.257223563	/* flattening */
 #define WGS84B 6356752.3142	/* polar radius */
 
-/* gps_open() errno return values */
+/* netlib_connectsock() errno return values */
 #define NL_NOSERVICE	-1	/* can't get service entry */
 #define NL_NOHOST	-2	/* can't get host entry */
 #define NL_NOPROTO	-3	/* can't get protocol entry */

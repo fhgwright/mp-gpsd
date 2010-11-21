@@ -94,7 +94,7 @@ ssize_t sockwriteline(int sockd,const void *vptr,size_t n);
 int send_lcd(char *buf);
 
 static struct fixsource_t source;
-static struct gps_data_t *gpsdata;
+static struct gps_data_t gpsdata;
 static float altfactor = METERS_TO_FEET;
 static float speedfactor = MPS_TO_MPH;
 static char *altunits = "ft";
@@ -247,7 +247,7 @@ int send_lcd(char *buf) {
   res=sockreadline(sd,rcvbuf,255);
 
   /* null-terminate the string before printing */
-  /* rcvbuf[res-1]=0; XXX not using this at the moment... */
+  /* rcvbuf[res-1]=0; FIX-ME: not using this at the moment... */
 
   /* return the result */
   return(res);
@@ -471,8 +471,7 @@ int main(int argc, char *argv[])
     daemonize();
 
     /* Open the stream to gpsd. */
-    /*@i@*/gpsdata = gps_open(source.server, source.port);
-    if (!gpsdata) {
+    if (gps_open_r(source.server, source.port, &gpsdata) != 0) {
 	(void)fprintf( stderr,
 		       "cgps: no gpsd running or network error: %d, %s\n",
 		       errno, gps_errstr(errno));
@@ -520,29 +519,28 @@ int main(int argc, char *argv[])
     reset_lcd();
 
     /* Here's where updates go. */
-    gps_set_raw_hook(gpsdata, update_lcd);
-    gps_stream(gpsdata, WATCH_ENABLE, NULL);
+    gps_set_raw_hook(&gpsdata, update_lcd);
+    gps_stream(&gpsdata, WATCH_ENABLE, NULL);
 
     for (;;) { /* heart of the client */
 
 	/* watch to see when it has input */
 	FD_ZERO(&rfds);
-	FD_SET(gpsdata->gps_fd, &rfds);
+	FD_SET(gpsdata.gps_fd, &rfds);
 
 	/* wait up to five seconds. */
 	timeout.tv_sec = 5;
 	timeout.tv_usec = 0;
 
 	/* check if we have new information */
-	data = select(gpsdata->gps_fd + 1, &rfds, NULL, NULL, &timeout);
+	data = select(gpsdata.gps_fd + 1, &rfds, NULL, NULL, &timeout);
 
 	if (data == -1) {
 	    fprintf( stderr, "cgps: socket error\n");
 	    exit(2);
 	}
 	else if (data) {
-	    /* code that calls gps_poll(gpsdata) */
-	    (void)gps_poll(gpsdata);
+	    (void)gps_read(&gpsdata);
 	}
 
     }

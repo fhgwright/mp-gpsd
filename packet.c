@@ -111,6 +111,17 @@ enum
 #define STX	(unsigned char)0x02
 #define ETX	(unsigned char)0x03
 
+static void character_pushback(struct gps_packet_t *lexer)
+/* push back the last character grabbed */
+{
+    /*@-modobserver@*//* looks like a splint bug */
+    --lexer->inbufptr;
+    /*@+modobserver@*/
+    --lexer->char_counter;
+    gpsd_report(LOG_RAW + 2, "%08ld: character pushed back\n", 
+		lexer->char_counter);
+}
+
 static void nextstate(struct gps_packet_t *lexer, unsigned char c)
 {
 #ifdef RTCM104V2_ENABLE
@@ -258,10 +269,57 @@ static void nextstate(struct gps_packet_t *lexer, unsigned char c)
 	    lexer->state = GROUND_STATE;
 	break;
     case NMEA_VENDOR_LEAD:
-	if (isalpha(c))
+	if (c == 'A')
+	    lexer->state = NMEA_PASHR_A;
+	else if (isalpha(c))
 	    lexer->state = NMEA_LEADER_END;
 	else
 	    lexer->state = GROUND_STATE;
+	break;
+    /*
+     * Without the following six states, DLE in a $PASHR can fool the
+     * sniffer into thinking it sees a TSIP packet.  Hilarity ensues.
+     */
+    case NMEA_PASHR_A:
+	if (c == 'S')
+	    lexer->state = NMEA_PASHR_S;
+	else if (isalpha(c))
+	    lexer->state = NMEA_LEADER_END;
+	else
+	    lexer->state = GROUND_STATE;
+	break;
+    case NMEA_PASHR_S:
+	if (c == 'H')
+	    lexer->state = NMEA_PASHR_H;
+	else if (isalpha(c))
+	    lexer->state = NMEA_LEADER_END;
+	else
+	    lexer->state = GROUND_STATE;
+	break;
+    case NMEA_PASHR_H:
+	if (c == 'R')
+	    lexer->state = NMEA_BINARY_BODY;
+	else if (isalpha(c))
+	    lexer->state = NMEA_LEADER_END;
+	else
+	    lexer->state = GROUND_STATE;
+	break;
+    case NMEA_BINARY_BODY:
+	if (c == '\r')
+	    lexer->state = NMEA_BINARY_CR;
+	break;
+    case NMEA_BINARY_CR:
+	if (c == '\n')
+	    lexer->state = NMEA_BINARY_NL;
+	else
+	    lexer->state = NMEA_BINARY_BODY;
+	break;
+    case NMEA_BINARY_NL:
+	if (c == '$') {
+	    character_pushback(lexer);
+	    lexer->state = NMEA_RECOGNIZED;	/* CRC will reject it */
+	} else
+	    lexer->state = NMEA_BINARY_BODY;
 	break;
     case NMEA_BANG:
 	if (c == 'A')
@@ -291,9 +349,13 @@ static void nextstate(struct gps_packet_t *lexer, unsigned char c)
 #endif /* ONCORE_ENABLE */
 #ifdef TNT_ENABLE
 	case '*':
-	    /* TNT has similar structure like NMEA packet, '*' before optional checksum ends the packet */
-	    /* '*' cannot be received from GARMIN working in TEXT mode, use this diference for selection */
-	    /* this is not GARMIN TEXT packet, could be TNT */
+	    /*
+	     * TNT has similar structure to NMEA packet, '*' before
+	     * optional checksum ends the packet. Since '*' cannot be
+	     * received from GARMIN working in TEXT mode, use this
+	     * difference to tell that this is not GARMIN TEXT packet,
+	     * could be TNT.
+	     */
 	    lexer->state = NMEA_LEADER_END;
 	    break;
 #endif /* TNT_ENABLE */
@@ -1076,7 +1138,8 @@ void packet_parse(struct gps_packet_t *lexer)
 	     */
 	    for (end = (char *)lexer->inbufptr - 1; isspace(*end); end--)
 		continue;
-	    end -= 2;
+	    while (strchr("0123456789ABCDEF", *end))
+		--end;
 	    if (*end == '*') {
 		unsigned int n, crc = 0;
 		for (n = 1; (char *)lexer->inbuffer + n < end; n++)
@@ -1096,6 +1159,7 @@ void packet_parse(struct gps_packet_t *lexer)
 		gpsd_report(LOG_WARN,
 			    "bad checksum in NMEA packet; expected %s.\n",
 			    csum);
+		packet_accept(lexer, BAD_PACKET);
 		lexer->state = GROUND_STATE;
 	    }
 	    packet_discard(lexer);
@@ -1113,8 +1177,10 @@ void packet_parse(struct gps_packet_t *lexer)
 	    crc &= 0x7fff;
 	    if (checksum == crc)
 		packet_accept(lexer, SIRF_PACKET);
-	    else
+	    else {
+		packet_accept(lexer, BAD_PACKET);
 		lexer->state = GROUND_STATE;
+	    }
 	    packet_discard(lexer);
 	    break;
 	}
@@ -1135,6 +1201,7 @@ void packet_parse(struct gps_packet_t *lexer)
 		gpsd_report(LOG_IO, "REJECT SuperStarII packet type 0x%02x"
 			    "%zd bad checksum 0x%04x, expecting 0x%04x\n",
 			    lexer->inbuffer[1], lexer->length, a, b);
+		packet_accept(lexer, BAD_PACKET);
 		lexer->state = GROUND_STATE;
 	    } else {
 		packet_accept(lexer, SUPERSTAR2_PACKET);
@@ -1160,6 +1227,7 @@ void packet_parse(struct gps_packet_t *lexer)
 	    } else {
 		gpsd_report(LOG_IO, "REJECT OnCore packet @@%c%c len %d\n",
 			    lexer->inbuffer[2], lexer->inbuffer[3], len);
+		packet_accept(lexer, BAD_PACKET);
 		lexer->state = GROUND_STATE;
 	    }
 	    packet_discard(lexer);
@@ -1359,6 +1427,7 @@ void packet_parse(struct gps_packet_t *lexer)
 		 * More attempts to recognize ambiguous TSIP-like
 		 * packet types could go here.
 		 */
+		packet_accept(lexer, BAD_PACKET);
 		lexer->state = GROUND_STATE;
 		packet_discard(lexer);
 		break;
@@ -1379,6 +1448,7 @@ void packet_parse(struct gps_packet_t *lexer)
 					lexer->inbufptr - lexer->inbuffer -
 					3), lexer->inbufptr[-3],
 			    lexer->inbufptr[-2], lexer->inbufptr[-1]);
+		packet_accept(lexer, BAD_PACKET);
 		lexer->state = GROUND_STATE;
 		packet_discard(lexer);
 	    }
@@ -1398,6 +1468,7 @@ void packet_parse(struct gps_packet_t *lexer)
 		gpsd_report(LOG_IO,
 			    "Zodiac data checksum 0x%hx over length %hd, expecting 0x%hx\n",
 			    sum, len, getword(5 + len));
+		packet_accept(lexer, BAD_PACKET);
 		lexer->state = GROUND_STATE;
 	    }
 	    packet_discard(lexer);
@@ -1429,6 +1500,7 @@ void packet_parse(struct gps_packet_t *lexer)
 			    lexer->inbuffer[len - 2],
 			    lexer->inbuffer[len - 1],
 			    lexer->inbuffer[2], lexer->inbuffer[3]);
+		packet_accept(lexer, BAD_PACKET);
 		lexer->state = GROUND_STATE;
 	    }
 	    packet_discard(lexer);
@@ -1479,6 +1551,7 @@ void packet_parse(struct gps_packet_t *lexer)
 	    packet_discard(lexer);
 	    break;
 	  not_evermore:
+	    packet_accept(lexer, BAD_PACKET);
 	    lexer->state = GROUND_STATE;
 	    packet_discard(lexer);
 	    break;
@@ -1515,6 +1588,7 @@ void packet_parse(struct gps_packet_t *lexer)
 			    "ITALK: checksum failed - "
 			    "type 0x%02x expected 0x%04x got 0x%04x\n",
 			    lexer->inbuffer[4], xsum, csum);
+		packet_accept(lexer, BAD_PACKET);
 		lexer->state = GROUND_STATE;
 	    }
 	    packet_discard(lexer);
@@ -1552,6 +1626,7 @@ void packet_parse(struct gps_packet_t *lexer)
 		lexer->state = GROUND_STATE;
 		break;
 	    } else {
+		packet_accept(lexer, BAD_PACKET);
 		lexer->state = GROUND_STATE;
 	    }
 	}

@@ -7,18 +7,20 @@ TARGET = Qgpsmm
 TEMPLATE = lib
 DEFINES += LIBQGPSMM_LIBRARY
 DEFINES += USE_QT
-#QMAKE_EXT_CPP += .c
-!win32: QMAKE_CFLAGS += -D_GNU_SOURCE
+DESTDIR = binaries
 INCLUDEPATH += $$PWD \
     ..
 
+isEmpty( MAKE ) {
+    MAKE = make
+}
 
 SOURCES += \
-    ../libgpsmm.cpp \
     gpsutils.cpp \
+    libgps_core.cpp \
+    ../libgpsmm.cpp \
     ../libgps_json.c \
     ../hex.c \
-    libgps_core.cpp \
     ../gpsd_report.c \
     ../strl.c \
     ../shared_json.c \
@@ -31,34 +33,66 @@ HEADERS += libQgpsmm_global.h \
     ../gps_json.h \
     ../json.h
 
-unix {
+!win32 {
+
+    isEmpty( VERSION ) {
+        VERSION = $$system($${MAKE} -s -C .. print_libgps_VERSION)
+    }
+    HEADERS += \
+        ../gpsd.h \
+	../ais_json.i
+
     # Prefix: base instalation directory
     isEmpty( PREFIX ) {
         PREFIX = /usr/local
     }
-    target.path = $${PREFIX}/lib
+    isEmpty( EXEC_PREFIX ) {
+        EXEC_PREFIX = $${PREFIX}
+    }
+    isEmpty( LIBDIR ) {
+        LIBDIR = /lib
+    }
+    isEmpty( INCLUDEDIR ) {
+        INCLUDEDIR = /include
+    }
+
+    # TARGET_LIBDIR and TARGET_INCLUDEDIR allow to override
+    # the library and header install paths.
+    # This is mainly a workaround as QT was not able to use the proper
+    # path on some platforms. Both TARGET_ variables will be
+    # set from the autotools generated Makefile.
+    # There should be a better way to handle this, though.
+    isEmpty( TARGET_LIBDIR ) {
+        TARGET_LIBDIR = $${EXEC_PREFIX}$${LIBDIR}
+    }
+    isEmpty( TARGET_INCLUDEDIR ) {
+        TARGET_INCLUDEDIR = $${PREFIX}$${INCLUDEDIR}
+    }
+    target.path = $${TARGET_LIBDIR}
     INSTALLS += target
 
-    header.path = $${PREFIX}/include
+    header.path = $${TARGET_INCLUDEDIR}
     header.files = ../libgpsmm.h ../gps.h
     INSTALLS += header
+
+    QMAKE_CFLAGS += -D_GNU_SOURCE
+
 }
 
-gpsutilscpp.target = gpsutils.cpp
-win32:gpsutilscpp.commands = copy ..\gpsutils.c gpsutils.cpp
-else:gpsutilscpp.commands = cp ../gpsutils.c gpsutils.cpp
-gpsutilscpp.depends = FORCE
+win32 {
 
-libgps_corecpp.target = libgps_core.cpp
-win32:libgps_corecpp.commands = copy ..\libgps_core.c libgps_core.cpp
-else:libgps_corecpp.commands = cp ../libgps_core.c libgps_core.cpp
-libgps_corecpp.depends = FORCE
+    include( mingw/version.pri )
+    HEADERS += \
+        gpsd.h \
+	mingw/ais_json.i
 
-gpsdhcreate.target = gpsd.h
-win32:gpsdhcreate.commands = "copy /Y /B ..\gpsd.h-head + mingw\gpsd_config.h + ..\gpsd.h-tail  ..\gpsd.h" && "copy /Y mingw\gpsd_config.h .." && "copy /Y mingw\ais_json.i .."
-else:gpsdhcreate.commands = cat ../gpsd.h-head ../gpsd_config.h ../gpsd.h-tail > ../gpsd.h
-gpsdhcreate.depends = FORCE
+    INCLUDEPATH = $$PWD/mingw $${INCLUDEPATH}
 
-PRE_TARGETDEPS += gpsutils.cpp libgps_core.cpp gpsd.h
-QMAKE_EXTRA_TARGETS += gpsutilscpp libgps_corecpp gpsdhcreate
+    gpsdhcreate.target = gpsd.h
+    gpsdhcreate.commands = "copy /Y /B ..\gpsd.h-head + mingw\gpsd_config.h + ..\gpsd.h-tail  gpsd.h"
+    gpsdhcreate.depends = FORCE
 
+    PRE_TARGETDEPS += gpsd.h
+    QMAKE_EXTRA_TARGETS += gpsdhcreate
+
+}

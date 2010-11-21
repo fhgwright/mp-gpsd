@@ -3,6 +3,9 @@
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
 #include <sys/types.h>
+
+#include "gpsd_config.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -117,7 +120,6 @@ superstar2_msg_navsol_lla(struct gps_device_t *session,
     mask |= LATLON_IS | ALTITUDE_IS | SPEED_IS | TRACK_IS | CLIMB_IS;
 
     session->gpsdata.satellites_used = (int)getub(buf, 71) & 0x0f;
-    clear_dop(&session->gpsdata.dop);
     /*@i3@*/ session->gpsdata.dop.hdop = getleuw(buf, 66) * 0.1;
     /*@i3@*/ session->gpsdata.dop.vdop = getleuw(buf, 68) * 0.1;
     /* other DOP if available */
@@ -177,7 +179,7 @@ superstar2_msg_svinfo(struct gps_device_t *session,
     if (data_len != 67)
 	return 0;
 
-    gpsd_report(LOG_PROG, "superstar2 #33 - satellite data");
+    gpsd_report(LOG_PROG, "superstar2 #33 - satellite data\n");
 
     nchan = 12;
     gpsd_zero_satellites(&session->gpsdata);
@@ -298,6 +300,10 @@ superstar2_msg_measurement(struct gps_device_t *session, unsigned char *buf,
     gpsd_report(LOG_PROG, "superstar2 #23 - measurement block\n");
 
     n = (int)getub(buf, 6);	/* number of measurements */
+    if ((n < 1) || (n > MAXCHANNELS)) {
+	gpsd_report(LOG_INF, "too many measurements\n");
+	return 0;
+    }
     t = getled(buf, 7);		/* measurement time */
     for (i = 0; i < n; i++) {
 	session->gpsdata.raw.mtime[i] = t;
@@ -373,8 +379,8 @@ superstar2_write(struct gps_device_t *session, char *msg, size_t msglen)
     for (i = 0; i < (ssize_t) (msglen - 2); i++)
 	c += (unsigned short)msg[i];
     c += 0x100;
-    // c = htons(c); // XXX is this needed on big-endian machines?
-    (void)memcpy(msg + (int)msg[3] + 4, &c, 2);
+    msg[(int)msg[3] + 4] = (char)((c >> 8) & 0xff);
+    msg[(int)msg[3] + 5] = (char)(c & 0xff);
     gpsd_report(LOG_IO, "writing superstar2 control type %d len %zu:%s\n",
 		(int)msg[1] & 0x7f, msglen,
 		gpsd_hexdump_wrapper(msg, msglen, LOG_IO));
@@ -419,7 +425,6 @@ superstar2_dispatch(struct gps_device_t * session, unsigned char *buf,
 	return superstar2_msg_ephemeris(session, buf, len);
 
     default:
-	/* XXX This gets noisy in a hurry. */
 	gpsd_report(LOG_WARN,
 		    "unknown superstar2 packet id 0x%02x length %zd: %s\n",
 		    type, len, gpsd_hexdump_wrapper(buf, len, LOG_WARN));
@@ -460,7 +465,7 @@ static void superstar2_event_hook(struct gps_device_t *session, event_t event)
 	(void)superstar2_write(session, (char *)version_msg,
 			       sizeof(version_msg));
 
-    /* FIXME: check to see if this really needs to be resent on reactivation */
+    /* FIX-ME: check to see if this really needs to be resent on reactivation */
     if (event == event_identified || event == event_reactivate) {
 	/*@ +charint @*/
 	unsigned char svinfo_msg[] = { 0x01, 0xa1, 0x5e, 0x00, 0x00, 0x01 };

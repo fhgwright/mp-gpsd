@@ -95,8 +95,9 @@ finishes.</p>
 
 <h2 id="dbus">Delegating DBUS support to geoclue</h2>
 
-<p>We're probably going to stop shipping DBUS notifications directly
-sometime fairly soon, 3.0 at the latest.</p>
+<p>We're going to stop shipping DBUS notifications directly at some point.  
+<b>Note: This is no longer a near-term prospect, as geoclue is reported
+not sufficientrly stable to bear the weight.</b></p>
 
 <p>The reason for this is <a
 href="http://www.freedesktop.org/wiki/Software/GeoClue">GeoClue</a>.
@@ -114,18 +115,19 @@ if it happened.</p>
 in it. We think it's probably best for both projects if they take
 data from us and handle the DBUS publishing job for us.</p>
 
-<p>We could be talked out of this by a solid technical argument,
-but nobody has tried to make one yet.</p>
-
 <h2 id="api_cleanup">Client API cleanup</h2>
 
-<p>This is not a near-term project.</p>
+<p>This will happen after 2.95 but before 3.0.</p>
 
 <p>The client API has some historical baggage, unfortunate naming, and
 scar tissue in it.  At some point we're going to bump the API major
 version number to 5 and make the following changes:<p>
 
 <ul>
+<li>MAXCHANNELS will increase so we can handle a GPS + GLONASS 
+constellation.  This has become a production issue because of the
+Geostar Geos 1M.</p> 
+
 <li><p>gps_open_r() will be renamed to gps_open(). The existing
 gps_open() will go away.</p></li>
 
@@ -141,6 +143,9 @@ only recommended when the PACKET_SET flag is up.)</p></li>
 <li><p>There will be a new gps_poll() entry point that will perform
 a nonblocking poll of the daemon, using the (now experimental) ?POLL
 command).</p></li>
+
+<li><p>The message 24 structure may be split into part A and B so these
+are in effect separate messages.</p>
 </ul>
 
 <p>Client API users will have the API_MAJOR_VERSION symbol available to

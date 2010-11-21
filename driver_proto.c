@@ -51,15 +51,12 @@
 
 #include "bits.h"
 
-/*
- * These routines are specific to this driver
- */
-
 static	gps_mask_t _proto__parse_input(struct gps_device_t *);
 static	gps_mask_t _proto__dispatch(struct gps_device_t *, unsigned char *, size_t );
 static	gps_mask_t _proto__msg_navsol(struct gps_device_t *, unsigned char *, size_t );
 static	gps_mask_t _proto__msg_utctime(struct gps_device_t *, unsigned char *, size_t );
 static	gps_mask_t _proto__msg_svinfo(struct gps_device_t *, unsigned char *, size_t );
+static	gps_mask_t _proto__msg_raw(struct gps_device_t *, unsigned char *, size_t );
 
 /*
  * These methods may be called elsewhere in gpsd
@@ -102,7 +99,15 @@ _proto__msg_navsol(struct gps_device_t *session, unsigned char *buf, size_t data
     session->newdata.epy = GET_LATITUDE_ERROR();
     session->newdata.eps = GET_SPEED_ERROR();
     session->gpsdata.satellites_used = GET_SATELLITES_USED();
-    dop_clear(&session->gpsdata.dop);
+    /*
+     * Do *not* clear DOPs in a navigation solution message;  
+     * instead, opportunistically pick up whatever it gives 
+     * us and replace whatever values we computed from the 
+     * visibility matrix for he last skyview. The reason to trust
+     * the chip returns over what we compute is that some 
+     * chips have internal deweighting albums to throw out sats
+     * that increase DOP.
+     */
     session->gpsdata.dop.hdop = GET_HDOP();
     session->gpsdata.dop.vdop = GET_VDOP();
     /* other DOP if available */
@@ -158,8 +163,8 @@ _proto__msg_utctime(struct gps_device_t *session, unsigned char *buf, size_t dat
     session->context->leap_seconds = GET_GPS_LEAPSECONDS();
     session->context->gps_tow = tow / 1000.0;
 
-    t = gpstime_to_unix(gps_week, session->context->gps_tow) 
-    	- session->context->leap_seconds;
+    t = gpstime_to_unix(gps_week, session->context->gps_tow)
+	- session->context->leap_seconds;
     session->newdata.time = t;
 
     return TIME_IS | ONLINE_IS;
@@ -191,6 +196,10 @@ _proto__msg_svinfo(struct gps_device_t *session, unsigned char *buf, size_t data
      * be set to the number of satellites which might be visible.
      */
     nchan = GET_NUMBER_OF_CHANNELS();
+    if ((nchan < 1) || (nchan > MAXCHANNELS)) {
+	gpsd_report(LOG_INF, "too many channels reported\n");
+	return 0;
+    }
     gpsd_zero_satellites(&session->gpsdata);
     nsv = 0; /* number of actually used satellites */
     for (i = st = 0; i < nchan; i++) {
@@ -212,11 +221,56 @@ _proto__msg_svinfo(struct gps_device_t *session, unsigned char *buf, size_t data
     session->gpsdata.skyview_time = NaN;
     session->gpsdata.satellites_used = nsv;
     session->gpsdata.satellites_visible = st;
-    gpsd_report(LOG_DATA, 
+    gpsd_report(LOG_DATA,
 		"SVINFO: visible=%d used=%d mask={SATELLITE|USED}\n",
-		session->gpsdata.satellites_visible, 
+		session->gpsdata.satellites_visible,
 		session->gpsdata.satellites_used);
     return SATELLITE_IS | USED_IS;
+}
+
+/**
+ * Raw measurements
+ */
+static gps_mask_t
+_proto__msg_raw(struct gps_device_t *session, unsigned char *buf, size_t data_len)
+{
+    unsigned char i, st, nchan, nsv;
+    unsigned int tow;
+
+    if (data_len != RAW_MSG_LEN )
+	return 0;
+
+    gpsd_report(LOG_IO, "_proto_ RAW - raw measurements\n");
+    /* if this protocol has a way to test message validity, use it */
+    flags = GET_FLAGS();
+    if ((flags & _PROTO__SVINFO_VALID) == 0)
+	return 0;
+
+    /*
+     * not all chipsets emit the same information. some of these observables
+     * can be easily converted into others. these are suggestions for the
+     * quantities you may wish to try extract. chipset documentation may say
+     * something like "this message contains information required to generate
+     * a RINEX file." assign NAN for unavailable data.
+     */
+    nchan = GET_NUMBER_OF_CHANNELS();
+    if ((nchan < 1) || (nchan > MAXCHANNELS)) {
+	gpsd_report(LOG_INF, "too many channels reported\n");
+	return 0;
+    }
+
+    for (i = 0; i < n; i++){
+	session->gpsdata.PRN[i] = GET_PRN();
+	session->gpsdata.ss[i] = GET_SIGNAL()
+	session->gpsdata.raw.satstat[i] = GET_FLAGS();
+	session->gpsdata.raw.pseudorange[i] = GET_PSEUDORANGE();
+	session->gpsdata.raw.doppler[i] = GET_DOPPLER();
+	session->gpsdata.raw.carrierphase[i] = GET_CARRIER_PHASE();
+	session->gpsdata.raw.mtime[i] = GET_MEASUREMENT_TIME();
+	session->gpsdata.raw.codephase[i] = GET_CODE_PHASE();
+	session->gpsdata.raw.deltarange[i] = GET_DELTA_RANGE();
+    }
+    return RAW_IS;
 }
 
 /**
@@ -249,8 +303,8 @@ gps_mask_t _proto__dispatch(struct gps_device_t *session, unsigned char *buf, si
 	type, len, gpsd_hexdump_wrapper(buf, len, LOG_WARN));
 
    /*
-    * XXX The tag field is only 8 bytes; be careful you do not overflow.
-    * XXX Using an abbreviation (eg. "italk" -> "itk") may be useful.
+    * The tag field is only 8 bytes; be careful you do not overflow.
+    * Using an abbreviation (eg. "italk" -> "itk") may be useful.
     */
     (void)snprintf(session->gpsdata.tag, sizeof(session->gpsdata.tag),
 	"_PROTO_%02x", type);
@@ -260,7 +314,7 @@ gps_mask_t _proto__dispatch(struct gps_device_t *session, unsigned char *buf, si
 	/* Deliver message to specific decoder based on message type */
 
     default:
-	/* XXX This gets noisy in a hurry. Change once your driver works */
+	/* This gets noisy in a hurry. Change once your driver works */
 	gpsd_report(LOG_WARN, "unknown packet id %d length %d: %s\n",
 	    type, len, gpsd_hexdump_wrapper(buf, len, LOG_WARN));
 	return 0;
@@ -396,7 +450,7 @@ static gps_mask_t _proto__parse_input(struct gps_device_t *session)
 	return 0;
 }
 
-static bool _proto__set_speed(struct gps_device_t *session, 
+static bool _proto__set_speed(struct gps_device_t *session,
 			      speed_t speed, char parity, int stopbits)
 {
     /* 

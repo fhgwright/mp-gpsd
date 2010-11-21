@@ -199,8 +199,10 @@ static gps_mask_t tsip_analyze(struct gps_device_t *session)
 	    session->context->valid |= LEAP_SECOND_VALID;
 	    session->context->gps_tow = f1;
 
-	    session->newdata.time = gpstime_to_unix(session->context->gps_week
-	        , session->context->gps_tow) - session->context->leap_seconds;
+	    session->newdata.time =
+		gpstime_to_unix(session->context->gps_week,
+				session->context->gps_tow) -
+		session->context->leap_seconds;
 	    mask |= TIME_IS;
 	}
 	gpsd_report(LOG_INF, "GPS Time %f %d %f\n", f1, s1, f2);
@@ -259,6 +261,7 @@ static gps_mask_t tsip_analyze(struct gps_device_t *session)
 	gpsd_report(LOG_PROG, "Receiver health %02x %02x\n", u1, u2);
 	break;
     case 0x47:			/* Signal Levels for all Satellites */
+	gpsd_zero_satellites(&session->gpsdata);
 	count = (int)getub(buf, 0);	/* satellite count */
 	if (len != (5 * count + 1))
 	    break;
@@ -296,8 +299,8 @@ static gps_mask_t tsip_analyze(struct gps_device_t *session)
 	if (session->context->gps_week) {
 	    session->newdata.time =
 		gpstime_to_unix((int)session->context->gps_week,
-				session->context->gps_tow) 
-				- session->context->leap_seconds;
+				session->context->gps_tow)
+		- session->context->leap_seconds;
 	    mask |= TIME_IS;
 	}
 	mask |= LATLON_IS | ALTITUDE_IS | CLEAR_IS | REPORT_IS;
@@ -455,7 +458,7 @@ static gps_mask_t tsip_analyze(struct gps_device_t *session)
 #ifdef __UNUSED__
 	/*
 	 * This looks right, but it sets a spurious mode value when
-	 * the satelliite constellation looks good to the chip but no
+	 * the satellite constellation looks good to the chip but no
 	 * actual fix has yet been acquired.  We should set the mode
 	 * field (which controls gpsd's fix reporting) only from sentences
 	 * that convey actual fix information, like 0x20, othewise we
@@ -559,8 +562,8 @@ static gps_mask_t tsip_analyze(struct gps_device_t *session)
 	if (session->context->gps_week) {
 	    session->newdata.time =
 		gpstime_to_unix((int)session->context->gps_week,
-				session->context->gps_tow) 
-				- session->context->leap_seconds;
+				session->context->gps_tow)
+		- session->context->leap_seconds;
 	    mask |= TIME_IS;
 	}
 	gpsd_report(LOG_INF, "GPS DP LLA %f %f %f %f\n",
@@ -597,7 +600,7 @@ static gps_mask_t tsip_analyze(struct gps_device_t *session)
 	    break;
 
 	case 0x20:		/* Last Fix with Extra Information (binary fixed point) */
-	    /* XXX CSK sez "why does my Lassen iQ output oversize packets?" */
+	    /* CSK sez "why does my Lassen iQ output oversize packets?" */
 	    if ((len != 56) && (len != 64))
 		break;
 	    s1 = getbesw(buf, 2);	/* east velocity */
@@ -655,11 +658,11 @@ static gps_mask_t tsip_analyze(struct gps_device_t *session)
 		session->context->valid |= LEAP_SECOND_VALID;
 	    }
 	    session->context->gps_week = (unsigned short)s4;
-	    session->context->gps_tow = (double)ul1 * 1e-3;
+	    session->context->gps_tow = (double)ul1 *1e-3;
 	    /*@ ignore @*//*@ splint is confused @ */
 	    session->newdata.time =
 		gpstime_to_unix((int)s4, session->context->gps_tow)
-				- session->context->leap_seconds;
+		- session->context->leap_seconds;
 	    /*@ end @*/
 	    mask |=
 		TIME_IS | LATLON_IS | ALTITUDE_IS | SPEED_IS | TRACK_IS |
@@ -676,7 +679,7 @@ static gps_mask_t tsip_analyze(struct gps_device_t *session)
 	    break;
 	case 0x23:		/* Compact Super Packet */
 	    session->driver.tsip.req_compact = 0;
-	    /* XXX CSK sez "i don't trust this to not be oversized either." */
+	    /* CSK sez "i don't trust this to not be oversized either." */
 	    if (len < 29)
 		break;
 	    ul1 = getbeul(buf, 1);	/* time */
@@ -697,12 +700,12 @@ static gps_mask_t tsip_analyze(struct gps_device_t *session)
 		session->context->valid |= LEAP_SECOND_VALID;
 	    }
 	    session->context->gps_week = (unsigned short)s1;
-	    session->context->gps_tow = (double)ul1 * 1e3;
+	    session->context->gps_tow = (double)ul1 *1e3;
 	    /*@ ignore @*//*@ splint is confused @ */
 	    session->newdata.time =
-		gpstime_to_unix(session->context->gps_week, 
+		gpstime_to_unix(session->context->gps_week,
 				session->context->gps_tow)
-				- session->context->leap_seconds;
+		- session->context->leap_seconds;
 	    /*@ end @*/
 	    session->gpsdata.status = STATUS_NO_FIX;
 	    session->newdata.mode = MODE_NO_FIX;
@@ -769,9 +772,9 @@ static gps_mask_t tsip_analyze(struct gps_device_t *session)
 		session->context->gps_week = s1;
 		session->context->gps_tow = (double)ul1;
 		session->newdata.time =
-		    gpstime_to_unix((int)s1, session->context->gps_tow) 
+		    gpstime_to_unix((int)s1, session->context->gps_tow)
 		    - (double)s2;
-		mask |= TIME_IS;
+		mask |= TIME_IS | CLEAR_IS;
 		gpsd_report(LOG_DATA, "SP-TTS 0xab time=%.2f mask={TIME}\n",
 			    session->newdata.time);
 	    }
@@ -805,6 +808,32 @@ static gps_mask_t tsip_analyze(struct gps_device_t *session)
 
 	    /* Decode Fix modes */
 	    switch (u2 & 7) {
+            case 0:     /* Auto */
+                switch (u1) {
+                       /*
+			* According to the Thunderbolt Manual, the
+                        * first byte of the supplemental timing packet
+                        * simply indicates the configuration of the
+                        * device, not the actual lock, so we need to
+                        * look at the decode status.
+			*/
+                       case 0:   /* "Doing Fixes" */
+                         session->newdata.mode = MODE_3D;
+                         break;
+                       case 0x0B: /* "Only 3 usable sats" */
+                         session->newdata.mode = MODE_2D;
+                         break;
+                       case 0x1:   /* "Don't have GPS time" */
+                       case 0x3:   /* "PDOP is too high" */
+                       case 0x8:   /* "No usable sats" */
+                       case 0x9:   /* "Only 1 usable sat" */
+                       case 0x0A:  /* "Only 2 usable sats */
+                       case 0x0C:  /* "The chosen sat is unusable" */
+                       case 0x10:  /* TRAIM rejected the fix */
+                       default:
+                          session->newdata.mode = MODE_NO_FIX;
+                }
+		break;
 	    case 6:		/* Clock Hold 2D */
 	    case 3:		/* 2D Position Fix */
 		//session->gpsdata.status = STATUS_FIX;
@@ -821,7 +850,7 @@ static gps_mask_t tsip_analyze(struct gps_device_t *session)
 		break;
 	    }
 
-	    mask |= LATLON_IS | ALTITUDE_IS | MODE_IS | CLEAR_IS | REPORT_IS;
+	    mask |= LATLON_IS | ALTITUDE_IS | MODE_IS | REPORT_IS;
 	    gpsd_report(LOG_DATA, "SP-TPS 0xac "
 			"time=%.2f lat=%.2f lon=%.2f alt=%.2f mask=%s\n",
 			session->newdata.time,
@@ -954,7 +983,7 @@ static ssize_t tsip_control_send(struct gps_device_t *session,
 
 static void tsip_event_hook(struct gps_device_t *session, event_t event)
 {
-    /* FIXME: Resending this might not be needed on reactivation */
+    /* FIX-ME: Resending this might not be needed on reactivation */
     if (event == event_identified && event == event_reactivate) {
 	unsigned char buf[100];
 
@@ -1105,7 +1134,7 @@ static void tsip_mode(struct gps_device_t *session, int mode)
     } else if (mode == MODE_BINARY) {
 	/* The speed switcher also puts us back in TSIP, so call it */
 	/* with the default 9600 8O1. */
-	// FIXME: Should preserve the current speed.
+	// FIX-ME: Should preserve the current speed.
 	// (void)tsip_speed_switch(session, 9600, 'O', 1);
 	;
 
@@ -1118,7 +1147,7 @@ static void tsip_mode(struct gps_device_t *session, int mode)
 #ifdef NTPSHM_ENABLE
 static double tsip_ntp_offset(struct gps_device_t *session)
 {
-    /* FIXME: is a constant offset right here? */
+    /* FIX-ME: is a constant offset right here? */
     return 0.075;
 }
 #endif /* NTPSHM_ENABLE */

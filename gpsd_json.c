@@ -57,7 +57,7 @@ char *json_stringify( /*@out@*/ char *to,
     char *tp;
 
     tp = to;
-    /* 
+    /*
      * The limit is len-6 here because we need to be leave room for
      * each character to generate an up to 6-character Java-style
      * escape
@@ -705,10 +705,11 @@ void aivdm_json_dump(const struct ais_t *ais, bool scaled,
 	    else if (ais->type1.turn == 127)
 		(void)strlcpy(turnlegend, "\"fastright\"",
 			      sizeof(turnlegend));
-	    else
+	    else {
+		double rot1 = ais->type1.turn / 4.733;
 		(void)snprintf(turnlegend, sizeof(turnlegend),
-			       "%.0f",
-			       ais->type1.turn * ais->type1.turn / 4.733);
+			       "%.0f", rot1 * rot1);
+	    }
 
 	    /*
 	     * Express speed as nan if not available,
@@ -815,8 +816,8 @@ void aivdm_json_dump(const struct ais_t *ais, bool scaled,
 			   ais->type5.to_port, ais->type5.to_starboard,
 			   epfd_legends[ais->type5.epfd], ais->type5.month,
 			   ais->type5.day, ais->type5.hour, ais->type5.minute,
-			   ais->type5.draught / 10.0, 
-			   json_stringify(buf3, sizeof(buf3), 
+			   ais->type5.draught / 10.0,
+			   json_stringify(buf3, sizeof(buf3),
 					  ais->type5.destination),
 			   ais->type5.dte);
             /* *INDENT-ON* */
@@ -848,12 +849,13 @@ void aivdm_json_dump(const struct ais_t *ais, bool scaled,
     case 6:			/* Binary Message */
 	(void)snprintf(buf + strlen(buf), buflen - strlen(buf),
 		       "\"seqno\":%u,\"dest_mmsi\":%u,"
-		       "\"retransmit\":%s,\"app_id\":%u,"
+		       "\"retransmit\":%s,\"dac\":%u,\"fid\":%u,"
 		       "\"data\":\"%zd:%s\"}\r\n",
 		       ais->type6.seqno,
 		       ais->type6.dest_mmsi,
 		       JSON_BOOL(ais->type6.retransmit),
-		       ais->type6.app_id,
+		       ais->type6.dac,
+		       ais->type6.fid,
 		       ais->type6.bitcount,
 		       gpsd_hexdump(ais->type6.bitdata,
 				    (ais->type6.bitcount + 7) / 8));
@@ -867,8 +869,9 @@ void aivdm_json_dump(const struct ais_t *ais, bool scaled,
 	break;
     case 8:			/* Binary Broadcast Message */
 	(void)snprintf(buf + strlen(buf), buflen - strlen(buf),
-		       "\"app_id\":%u,\"data\":\"%zd:%s\"}\r\n",
-		       ais->type8.app_id,
+		       "\"dac\":%u,\"fid\":%u,\"data\":\"%zd:%s\"}\r\n",
+		       ais->type8.dac,
+		       ais->type8.fid,
 		       ais->type8.bitcount,
 		       gpsd_hexdump(ais->type8.bitdata,
 				    (ais->type8.bitcount + 7) / 8));

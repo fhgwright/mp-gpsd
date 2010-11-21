@@ -116,7 +116,6 @@ file in the source distribution.</p>
 <ol>
 <li><a href="#oncepercycle">Reporting fix data only once per cycle</a></li>
 <li><a href="#shipstrings">Allowing clients to ship arbitrary control strings to a GPS</a></li>
-<li><a href="#libusb">Using libusb to do USB device discovery</a></li>
 <li><a href="#fifo">Setting FIFO threshold to 1 to reduce jitter in serial-message times</a></li>
 <li><a href="#utc-tai">Stop using a compiled-in UTC-TAI offset</a></li>
 <li><a href="#subsecond">Subsecond polling</a></li>
@@ -1371,9 +1370,9 @@ gpsd.spec.in is up-to-date and properly timestamped.</dd>
 
 <dt>7. Run the regression tests and other checks</dt> 
 <dd>If it doesn't pass regressions, it isn't ready to ship. This is
-the time to run valgrind-audit, 'make splint', and 'make cppcheck' as
-well and check that those reports are clean. Use flocktest to
-verify operation on the remote test machines.</dd>
+the time to run valgrind-audit, 'make splint', 'make xmllint', and
+'make cppcheck' as well and check that those reports are clean. Use
+flocktest to verify operation on the remote test machines.</dd>
 
 <dt>8. Ship to Berlios</dt>
 <dd>Make the tarball (make dist) and upload to berlios.de (make upload-ftp), 
