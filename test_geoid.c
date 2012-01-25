@@ -4,12 +4,15 @@
  * BSD terms apply: see the file COPYING in the distribution root for details. 
  */
 
-#include <sys/types.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "gpsd.h"
+
+void gpsd_report(int errlevel UNUSED, const char *fmt UNUSED, ...)
+{
+    /* stub required to prevent linkage error */
+}
 
 int main(int argc, char **argv)
 {
@@ -20,8 +23,8 @@ int main(int argc, char **argv)
 	return 1;
     }
 
-    lat = atof(argv[1]);
-    lon = atof(argv[2]);
+    lat = safe_atof(argv[1]);
+    lon = safe_atof(argv[2]);
 
     if (lat > 90. || lat < -90.) {
 	fprintf(stderr, " -90 <= lat=%s(%.f) <= 90 ?\n", argv[1], lat);

@@ -64,7 +64,7 @@ To allow for adding and removing clients while the test is running,
 run in threaded mode by calling the start() method.  This simply calls
 the run method in a subthread, with locking of critical regions.
 """
-import sys, os, time, signal, pty, termios # fcntl, array, struct
+import os, time, signal, pty, termios # fcntl, array, struct
 import exceptions, threading, socket
 import gps
 import packet as sniffer
@@ -74,7 +74,7 @@ import packet as sniffer
 # you'll get random spurious regression failures that usually look
 # like lines missing from the end of the test output relative to the
 # check file.  These numbers might have to be adjusted upward on faster
-# machines.  The need for them may be symnptomatic of race conditions
+# machines.  The need for them may be symptomatic of race conditions
 # in the pty layer or elsewhere.
 
 # Define a per-line delay on writes so we won't spam the buffers in
@@ -89,8 +89,9 @@ WRITE_PAD = 0.001
 # CLOSE_DELAY may have no effect; Python time.time() returns a float
 # value, but it is not guaranteed by Python that the C implementation
 # underneath will return with precision finer than 1 second. (Linux
-# and *BSD return full precision.)
-CLOSE_DELAY = 1
+# and *BSD return full precision.) Dropping this to 0.1 has been
+# tried but caused failures.
+CLOSE_DELAY = 0.2
 
 class TestLoadError(exceptions.Exception):
     def __init__(self, msg):
@@ -101,7 +102,7 @@ class TestLoad:
     def __init__(self, logfp, predump=False):
         self.sentences = []	# This is the interesting part
         if type(logfp) == type(""):
-            logfp = open(logfp, "r");            
+            logfp = open(logfp, "r")            
         self.name = logfp.name
         self.logfp = logfp
         self.predump = predump
@@ -114,8 +115,8 @@ class TestLoad:
         #gps.packet.register_report(reporter)
         type_latch = None
         while True:
-            (len, ptype, packet) = getter.get(logfp.fileno())
-            if len <= 0:
+            (plen, ptype, packet, counter) = getter.get(logfp.fileno())
+            if plen <= 0:
                 break
             elif ptype == sniffer.COMMENT_PACKET:
                 # Some comments are magic
@@ -143,14 +144,11 @@ class TestLoad:
                     self.serial = (baud, databits, parity, stopbits)
                 elif "UDP" in packet:
                     self.sourcetype = "UDP"
-                elif "%" in packet:
-                    # Pass through for later interpretation 
-                    self.sentences.append(packet)
             else:
                 if type_latch is None:
                     type_latch = ptype
                 if self.predump:
-                    print `packet`
+                    print repr(packet)
                 if not packet:
                     raise TestLoadError("zero-length packet from %s"%\
                                         logfp.name)                    
@@ -175,6 +173,10 @@ class FakeGPS:
         self.index = 0
         self.progress("gpsfake: %s provides %d sentences\n" % (self.testload.name, len(self.testload.sentences)))
 
+    def write(self, line):
+        "Throw an error if this superclass is ever instantiated."
+        raise ValueError, line
+
     def feed(self):
         "Feed a line from the contents of the GPS log to the daemon."
         line = self.testload.sentences[self.index % len(self.testload.sentences)]
@@ -185,7 +187,7 @@ class FakeGPS:
         # self.write has to be set by the derived class
         self.write(line)
         if self.progress:
-            self.progress("gpsfake: %s feeds %d=%s\n" % (self.testload.name, len(line), `line`))
+            self.progress("gpsfake: %s feeds %d=%s\n" % (self.testload.name, len(line), repr(line)))
         time.sleep(WRITE_PAD)
         self.index += 1
 
@@ -298,17 +300,18 @@ class DaemonInstance:
     def __init__(self, control_socket=None):
         self.sockfile = None
         self.pid = None
+        self.tmpdir = os.environ.get('TMPDIR', '/tmp')
         if control_socket:
             self.control_socket = control_socket
         else:
-            self.control_socket = "/tmp/gpsfake-%d.sock" % os.getpid()
-        self.pidfile  = "/tmp/gpsfake_pid-%s" % os.getpid()
+            self.control_socket = "%s/gpsfake-%d.sock" % (self.tmpdir, os.getpid())
+        self.pidfile = "%s/gpsfake-%d.pid" % (self.tmpdir, os.getpid())
     def spawn(self, options, port, background=False, prefix=""):
         "Spawn a daemon instance."
         self.spawncmd = None
 
 	# Look for gpsd in GPSD_HOME env variable
-	if os.environ.get('GPSD_HOME'):
+        if os.environ.get('GPSD_HOME'):
             for path in os.environ['GPSD_HOME'].split(':'):
                 _spawncmd = "%s/gpsd" % path
                 if os.path.isfile(_spawncmd) and os.access(_spawncmd, os.X_OK):
@@ -316,7 +319,7 @@ class DaemonInstance:
                     break
 
 	# if we could not find it yet try PATH env variable for it
-	if not self.spawncmd:
+        if not self.spawncmd:
             if not '/usr/sbin' in os.environ['PATH']:
                 os.environ['PATH']=os.environ['PATH'] + ":/usr/sbin"
             for path in os.environ['PATH'].split(':'):
@@ -431,7 +434,7 @@ class TestSession:
         self.threadlock = None
     def spawn(self):
         for sig in (signal.SIGQUIT, signal.SIGINT, signal.SIGTERM):
-            signal.signal(sig, lambda signal, frame: self.cleanup())
+            signal.signal(sig, lambda unused, dummy: self.cleanup())
         self.daemon.spawn(background=True, prefix=self.prefix, port=self.port, options=self.options)
         self.daemon.wait_pid()
     def set_predicate(self, pred):
@@ -493,8 +496,6 @@ class TestSession:
         self.progress("gpsfake: gather(%d)\n" % seconds)
         #mark = time.time()
         time.sleep(seconds)
-        #if self.timings.c_recv_time <= mark:
-        #    TestSessionError("no sentences received\n")
     def cleanup(self):
         "We're done, kill the daemon."
         self.progress("gpsfake: cleanup()\n")
@@ -529,7 +530,7 @@ class TestSession:
                         chosen.send(chosen.enqueued)
                         chosen.enqueued = ""
                     while chosen.waiting():
-                        chosen.poll()
+                        chosen.read()
                         if chosen.valid & gps.PACKET_SET:
                             self.reporter(chosen.response)
                         had_output = True

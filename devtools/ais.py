@@ -16,10 +16,12 @@
 #   addressed field is located *after* the variant parts. Grrrr... 
 # * Message type 26 is presently unsupported. It hasn't been observed
 #   in the wild yet as of Jan 2010; not a lot of point in trying util
-#   we have test data.
+#   we have test data.  We'd need new machinery to constrain how many
+#   bits the data spec eats in order to recover the radio bits after it.
+# * No support for IMO236 and IMO289 special messages in types 6 and 8 yet.
 #
 # Decoding for 1-15, 18-21, and 24 have been tested against live data.
-# Decoding for 16-17, 22-23, and 25-26 have not.
+# Decoding for 16-17, 22-23, and 25-27 have not.
 
 # Here are the pseudoinstructions in the pseudolanguage.
 
@@ -651,12 +653,12 @@ type24b = (
              validator=lambda n: n >= 0 and n <= 99,
              formatter=ship_type_legends),
     bitfield("vendorid",     42, 'string',   None, "Vendor ID"),
-    dispatch("mmsi", [type24b1, type24b2], lambda m: 1 if `m`[:2]=='98' else 0),
+    dispatch("mmsi", {0:type24b1, 1:type24b2}, lambda m: 1 if `m`[:2]=='98' else 0),
     )
 
 type24 = (
     bitfield('partno', 2, 'unsigned', None, "Part Number"),
-    dispatch('partno', [type24a, type24b]),
+    dispatch('partno', {0:type24a, 1:type24b}),
     )
 
 type25 = (
@@ -669,8 +671,23 @@ type25 = (
     bitfield("data",       None, 'raw',         None, "Data"),
     )
 
-# No type 26 handling yet, we'd need new machinery to contrain how many
-# bits the data spec eats in order to recover the radio bits after it.
+# No type 26 handling yet,
+
+type27 = (
+    bitfield("accuracy", 1,  'unsigned', None,      "Position Accuracy"),
+    bitfield("raim",     1,  'unsigned', None,      "RAIM flag"),
+    bitfield("status",   4,  'unsigned', 0,         "Navigation Status",
+             formatter=cnb_status_legends),
+    bitfield("lon",      18, 'signed',   0x1a838,   "Longitude",
+             formatter=short_latlon_format),
+    bitfield("lat",      17, 'signed',   0xd548,    "Latitude",
+             formatter=short_latlon_format),
+    bitfield("speed",     6, 'unsigned', 63,        "Speed Over Ground",
+             formatter=cnb_speed_format),
+    bitfield("course",    9, 'unsigned', 511,       "Course Over Ground"),
+    bitfield("GNSS",      1, 'unsigned', None,      "GNSS flag"),
+    spare(1),  
+    )
 
 aivdm_decode = (
     bitfield('msgtype',       6, 'unsigned',    0, "Message Type",
@@ -678,16 +695,16 @@ aivdm_decode = (
     bitfield('repeat',	      2, 'unsigned', None, "Repeat Indicator"),
     bitfield('mmsi',         30, 'unsigned',    0, "MMSI"),
     # This is the master dispatch on AIS message type
-    dispatch('msgtype',      [None,   cnb,    cnb,    cnb,    type4,
-                              type5,  type6,  type7,   type8,  type9,
-                              type10, type4,  type12,  type7,  type14,
-                              type15, type16, type17,  type18, type19,
-                              type20, type21, type22,  type23, type24,
-                              type25]),
+    dispatch('msgtype',      {0:None,    1:cnb,    2:cnb,     3:cnb,    4:type4,
+                              5:type5,   6:type6,  7:type7,   8:type8,  9:type9,
+                              10:type10, 11:type4, 12:type12, 13:type7, 14:type14,
+                              15:type15, 16:type16,17:type17, 18:type18,19:type19,
+                              20:type20, 21:type21,22:type22, 23:type23,24:type24,
+                              25:type25, 26:None,  27:type27}),
     )
 
 # Length ranges.  We use this for integrity checking.
-# When a renge is a tuple, it's (minimum, maximum).
+# When a range is a tuple, it's (minimum, maximum).
 lengths = {
     1:  168,
     2:  168,
@@ -715,6 +732,7 @@ lengths = {
     24: (160, 168),
     25: 168,
     26: (60, 1004),
+    27: 96,
     }
 
 field_groups = (
@@ -1013,25 +1031,25 @@ if __name__ == "__main__":
     verbose = 0
     skiperr = True
     for (switch, val) in options:
-        if switch == '-c':
+        if switch == '-c':        # Report in DSV format rather than JSON
             dsv = True
-        elif switch == '-d':
+        elif switch == '-d':      # Dump in a more human-readable format
             dump = True
-        elif switch == '-h':
+        elif switch == '-h':      # Make a histogram of type frequencies
             histogram = True
-        elif switch == '-j':
+        elif switch == '-j':      # Dump JSON
             json = True
-        elif switch == '-m':
+        elif switch == '-m':      # Dump malformed AIVDM/AIVDO packets raw
             malformed = True
-        elif switch == '-q':
+        elif switch == '-q':      # Suppress output
             quiet = True
-        elif switch == '-s':
+        elif switch == '-s':      # Report AIS in scaled form
             scaled = True
-        elif switch == '-t':
+        elif switch == '-t':      # Filter for a comma-separated list of types
             types = map(int, val.split(","))
-        elif switch == '-v':
+        elif switch == '-v':      # Dump raw packet before JSON or DSV.
             verbose += 1
-        elif switch == '-x':
+        elif switch == '-x':      # Skip decoding errors
             skiperr = False
 
     if not dsv and not histogram and not json and not malformed and not quiet:
@@ -1041,7 +1059,7 @@ if __name__ == "__main__":
             msgtype = parsed[0][1]
             if types and msgtype not in types:
                 continue
-            if verbose >= 1:
+            if verbose >= 1 or (bogon and malformed):
                 sys.stdout.write(raw)
             if not bogon:
                 if json:
@@ -1054,8 +1072,6 @@ if __name__ == "__main__":
                     for (inst, value) in parsed:
                         print "%-25s: %s" % (inst.legend, value)
                     print "%%"
-            elif malformed:
-                sys.stdout.write(raw)
             sys.stdout.flush()
         if histogram:
             keys = frequencies.keys()

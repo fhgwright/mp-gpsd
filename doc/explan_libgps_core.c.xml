@@ -47,15 +47,11 @@
   result.</para></entry>
 </row>
 <row>
-  <entry><function>void gps_set_raw_hook(struct gps_data_t *gpsdata, void (*hook)(struct gps_data_t *, char *, size_t len, int level))</function></entry>
-  <entry><para>Fill in the hook to the data for use in raw mode.</para></entry>
-</row>
-<row>
   <entry><function>static void gps_unpack(char *buf, struct gps_data_t *gpsdata)</function></entry>
   <entry><para>Keep looping through the data in
   <function>buf</function> for JSON objects. Each time one is found,
-  analyze it and umpack it into the struct pointed at by gpsdata,
-  setting the gpasdata->set mask appropriately to indicate which data
+  analyze it and unpack it into the struct pointed at by gpsdata,
+  setting the gpsdata->set mask appropriately to indicate which data
   is valid</para><para>This function is intended for GPSD internal use
   only and should not be considered a stable part oof the
   API.</para></entry>
@@ -66,7 +62,7 @@
   return -1.</para><para>If there is something to read, clear the
   buffer, note the time as the received data time and the online time,
   then unpack the data.</para><para>If profiling is active, use the
-  received data time, the fix time and the present time to calcluate
+  received data time, the fix time and the present time to calculate
   the decode time and the client receipt time.</para></entry>
 </row>
 <row>
@@ -79,7 +75,7 @@
 </row>
 <row>
   <entry><function>bool gps_waiting(struct gps_data_t *gpsdata)</function></entry>
-  <entry><para>Returnn a boolean indicating whether input data is waiting on 
+  <entry><para>Return a boolean indicating whether input data is waiting on
   the daemon socket.  Does not block.</para></entry>
 </row>
 <row>

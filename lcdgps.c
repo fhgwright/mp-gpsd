@@ -21,8 +21,7 @@
   A client that passes gpsd data to lcdproc, turning your car computer
   into a very expensive feature-free GPS receiver ;^).  Currently
   assumes a 4x40 LCD and writes data formatted to fit that size
-  screen.  Also displays 4- or 6-character Maidenhead grid square
-  output for the hams among us.
+  screen.  Also displays Maidenhead grid square output for the hams among us.
 
   This program assumes that LCDd (lcdproc) is running locally on the
   default (13666) port.  The #defines LCDDHOST and LCDDPORT can be
@@ -34,61 +33,34 @@
 
 #define CLIMB 3
 
-#include <stdlib.h>
-#include "gpsd_config.h"
-#include <stdio.h>
-#include <string.h>
-#include <ctype.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #ifndef S_SPLINT_S
-#include <unistd.h>
+#include <netdb.h>
+#ifndef AF_UNSPEC
+#include <sys/socket.h>
+#endif /* AF_UNSPEC */
 #endif /* S_SPLINT_S */
+#ifndef INADDR_ANY
+#include <netinet/in.h>
+#endif /* INADDR_ANY */
+#include <stdlib.h>
+#include <string.h>
 #include <math.h>
 #include <errno.h>
-#ifdef HAVE_SYS_SELECT_H
- #include <sys/select.h>
-#endif /* HAVE_SYS_SELECT_H */
+#include <stdio.h>
 #ifndef S_SPLINT_S
- #ifdef HAVE_SYS_SOCKET_H
-  #include <sys/socket.h>
- #endif /* HAVE_SYS_SOCKET_H */
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #endif /* S_SPLINT_S */
-
-#include <sys/time.h> /* select() */
-#include <sys/stat.h>
-#include <fcntl.h>
-#ifdef HAVE_TERMIOS_H
- #include <termios.h>
-#endif /* HAVE_TERMIOS_H */
-
-#ifndef S_SPLINT_S
- #ifdef HAVE_NETINET_IN_H
-  #include <netinet/in.h>
- #endif /* HAVE_NETINET_IN_H */
- #ifdef HAVE_ARPA_INET_H
-  #include <arpa/inet.h>
- #endif /* HAVE_ARPA_INET_H */
- #ifdef HAVE_NETDB_H
-  #include <netdb.h>
- #endif /* HAVE_NETDB_H */
-#endif /* S_SPLINT_S */
-#include <errno.h>
-
-#include <signal.h>
 
 #include "gps.h"
 #include "gpsdclient.h"
 #include "revision.h"
 
-/* Macro for declaring function arguments unused. */
-#if defined(__GNUC__)
-#  define UNUSED __attribute__((unused)) /* Flag variable as unused */
-#else /* not __GNUC__ */
-#  define UNUSED
-#endif
-
 /* Prototypes. */
-void latlon2maidenhead(char *st,float n,float e);
-static void daemonize(void);
 ssize_t sockreadline(int sockd,void *vptr,size_t maxlen);
 ssize_t sockwriteline(int sockd,const void *vptr,size_t n);
 int send_lcd(char *buf);
@@ -99,77 +71,10 @@ static float altfactor = METERS_TO_FEET;
 static float speedfactor = MPS_TO_MPH;
 static char *altunits = "ft";
 static char *speedunits = "mph";
-
-#ifdef CLIMB
 double avgclimb, climb[CLIMB];
-#endif
 
 /* Global socket descriptor for LCDd. */
 int sd;
-
-/* Convert lat/lon to Maidenhead.  Lifted from QGrid -
-   http://users.pandora.be/on4qz/qgrid/ */
-void latlon2maidenhead(char *st,float n,float e)
-{
-  int t1;
-  e=e+180.0;
-  t1=(int)(e/20);
-  st[0]=t1+'A';
-  e-=(float)t1*20.0;
-  t1=(int)e/2;
-  st[2]=t1+'0';
-  e-=(float)t1*2;
-#ifndef CLIMB
-  st[4]=(int)(e*12.0+0.5)+'A';
-#endif
-
-  n=n+90.0;
-  t1=(int)(n/10.0);
-  st[1]=t1+'A';
-  n-=(float)t1*10.0;
-  st[3]=(int)n+'0';
-  n-=(int)n;
-  n*=24; // convert to 24 division
-#ifndef CLIMB
-  st[5]=(int)(n+0.5)+'A';
-#endif
-}
-
-/* Daemonize me. */
-static void daemonize(void) {
-  int i, ignore;
-
-  /* Run as my child. */
-  i=fork();
-  if (i == -1) exit(1); /* fork error */
-  if (i > 0) exit(0); /* parent exits */
-
-  /* Obtain a new process group. */
-  setsid();
-
-  /* Close all open descriptors. */
-  for(i=getdtablesize();i>=0;--i)
-    close(i);
-
-  /* Reopen STDIN, STDOUT, STDERR to /dev/null. */
-  i=open("/dev/null",O_RDWR); /* STDIN */
-  ignore=dup(i); /* STDOUT */
-  ignore=dup(i); /* STDERR */
-
-  /* Know thy mask. */
-  umask(027);
-
-  /* Run from a known location. */
-  ignore=chdir("/");
-
-  /* Catch child sig */
-  signal(SIGCHLD,SIG_IGN);
-
-  /* Ignore tty signals */
-  signal(SIGTSTP,SIG_IGN);
-  signal(SIGTTOU,SIG_IGN);
-  signal(SIGTTIN,SIG_IGN);
-}
 
 /*  Read a line from a socket  */
 ssize_t sockreadline(int sockd,void *vptr,size_t maxlen) {
@@ -239,7 +144,7 @@ int send_lcd(char *buf) {
   }
 
   /* send the command */
-  res=sockwriteline(sd,buf,outlen);
+  (void)sockwriteline(sd,buf,outlen);
 
   /* TODO:  check return status */
 
@@ -272,28 +177,15 @@ static void reset_lcd(void) {
 static enum deg_str_type deg_type = deg_dd;
 
 /* This gets called once for each new sentence. */
-static void update_lcd(struct gps_data_t *gpsdata,
-                       char *message UNUSED,
-                       size_t len UNUSED)
+static void update_lcd(struct gps_data_t *gpsdata)
 {
   char tmpbuf[255];
-#ifdef CLIMB
-  char maidenhead[5];
-  maidenhead[4]=0;
   int n;
-#else
-  char maidenhead[7];
-  maidenhead[6]=0;
-#endif
-  char *s;
+  char *s, *gridsquare;
   int track;
 
-  /* this is where we implement source-device filtering */
-  if (gpsdata->dev.path[0] && source.device!=NULL && strcmp(source.device, gpsdata->dev.path) != 0)
-      return;
-
   /* Get our location in Maidenhead. */
-  latlon2maidenhead(maidenhead,gpsdata->fix.latitude,gpsdata->fix.longitude);
+  gridsquare = maidenhead(gpsdata->fix.latitude,gpsdata->fix.longitude);
 
   /* Fill in the latitude and longitude. */
   if (gpsdata->fix.mode >= MODE_2D) {
@@ -325,18 +217,13 @@ static void update_lcd(struct gps_data_t *gpsdata,
 
   /* Fill in the altitude and fix status. */
   if (gpsdata->fix.mode == MODE_3D) {
-#ifdef CLIMB
     for(n=0;n<CLIMB-2;n++) climb[n]=climb[n+1];
     climb[CLIMB-1]=gpsdata->fix.climb;
     avgclimb=0.0;
     for(n=0;n<CLIMB;n++) avgclimb+=climb[n];
     avgclimb/=CLIMB;
     snprintf(tmpbuf, 254, "widget_set gpsd four 1 4 {%d %s %s %d fpm       }\n",
-            (int)(gpsdata->fix.altitude*altfactor), altunits, maidenhead, (int)(avgclimb * METERS_TO_FEET * 60));
-#else
-    snprintf(tmpbuf, 254, "widget_set gpsd four 1 4 {%.1f %s  %s}\n",
-            gpsdata->fix.altitude*altfactor, altunits, maidenhead);
-#endif
+            (int)(gpsdata->fix.altitude*altfactor), altunits, gridsquare, (int)(avgclimb * METERS_TO_FEET * 60));
   } else {
     snprintf(tmpbuf, 254, "widget_set gpsd four 1 4 {n/a}\n");
   }
@@ -370,14 +257,8 @@ int main(int argc, char *argv[])
     struct sockaddr_in localAddr, servAddr;
     struct hostent *h;
 
-    struct timeval timeout;
-    fd_set rfds;
-    int data;
-
-#ifdef CLIMB
     int n;
     for(n=0;n<CLIMB;n++) climb[n]=0.0;
-#endif 
 
     /*@ -observertrans @*/
     switch (gpsd_units())
@@ -468,12 +349,15 @@ int main(int argc, char *argv[])
       gpsd_source_spec(NULL, &source);
 
     /* Daemonize... */
-    daemonize();
+  if (daemon(0, 0) != 0)
+      (void)fprintf(stderr,
+		    "lcdgps: demonization failed: %s\n",
+		    strerror(errno));
 
     /* Open the stream to gpsd. */
-    if (gps_open_r(source.server, source.port, &gpsdata) != 0) {
+    if (gps_open(source.server, source.port, &gpsdata) != 0) {
 	(void)fprintf( stderr,
-		       "cgps: no gpsd running or network error: %d, %s\n",
+		       "lcdgps: no gpsd running or network error: %d, %s\n",
 		       errno, gps_errstr(errno));
 	exit(2);
     }
@@ -519,28 +403,18 @@ int main(int argc, char *argv[])
     reset_lcd();
 
     /* Here's where updates go. */
-    gps_set_raw_hook(&gpsdata, update_lcd);
-    gps_stream(&gpsdata, WATCH_ENABLE, NULL);
+    unsigned int flags = WATCH_ENABLE;
+    if (source.device != NULL)
+	flags |= WATCH_DEVICE;
+    (void)gps_stream(&gpsdata, flags, source.device);
 
     for (;;) { /* heart of the client */
-
-	/* watch to see when it has input */
-	FD_ZERO(&rfds);
-	FD_SET(gpsdata.gps_fd, &rfds);
-
-	/* wait up to five seconds. */
-	timeout.tv_sec = 5;
-	timeout.tv_usec = 0;
-
-	/* check if we have new information */
-	data = select(gpsdata.gps_fd + 1, &rfds, NULL, NULL, &timeout);
-
-	if (data == -1) {
-	    fprintf( stderr, "cgps: socket error\n");
+	if (!gps_waiting(&gpsdata, 50000000)) {
+	    fprintf( stderr, "lcdgps: error while waiting\n");
 	    exit(2);
-	}
-	else if (data) {
+	} else {
 	    (void)gps_read(&gpsdata);
+	    update_lcd(&gpsdata);
 	}
 
     }

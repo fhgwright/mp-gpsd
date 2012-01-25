@@ -1,6 +1,6 @@
 = Moving to GPSD-NG: a Guide for Client Developers =
 Eric S. Raymond <esr@thyrsus.com>
-v1.7, March 2010
+v1.10, Febuary 2011
 
 == Why a new protocol? ==
 
@@ -43,28 +43,14 @@ longer, giving your applications a bridge period when they can speak
 both old and new protocol -- but the client-side support for old
 protocol will be removed when 3.0 ships.
 
-The 2.92 version, with the new protocol deployed, will be in Lucid
-Lynx, the Ubuntu LTS release scheduled for April 2010.
-
-This is our schedule for the changeover:
-
-[options="header"]
-|================================================================
-| Release | Timing                      | Description
-| 2.96    | July-Aug 2010               |
-Object-file format bump.
-
-| 3.0     | Before 30 Sep 2010          |
-Old protocol support will be removed from the library.
-DBUS support will be removed from the daemon.
-
-|================================================================
+The 2.92 version, with the new protocol deployed, is be in Lucid
+Lynx, the Ubuntu LTS release of April 2010.
 
 If you follow our transition advice now, you will be able to talk to
-all old-protocol and new-protocol versions of the daemon until the
-3.0 shared client library is deployed in late 2010, at which point your
-runtime will silently get smaller but you won't be able to use 2.x 
-daemon versions any more.
+all old-protocol and new-protocol versions of the daemon until the 3.0
+shared client library is deployed, at which point your runtime will
+silently get smaller but you may no longer be able to use 2.x daemon
+versions any more.
 
 We're counting on binary-package dependencies to make the transition
 easier.  When you ship a release using the new interface library,
@@ -99,8 +85,14 @@ it right, you have been telling gpsd to stream data at you with the
 
 -------------------------------------------------------------------
 
-If you have been virtuous, you need only to make two small changes to
-your code.  Replace the gps_query() call with:
+If you have been virtuous, you need only to make four small changes to
+your code.
+
+1. Give gps_open() a third argument that is the address of a struct gps_data_t.
+(This interface changed to avoid malloc(3) and make it possible to write
+re-entrant client code.)
+
+2. Replace the gps_query() call with:
 
 -------------------------------------------------------------------
 gps_stream(gpsdata, WATCH_ENABLE, NULL) 
@@ -112,7 +104,9 @@ or new protocol. Unless a target system carries a version of the
 libgps shared library different from the gpsd version, everything
 should work and continue to work through future updates.
 
-Next, if you have references to the 'satellites' member of the structure,
+3. Change gps_poll calls to gps_read calls.
+
+4. If you have references to the 'satellites' member of the structure,
 those need to change them to 'satellites_visible'.  
 
 There. You're probably done, unless you relied on some parts of 
@@ -130,8 +124,8 @@ unusual configuration commands. Here are the exceptions:
   fail.  Later in this document you will learn how to fix these
   problems.
 
-* You set a per-packet raw hook.  This feature was documented
-  incorrectly.  It no longer takes a level argument.
+* You set a per-packet raw hook.  This feature is gone; code
+  can now just look at the response buffer directly.
 
 * You set a thread hook.  We have deleted the thread-hook portion of
   the API; for discussion, see "Why threads are gone" below.
@@ -289,27 +283,28 @@ can do one read call end expect the daemon to hand it an entire
 \n-terminated packet. 99.9% of the time this is true, but socket
 layers can do some remarkably perverse things.
 
-In 2.91 and later, gps_poll() behaves in a subtly different way.
-Each call does exactly one read() call as before, but the incoming
-data is now buffered; the logic to interpret the buffer and empty
-it is called only when the read() contains a \n.  When that happens,
-the validity flags include the PACKET_SET mask.
+In 2.91 and later, what was gps_poll() and is now gps_read() behaves
+in a subtly different way.  Each call does exactly one read() call as
+before, but the incoming data is now buffered; the logic to interpret
+the buffer and empty it is called only when the read() contains a \n.
+When that happens, the validity flags include the PACKET_SET mask.
 
 == How the command set has changed == 
 
 If your code issues old-protocol commands 'A', 'D', 'E', 'M', 'P',
 'T', 'U', or 'V', it is a wretched hive of scum and villainy that
-probably hasn't changed since before the introduction of 'W'.  You are
-using the oldest single-shot commands and will have to rewrite your
-interface significantly, as the new protocol does not support
-equivalents.  Use libgps.
+probably hasn't changed since before the introduction of 'W' in
+2004-2005.  You are using the oldest single-shot commands and will
+have to rewrite your interface significantly, as the new protocol does
+not support equivalents.  Use libgps.
 
 If your code issues B, C, or N commands, they need to change to
 ?DEVICE commands.  See the protocol reference for details.
 
 The 'F' command has no equivalent in 2.90; consider teaching your
 client to ignore fix updates when they don't have a specified "device"
-or "class" tag, respectively.  There will be an equivalent in 2.91.
+or "class" tag, respectively. In 2.91 and later versions, use the "device"
+option of the ?WATCH command for similar effect.
 
 The old 'G' command does not have an equivalent.  It would be possible
 to implement one, but we probably won't do it unless there is actual
@@ -359,6 +354,9 @@ are undocumented.
 
 == How the C API and gps_data_t structure has changed == 
 
+gps_open() now takes a third argument and is re-entrant - it's the
+old undocumented gps_open_r().
+
 The gps_query() entry point is gone.  With the new streaming-oriented
 wire protocol, it is extremely unwise to assume that the first
 transmission from the damon after a command is shipped to it will be
@@ -366,6 +364,8 @@ the reponse to command.  If you must send explicit
 commands to the daemon, use gps_send() and handle the response in
 your main event-polling loop -- but beware, as using gps_send()
 ties your code to the GPSD wire protocol and is not recommended.
+
+gps_poll() is renamed gps_read().
 
 The client library's reporting structure, struct gpsdata_t, has a new
 substructure (struct devconfig_t) named "dev" that groups together
@@ -403,18 +403,18 @@ of the gpsdata structure. Two new DOPs, xdop and ydop, are available;
 these express dilution of precision in longitude and latitude,
 respectively.
 
-The signature of the raw_hook member has changed.  It no longer takes
-the final 'level' argument, which libgps had always set to 1.
+There is a gps_waiting() method analogous to the waiting() method in
+the Python class -- a way to check if input is waiting from the
+daemon. It blocks but takes a timeout value.
 
-The 2.91 API will include a gps_waiting() method analogous to the 
-waiting() method in the Python class -- a non-blocking way to check
-if input is waiting from the daemon.
+The raw_hook member is gone.
 
 == C++  client library changes ==
 
-The C++ client library continues to be a trivial class wrpapper around
-the C.  About all you need to know is that the query() method is gone
-and there is a new stream() method that calls gps_stream().
+In API version 5, the C++ library defines a single object using RAII.
+There are no explicit open() and close() methods; instead, you initialize
+the object handing it a host and server, and the connection is shut down
+when the object is deleted or goes out of scope.
 
 == Python client library changes ==
 
@@ -442,30 +442,4 @@ for report in gps(mode=WATCH_ENABLE):
 
 ----------------------------------------------------------------------
 
-Or. if you need to intersperse other processing in a main event loop,
-like this:
-
-----------------------------------------------------------------------
-
-session = gps(mode=WATCH_ENABLE)
-try:
-    while True:
-        # Do stuff
-        report = session.next()
-	# Do more stuff
-except StopIteration:
-    print "GPSD has terminated"
-
-----------------------------------------------------------------------
-
-Each call to the iterator yields a report structure until the daemon
-terminates, at which point the iterator next() method will raise
-StopIteration and the loop will terminate.
-
-The report object returned by next() can be accessed either as a dictionary
-or as an object.  As a dictionary, it is the raw contents of the last
-JSON response re-encoded in plain ASCII.  For convenience, you may
-also access it as an object with members for each attribute in the
-dictionary.  It is especially useful to know that the object will 
-always have a "class" member giving the response type (TPV, SKY,
-DEVICE, etc.) as a string.
+See the Client HOWTO for a more detailed example.

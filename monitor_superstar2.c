@@ -2,27 +2,7 @@
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <ctype.h>
-#ifndef S_SPLINT_S
-#include <unistd.h>
-#endif /* S_SPLINT_S */
-#include <stdarg.h>
-#include <stdbool.h>
-#include <assert.h>
-
-#include "gpsd_config.h"
-
-#ifdef HAVE_NCURSES_H
-#include <ncurses.h>
-#else
-#include <curses.h>
-#endif /* HAVE_NCURSES_H */
 #include "gpsd.h"
-
 #include "bits.h"
 #include "gpsmon.h"
 
@@ -71,7 +51,7 @@ static void display_superstar2_svinfo(unsigned char *buf, size_t data_len)
 	/*@ -charint */
 
 	ss = (unsigned char)getub(buf, off + 4);
-	el = getsb(buf, off + 1);
+	el = (char)getsb(buf, off + 1);
 	az = (unsigned short)(getub(buf, off + 2) +
 			      ((getub(buf, off + 3) & 0x1) << 1));
 	fl = (unsigned char)getub(buf, off) & 0xe0;

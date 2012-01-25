@@ -2,10 +2,10 @@
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
-#include <time.h>
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <stdbool.h>
+#include <time.h>
 
 #include "gps.h"
 
@@ -84,7 +84,7 @@ static struct
 /*@-type@*/
 
 /*@+longunsignedintegral*/
-int main(int argc, char *argv[])
+int main(int argc UNUSED, char *argv[] UNUSED)
 {
     int i;
     char tbuf[128];

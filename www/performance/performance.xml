@@ -30,6 +30,30 @@
 
 <revhistory>
    <revision>
+      <revnumber>2.2</revnumber>
+      <date>30 September 2011</date>
+      <authorinitials>esr</authorinitials>
+      <revremark>
+	 Fix errors in some whole-cycle visualizations.
+      </revremark>
+   </revision>
+   <revision>
+      <revnumber>2.1</revnumber>
+      <date>29 September 2011</date>
+      <authorinitials>esr</authorinitials>
+      <revremark>
+	 Revisions as suggested by Hal Murray.
+      </revremark>
+   </revision>
+   <revision>
+      <revnumber>2.0</revnumber>
+      <date>23 September 2011</date>
+      <authorinitials>esr</authorinitials>
+      <revremark>
+	 Update to include whole-cycle profiling.
+      </revremark>
+   </revision>
+   <revision>
       <revnumber>1.2</revnumber>
       <date>27 September 2009</date>
       <authorinitials>esr</authorinitials>
@@ -61,9 +85,11 @@ NMEA and baud rates higher than the NMEA-standard 4800 bps as ways to
 increase GPS performance.  While working on
 <application>gpsd</application>, I became interested in evaluating
 these claims, which have some implications for the design of
-<application>gpsd</application>.  This paper discusses the theory and
-the results of profiling the code, and reaches some conclusions about
-system tuning and latency control.</para>
+<application>gpsd</application>.  Later, the average and peak latency
+became of interest for modeling the performance of GPS as a time
+service. This paper discusses the theory and the results of profiling
+the code, and reaches some conclusions about system tuning and latency
+control.</para>
 </abstract>
 </articleinfo>
 
@@ -74,13 +100,41 @@ accuracy of its fixes, is a function of the GPS system and receiver
 design; GPSD can do nothing to affect it.  However, a GPS fix has a
 timestamp, and the transmission path from the GPS to a user
 application introduces some latency (that is, delay between the time
-of fix and when it is available to the user).  Latency could be significant
-source of error for a GPS in motion.</para>
+of fix and when it is available to the user).</para>
 
-<para>The case we'll consider is a normal consumer-grade USB sensor
-attached to a Linux machine via an RS232 or USB link, reporting to
-<application>gpsd</application> which is polled via sockets by
-application.  Consider the whole transmission path of a PVT
+<para>Latency could be significant source of position error for a GPS in
+motion. It may also be a significant issue if the GPS is being used as
+a high-precision time source.</para>
+
+<para>This paper describes the results of two rounds of measurement
+using different tools.  Both yielded interesting results, and can usefully 
+be juxtaposed with one another.</para>
+
+<para>The first round was performed in 2005 using a version of the
+code very near 2.13.  This was before the JSON protocol change and before
+GPSD developed the capability to do automated cycle detection.
+Consequently the statistics extracted were primarily timings of individual
+packets coming over the wire from the GPS.</para>
+
+<para>The second round was performed in 2011 using a version of the
+code between 3.1 and 3.2. At this time GPSD was being evaluated as a 
+high-precision time source for use in measuring network latency and
+checking the performance of NTP.  The profiling tools built into
+GPSD had been rebuilt with an emphasis on timing the entire GPS
+reporting cycle, rather than individual packets.</para>
+
+<para>Both the 2005 and 2011 rounds used the same consumer-grade
+sensor attached via USB to a Linux machine via a USB link, reporting
+to <application>gpsd</application> which is polled via sockets by a
+profiling application.  In all cases the GPS was stationary at
+approximately 40N 75W.</para>
+
+</sect1>
+<sect1><title>Per-sentence profiling</title>
+
+<sect2><title>Modeling the reporting chain</title>
+
+<para>Consider the whole transmission path of a PVT
 (position/velocity/time) report from a GPS to the user or user
 application.  It has the following stages:</para>
 
@@ -93,7 +147,7 @@ application.  It has the following stages:</para>
 and buffered for transmission via serial link.</para>
 </listitem>
 <listitem>
-<para>The encoding is transmitted via serial link to a buffer in GPSD.</para>
+<para>The encoding is transmitted via serial link to a buffer in <application>gpsd</application>.</para>
 </listitem>
 <listitem>
 <para>The encoding is decoded and translated into a notification in
@@ -109,7 +163,7 @@ into a session structure available to the user application.</para>
 </listitem>
 </orderedlist>
 
-<para>It is also relevant that consumer-grade GPses do not expect to
+<para>It is also relevant that consumer-grade GPSes do not expect to
 be polled, but are designed to issue PVT reports on a fixed cycle
 time, which we'll call C and which is usually 1
 second. <application>gpsd</application> expects this.  A few GPSes
@@ -247,18 +301,18 @@ order of ten microseconds.</para>
 </listitem>
 </itemizedlist>
 
-</sect1>
-<sect1><title>Data and Analysis</title>
+</sect2>
+<sect2><title>Data and Analysis</title>
 
 <para>I took measurements using a Haicom 204s USB GPS mouse.  This
 device, using a SiRF-II GPS chipset and PL2303 USB-to-serial chipset, is
-very typical of today's consumer-grade GPS hardware; the Haicom people
+very typical of 2005's consumer-grade GPS hardware; the Haicom people
 themselves estimated to me in late 2004 that the SirF-II had about 80%
 and rising market share, and the specification sheets I find with
 Web searches back this up. Each profile run used 100 samples.</para>
 
 <para>My host system for the measurements was an Opteron 3400 running an
-"everything" installation of Fedora Core 3.  This is still a
+"everything" installation of Fedora Core 3.  This was still a
 moderately fast machine in early 2005, but average processor
 utilization remained low throughout the tests.</para>
 
@@ -273,13 +327,12 @@ a tool built for this purpose and included in the distribution.</para>
 &ndash;&ndash;enable-profiling is that a form of the B command that
 normally just reports the RS232 parameters can be used to set them (it
 ships a SiRF-II control string to the GPS and then changes the line
-settings).  I discovered that something in the SiRF-II/PL2303
-combination chokes on line speeds of 19200 and up.</para>
+settings).</para>
 
 <para>Another effect is to enable a Z command to switch on profiling.
 When profiling is on, each time 
 <application>gpsd</application>
-reports a fix with timestamp (e.g. on GPGGA, GPMRC and GPGLL
+reports a fix with timestamp (e.g. on GPGGA, GPRMC and GPGLL
 sentences) it also reports timing information from five checkpoints 
 inside the daemon.  The client library adds two more checkpoints.</para>
 
@@ -297,11 +350,17 @@ see the effect of profiling overhead.</para>
 </mediaobject>
 </figure>
 
+<para>Uninstrumented total latency is simply the delta from the GPS
+timestamp associated with the packet to the arrival time ofthe end of
+the packet at the profiling client.  The repeated stairstep effect is
+because all packets in a reporting cycle have the same timestamp;
+thus, the impulses cumulate time in the reporting cycle so far.</para>
+
 <para>The first thing to notice here is that the fix latency can be
 just over a second; you can see the exact figures in the <ulink
 url='profile1.txt'>raw data</ulink>.  Where is the time going?  Our next
-graph was generated with <command>gpsprof  -t
-"Haicom 204s" -T png -f raw -s 4800</command></para>
+graph was generated with <command>gpsprof -T png -t
+"Haicom 204s" -f raw -s 4800</command></para>
 
 <figure><title>Instrumented latency report</title>
 <mediaobject>
@@ -311,10 +370,12 @@ graph was generated with <command>gpsprof  -t
 </mediaobject>
 </figure>
 
-<para>By comparing this graph to the previous one, it is pretty clear
-that the profiling reports are not introducing any measurable latency.
-But what is more interesting is to notice that D1 + W + E2 + T2 + D2
-vanishes &mdash; at this timescale, all we can see is E1 and T1.</para>
+<para>As in the previous graph, each group of three lines is a single
+GPS reporting cycle. By comparing this graph to the previous one, it
+is pretty clear that the profiling reports are not introducing any
+measurable latency.  But what is more interesting is to notice that D1
++ W + E2 + T2 + D2 vanishes &mdash; at this timescale, all we can see
+is E1 and T1.</para>
 
 <para>The <ulink url='profile2.txt'>raw data</ulink> bears this out.
 All times besides E1 and T1 are so small that they are comparable to
@@ -326,8 +387,7 @@ low overhead. It is also a little surprising that E1 is so large
 relative to E1+T1. Recall, however, that this may be measurement
 error.</para>
 
-<para>Our third graph (<command>gpsprof  -t "Haicom 204s" -T
-png -f split -s 4800</command> changes the presentation so we can see
+<para>Our third graph (<command>gpsprof  -t "Haicom 204s" -T png -f split -s 4800</command> changes the presentation so we can see
 how latency varies with sentence type.</para>
 
 <figure><title>Split latency report</title>
@@ -405,7 +465,7 @@ gives us this:</para>
 
 <para>This graph looks almost identical to the previous one, except
 for vertical scale &mdash; latency has been cut neatly in half.
-Transmission times for GPMRC go from about 0.15sec to 0.75sec. Oddly,
+Transmission times for GPRMC go from about 0.15sec to 0.075sec. Oddly,
 average E1 is also cut almost in half.  I don't know how to explain
 this, unless a lot of what looks like E1 is actually RS232
 transmission time spent before the first character appears in the
@@ -427,36 +487,212 @@ different USB GPS mouse using the same SiRF-II/PL2303 combination:</para>
 very similar to the Haicom numbers.  The main difference seems to be
 that the BU303b firmware doesn't ship GPGLL by default.</para>
 
+</sect2>
 </sect1>
+
+<sect1><title>Per-cycle profiling</title>
+
+<sect2><title>Modeling the reporting chain</title>
+
+<para>When the old GPSD protocol was replaced by an application of JSON
+and the daemon developed the capability to perform automatic detection of
+the beginning and end of GPS reporting cycles, it became possible to measure
+whole-cycle latency.  Also, embedding timing statistics in the JSON digest
+of an entire cycle rather than as a $ sentence after each GPS packet
+significantly reduced the overhead of profiling in the report stream.</para>
+
+<para>The model for these measurements is as follows:</para>
+
+<orderedlist>
+<listitem>
+<para>A PVT report is generated in the GPS (at time 'T')</para>
+</listitem>
+<listitem>
+<para>It is encoded into a burst of sentences in NMEA or a vendor
+binary protocol and buffered for transmission via serial link.</para>
+</listitem>
+<listitem>
+<para>The encoding is transmitted via serial link to a buffer in
+<application>gpsd</application>, beginning at a time we shall call
+'S'.</para>
+</listitem>
+<listitem>
+<para>Because it consists of multiple packets, a period combining
+serial transmission time with <application>gpsd</application>
+processing (packet-sniffing and analysis) time will follow.</para>
+</listitem>
+<listitem>
+<para>At the end of this interval (at a time we shall call 'E'),
+<application>gpsd</application> has seen the GPS data it needs and is
+ready to produce a report to ship to clients.</para>
+</listitem>
+<listitem>
+<para>Meanwhile, the GPS may still be transmitting data that GPSD does
+not use.  But when the transmission burst is done, there will be quiet
+time on the link (exception: as we noted in 2005, some devices' transmissions 
+may slightly overflow the 1-second cycle time at 4800bps).</para>
+</listitem>
+<listitem>
+<para>The JSON report is shipped, arriving at the client at a time we
+shall call 'R'.</para>
+</listitem>
+</orderedlist>
+
+<para>We cannot know T directly.  The GPS's timestamp on the fix will
+tell us when it thinks T was, but because we don't know how our local
+clock diverges from GPS's atomic-clock timebase we don't actually know
+what T was in system time (call that T').  If we trust NTP, we then
+believe that the skew between T and T' is no more than 10ms.</para>
+
+<para>We catch time S by recording system time each time data becomes
+available from the device.  If adjacent returns of select(2) are separated 
+by more than 250msec, we have good reason to believe that the second one 
+follows end-of-cycle quiet time.  This guard interval is reliable at 9600bps
+and will only be more so at higher speeds.</para>
+
+<para>We catch time E just before a JSON report is generated from the 
+per-device session structures. This is the wnd of the analysis phase.
+If timing is enabled, extra members carrying S, E and the number
+of characters transmitted during the cycle (C) are included in the JSON.</para>
+
+<para>We catch time R by noting when the JSON arrives at the client.</para>
+
+<para>We know that the transmission-time portion of [S, E] can be
+approximated by the formula (C * 10) / B where B is the
+transmission rate in bits per second.  (Each character costs 8 bits
+plus one parity bit plus one stop bit.)</para>
+
+<para>Knowing this, we can subtract (C * 10) / B from (E-S) to approximate
+the internal proccessing time spent by <application>gpsd</application>.
+Due to other UART overheads, this formula will slightly underestimate
+transmission time and this overestimate processing time, but even a rough
+comparison of the two is interesting.</para>
+</sect2>
+
+<sect2><title>Data and Analysis</title>
+
+<para>With the new profiling tools, one graph (made with
+<command>gpsprof -f instrumented -n 100 -T png</command>) tells the
+story.  This is from the same Haicom 204s used in the 2005 tests.  You
+can see the exact figures in the <ulink url='profile6.txt'>raw
+data</ulink>.</para>
+
+<figure><title>Per-cycle latency report, 19200bps</title>
+<mediaobject>
+  <imageobject>
+    <imagedata fileref='graph6.png'/>
+  </imageobject>
+</mediaobject>
+</figure>
+
+<para>Fix latency (S - T, the purple time segment in each sample) is
+consistently about 120msec.  Some of this represents on-chip
+processing.  Some may represent actual skew between NTP time and GPS
+time.</para>
+
+<para>RS232 time (the blue segment) is the character transmission time
+estimate we computed. It seems relatively steady at around 125ms. This is
+probably a bit low, proportionately speaking.</para>
+
+<para>The green segment is (E-S) with RS232 computed time subtracted.
+It approximates the time required by <application>gpsd</application>
+for itelf. It seems steady at around 15ms. This is probably a bit
+high, proportionately speaking.</para>
+
+<para>The red dots that are just barely visible at the tops of some
+sample bars represent R-E, the client reception delta. Inspection of
+the raw data reveals that it is on the close order of 1ms.</para>
+
+<para>Total fix latency is steady at about 310ms.  Transmission
+time dominates.</para>
+
+<para>It is instructive to compare this with the graph (and the 
+<ulink url='profile7.txt'>raw data</ulink>) from the same device 
+at 9600bps.</para>
+
+<figure><title>Per-cycle latency report, 9600bps</title>
+<mediaobject>
+  <imageobject>
+    <imagedata fileref='graph7.png'/>
+  </imageobject>
+</mediaobject>
+</figure>
+
+<para>As we might expect, RS232 time changes drastically and the other
+components barely change at all.  This gives us reason to be confident that
+computed RS232 time is in fact tracking actual transmission time pretty 
+closely.  It also confirms that the most effective way to decrease total
+fix latency is simply to bump up the transmission speed.
+</para>
+
+<para>It is equally instructive to compare these graphs with graphs
+taken from the same GPS, at the same speed, running in NMEA rather than
+vendor binary mode. Consider, for example, these:</para>
+
+<figure><title>Per-cycle latency report, NMEA mode, 9600bps</title>
+<mediaobject>
+  <imageobject>
+    <imagedata fileref='graph8.png'/>
+  </imageobject>
+</mediaobject>
+</figure>
+
+<para>(Raw data is <ulink url='profile8.txt'>here</ulink>.)</para>
+
+<figure><title>Per-cycle latency report, NMEA mode, 19200bps</title>
+<mediaobject>
+  <imageobject>
+    <imagedata fileref='graph9.png'/>
+  </imageobject>
+</mediaobject>
+</figure>
+
+<para>(Raw data is <ulink url='profile8.txt'>here</ulink>.)</para>
+
+<para>The comb-shaped pattern in these graphs reflect the additional
+transmission time for $GPGSV every 5 cycles. We can see clearly that
+the vendor binary protocol significantly cuts neither latency nor
+total bandwidth required.</para>
+
+</sect2>
+</sect1>
+
 <sect1><title>Conclusions</title>
 
-<para>All these conclusions apply to the consumer-grade GPS hardware 
-generally available in 2005, e.g. with a C of one second.</para>
+<para>All these conclusions apply to the consumer-grade GPS hardware
+generally available back in 2005 and today in 2011, e.g. with a cycle time
+of one second. As it happens, 2005 was just after the point when
+consumer-grade GPS chips stabilized as a technology, and though unit
+prices have fallen they have changed relatively little in technology and
+performance over the intervening six years. The main improvement has been
+in sensitivity, improving operation with a poor skyview but not affecting
+the timing characteristics of the output.</para>
 
 <sect2><title>For Application Programmers</title>
 
 <para>For the best tradeoff between minimizing latency and use of
-application resources, Nyquist's Theorem tells us to poll
-<application>gpsd</application> once every half-cycle &mdash; that is,
-on almost all GPSes at time of writing, twice a second.</para>
+application resources, an argument siemilar to Nyquist's Theorem tells
+us to poll <application>gpsd</application> once every half-cycle
+&mdash; that is, on almost all GPSes at time of writing, twice a
+second.</para>
 
-<para>With the SiRF-II chips used in most consumer-grade GPSes at time of
-writing, 9600bps is the optimal line speed.  4800 is slightly too low,
-not guaranteeing updates within the 1-second cycle time.  9600bps
-yields updates in about 0.5sec.</para>
-
-</sect2>
-<sect2><title>For Manufacturer Claims</title>
-
-<para>At the 1-second cycle time of consumer-grade devices, being able
-to operate at 9600bps is useful, but higher speeds would not be worth
-the effort.</para>
+<para>With the SiRF chips still used in most consumer-grade GPSes at
+time of writing, 9600bps is the optimal line speed.  4800 is slightly
+too low, not guaranteeing updates within the 1-second cycle time.
+9600bps yields updates in about 0.45sec, 19600bps in about 0.26sec.
+Higher speeds would probably not be worth the extra computation unless
+your sensor is in rapid motion. Even whole-cycle latency, most
+sensitive to transmission speed, is only cut by less than 200ms by
+going to 19200. Higher speed will exhibit diminishing returns.</para>
 
 <para>Comparing the SiRF-II performance at 4800bps and 9600 shows a
 drop in E1+T1 that looks about linear, suggesting that for a cycle of
 n seconds, the optimal line speed would be about 9600/n. Since future
 GPS chips are likely to have faster processors and thus less latency,
 this may be considered an upper bound on useful line speed.</para>
+
+</sect2>
+<sect2><title>For Manufacturer Claims</title>
 
 <para>Because 9600bps is readily available, the transmission- and
 decode-time advantages of binary protocols over NMEA are not
@@ -466,30 +702,33 @@ expect this to continue to be the case even with cycle times as
 low as 0.25sec.</para>
 
 <para>More generally, binary protocols are largely pointless except as
-market-control devices for the the manufacturers.  The additional
+market-control devices for the manufacturers.  The additional
 capabilities they support could be just as effectively supported
 through NMEA's $P-prefix extension mechanism.</para>
 
 </sect2>
-<sect2><title>For the Design of <application>gpsd</application></title>
+<sect2><title>For GPSD as a Time Service</title>
 
-<para><application>gpsd</application> does not introduce measurable 
-latency into the path from GPS to application.  Cycle times would 
-have to decrease by two orders of magnitude for this to change.</para>
-
-<para>Setting a 9600bps line speed, and then polling the GPS twice a 
-second rather than waiting for an update, would halve the expected 
-latency of the system from 0.5 to 0.25sec. This would be right at the
-edge of the SiRF-II's performance envelope.</para>
+<para>We have measured a typical intrisic time latency of about 70msec due to
+on-GPS processing and the USB polling interval. While this is noticeably 
+higher than NTP's expected accuracy of &plusmn;10msec, it should be
+adequate for most applications other than physics experiments.</para>
 
 </sect2>
-</sect1>
-<sect1><title>2009 Update</title>
+<sect2><title>For the Design of GPSD</title>
 
-<para>One consequence of the new gpsd wire protocol is that client
-applications no longer poll the daemon.  This means the "W' statistic
-is always zero, and is no longer collected when timing sentences.</para>
+<para>In 2005, I wrote that <application>gpsd</application> does not
+introduce measurable latency into the path from GPS to application.  I
+said that cycle times would have to decrease by two orders of
+magnitude for this to change.</para>
 
+<para>In 2011, with better whole-cycle oriented profiling tools and a
+faster test machine, latency incurred by
+<application>gpsd</application> can be measured.  It is less than 15ms
+sec on a 2.66 Intel Core Duo under normal load. How much less depends
+on how much the model computations underestimate RS232 transmission time
+for the GPS data.</para>
+</sect2>
 </sect1>
 </article>
 

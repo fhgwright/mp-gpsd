@@ -10,9 +10,9 @@
 #include <stdio.h>
 #include <termios.h>
 #include <unistd.h>
+#include <string.h>
 #ifndef __GLIBC__
   #include <util.h>
-  #include <string.h>
 #else
   #include <stdlib.h>
   #include <pty.h>
@@ -34,7 +34,7 @@ int main( int argc, char **argv){
 		switch(c){
 		case 'd':
 			dflag = 1;
-			strlcpy(tn, optarg, 32);
+			strncpy(tn, optarg, sizeof(tn)-1);
 			break;
 		case 'r':
 			rate = atoi(optarg);

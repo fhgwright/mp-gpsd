@@ -146,8 +146,8 @@
   <entry><function>static gps_mask_t processPGRME(int c UNUSED, char *field[], struct gps_device_t *session)</function></entry>
   <entry><para>Check that the error estimate data is good. If not, set
   all error estimate fields to 100m and return an error
-  flag.</para><para>If they are good, calcluate the error value and
-  store it. Return the approriate flag values.</para></entry>
+  flag.</para><para>If they are good, calculate the error value and
+  store it. Return the appropriate flag values.</para></entry>
 </row>
 <row>
   <entry><function>static gps_mask_t processGPZDA(int c UNUSED, char *field[], struct gps_device_t *session)</function></entry>
@@ -162,7 +162,7 @@
 </row>
 <row>
   <entry><function>static gps_mask_t processTNTHTM(int c UNUSED, char *field[], struct gps_device_t *session)</function></entry>
-  <entry><para>Set the local variable to indicate the the unit is
+  <entry><para>Set the local variable to indicate the unit is
   on-line.</para><para>Fill all appropriate fields from the sentence
   and set the associated flags in the local flag
   variable.</para><para>Set the fix status and return all the locally
@@ -188,7 +188,7 @@
 </row>
 <row>
   <entry><function>void nmea_add_checksum(char *sentence)</function></entry>
-  <entry><para>Calcluate the checksum then append '*' + the checksum + CR/LF to the end of an NMEA sentence, skipping any existing '*'.</para></entry>
+  <entry><para>Calculate the checksum then append '*' + the checksum + CR/LF to the end of an NMEA sentence, skipping any existing '*'.</para></entry>
 </row>
 <row>
   <entry><function>int nmea_write(struct gps_device_t *session, const char *fmt, ... )</function></entry>

@@ -1,15 +1,15 @@
 = NMEA Revealed =
 Eric S. Raymond <esr@thyrsus.com>
-v2.3, Mar 2010
+v2.9, Nov 2011
 
 This is a list of NMEA 0183 sentences with field descriptions.
 It is primarily intended to help people understand GPS reports.
 
-The master of this document is in asciidoc format at
-http://gpsd.berlios.de/NMEA.txt[]; you are probably seeing it as a web
-page.  You may encounter versions of it, in plain ASCII, that do not
-have a revision number and do not list an editor. These are older and
-should probably be considered obsolescent.
+The master of this document is in asciidoc format at the GPSD project
+website; you are probably seeing it as a web page.  You may encounter
+versions of it, in plain ASCII, that do not have a revision number and
+do not list an editor. These are older and should probably be
+considered obsolescent.
 
 == Sources and Applicable Standards ==
 
@@ -31,7 +31,7 @@ distribution, but adds more information on the following topics:
 * Units used in GGA
 * Vendor extensions PRWIZCH and PMGNST
 * FAA Mode Indicator field for RMC, RMB, VTG, GLL, BWC, XTE.
-* New documentation on BWC, DTM, GBS, GRS, GST, MSK, and MSS sentences.
+* New documentation on BWC, DTM, GBS, GNS, GRS, GST, MSK, and MSS sentences.
 * Sentence examples merged from [GIDS]
 * Sentence explanations from [GIDS] and elsewhere
 * Corrected badly mangled ZDA description.
@@ -47,12 +47,13 @@ distribution, but adds more information on the following topics:
 The NMEA specification requires a physical-level protocol compatible
 with RS422 at 4800bps, 8N1 or 7N2.  It is RS422 rather than RS232
 because NMEA expects many navigational devices to feed a common serial
-bus.  The darta encoding is ASCII with the high data bit not used and zeroed.
+bus.  The data encoding is ASCII with the high data bit not used and zeroed.
 
 Consumer-grade GPS sensors normally report over an RS232 port or a USB
-port emulating an RS232 serial device. Baud rate is variable, with
-9600 probably the most common.  Most deviveces use 8N1; there are 
-rare exceptions that use 7N2 (San Jose Navigation) or even 8O1 (Trimble).
+port emulating an RS232 serial device; some use Bluetooth. Baud rate
+is variable, with 9600 probably the most common.  Most devices use
+8N1; there are rare exceptions that use 7N2 (San Jose Navigation) or
+even 8O1 (Trimble).
 
 == Sentence Mixes and NMEA Variations ==
 
@@ -82,6 +83,10 @@ that according to the NMEA specification, it dominates the Status field --
 the Status field will be set to "A" (data valid) for Mode Indicators A
 and D, and to "V" (data invalid) for all other values of the Mode
 Indicator.  This is confirmed by [IEC].
+
+In NMEA 3.0, the GBS sentence reports a complete set of error estimates. Note
+however that many receivers claiming to emit "3.0" or "3.01" don't
+actually ship this sentence.
 
 == NMEA Encoding Conventions ==
 
@@ -116,8 +121,45 @@ no valid data for it.  However, many receivers violate this.  It's
 common, for example, to see latitude/longitude/altitude figures filled
 with zeros when the GPS has no valid data.
 
-Date and time in GPS is computed as number of weeks from 6 January
-1980 plus number of seconds into the week.
+== Dates and times ==
+
+NMEA devices report date and time in UTC, aka GMT, aka Zulu time (as
+opposed to local time).  But the way this report is computed results
+in some odd bugs and inaccuracies.
+
+Date and time in GPS is represented as number of weeks from the start
+of zero second of 6 January 1980, plus number of seconds into the
+week.  GPS time is not leap-second corrected, though satellites also
+broadcast a current leap-second correction which is updated on
+six-month boundaries according to rotational bulletins issued by the
+International Earth Rotation and Reference Systems Service (IERS).
+
+The leap-second correction is only included in the satellite subframre
+broadcast, roughly once ever 20 minutes.  While the satellites do
+notify GPSes of upcoming leap-seconds, this notification is not
+necessarily processed correctly on consumer-grade devices, and will
+not be available at all when a GPS receiver has just
+cold-booted. Thus, reported UTC time may be slightly inaccurate
+between a cold boot or leap second and the following subframe
+broadcast.
+
+GPS date and time are subject to a rollover problem in the 10-bit week
+number counter, which will re-zero every 1024 weeks (roughly every 20
+years). The last rollover (and the first since GPS went live in 1980)
+was in 1999; the next would fall in 2019, but plans are afoot to
+upgrade the satellite counters to 13 bits; this will delay the next
+rollover until 2173.
+
+For accurate time reporting, therefore, a GPS requires a supplemental
+time references sufficient to identify the current rollover period,
+e.g. accurate to within 512 weeks.  Many NMEA GPSes have a wired-in
+assumption about the UTC time of the last rollover and will thus report
+incorrect times outside the rollover period they were designed in.
+
+For these reasons, NMEA GPS should not be considered high-quality
+references for absolute time.  Some do, however, emit pulse-per-second
+RS232 signals which can be used to improve the precision of an
+external clock. See [PPS] for discussion.
 
 == Error status indications
 
@@ -305,49 +347,49 @@ The following NMEA sentences have been designated "obsolete" in a
 publicly available NMEA document dated 2009.
 
 |================================================================
-|APA – Autopilot Sentence "A"
-|BER – Bearing & Distance to Waypoint, Dead Reckoning, Rhumb Line
-|BPI – Bearing & Distance to Point of Interest
-|DBK – Depth Below Keel
-|DBS – Depth Below Surface
+|APA - Autopilot Sentence "A"
+|BER - Bearing & Distance to Waypoint, Dead Reckoning, Rhumb Line
+|BPI - Bearing & Distance to Point of Interest
+|DBK - Depth Below Keel
+|DBS - Depth Below Surface
 |
-|DRU – Dual Doppler Auxiliary Data
-|GDA – Dead Reckoning Positions
-|GLA – Loran-C Positions
-|GOA – OMEGA Positions
-|GXA – TRANSIT Positions
-|GTD – Geographical Position, Loran-C TDs
-|GXA – TRANSIT Position
-|HCC – Compass Heading
-|HCD – Heading and Deviation
-|HDM – Heading, Magnetic
-|HDT – Heading, True
-|HVD – Magnetic Variation, Automatic
-|HVM – Magnetic Variation, Manually Set
-|IMA – Vessel Identification
-|MDA – Meteorological Composite
-|MHU – Humidity
-|MMB – Barometer
-|MTA – Air Temperature
-|MWH – Wave Height
-|MWS – Wind & Sea State
+|DRU - Dual Doppler Auxiliary Data
+|GDA - Dead Reckoning Positions
+|GLA - Loran-C Positions
+|GOA - OMEGA Positions
+|GXA - TRANSIT Positions
+|GTD - Geographical Position, Loran-C TDs
+|GXA - TRANSIT Position
+|HCC - Compass Heading
+|HCD - Heading and Deviation
+|HDM - Heading, Magnetic
+|HDT - Heading, True
+|HVD - Magnetic Variation, Automatic
+|HVM - Magnetic Variation, Manually Set
+|IMA - Vessel Identification
+|MDA - Meteorological Composite
+|MHU - Humidity
+|MMB - Barometer
+|MTA - Air Temperature
+|MWH - Wave Height
+|MWS - Wind & Sea State
 |
-|Rnn – Routes
-|SBK – Loran-C Blink Status
-|SCY – Loran-C Cycle Lock Status
-|SCD – Loran-C ECDs
-|SDB – Loran-C Signal Strength
-|SGD – Position Accuracy Estimate
-|SGR – Loran-C Chain Identifier
-|SIU – Loran-C Stations in Use
-|SLC – Loran-C Status
-|SNC – Navigation Calculation Basis
-|SNU – Loran-C SNR Status
-|SPS – Loran-C Predicted Signal Strength
-|SSF – Position Correction Offset
-|STC – Time Constant
-|STR – Tracking Reference
-|SYS – Hybrid System Configuration
+|Rnn - Routes
+|SBK - Loran-C Blink Status
+|SCY - Loran-C Cycle Lock Status
+|SCD - Loran-C ECDs
+|SDB - Loran-C Signal Strength
+|SGD - Position Accuracy Estimate
+|SGR - Loran-C Chain Identifier
+|SIU - Loran-C Stations in Use
+|SLC - Loran-C Status
+|SNC - Navigation Calculation Basis
+|SNU - Loran-C SNR Status
+|SPS - Loran-C Predicted Signal Strength
+|SSF - Position Correction Offset
+|STC - Time Constant
+|STR - Tracking Reference
+|SYS - Hybrid System Configuration
 |================================================================
 
 == NMEA-Standard Sentences ==
@@ -407,6 +449,8 @@ Field Number:
 14. F0 Clock Parameter
 15. F1 Clock Parameter
 16. Checksum
+
+Fields 5 through 15 are dumped as raw hex.
 
 Example: $GPALM,1,1,15,1159,00,441d,4e,16be,fd5e,a10c9f,4a2da4,686e81,58cbe1,0a4,001*5B
 
@@ -817,6 +861,7 @@ Field Number:
 15. Checksum
 
 === GLC - Geographic Position, Loran-C ===
+
 ------------------------------------------------------------------------------
                                            12    14
         1    2   3 4   5 6   7 8   9 10  11|   13|
@@ -860,12 +905,36 @@ Field Number:
 7. FAA mode indicator (NMEA 2.3 and later)
 8. Checksum
 
+=== GNS - Fix data ===
+
+------------------------------------------------------------------------------
+       1         2       3 4        5 6    7  8   9   10  11  12  13
+       |         |       | |        | |    |  |   |   |   |   |   |
+$--GNS,hhmmss.ss,llll.ll,a,yyyyy.yy,a,c--c,xx,x.x,x.x,x.x,x.x,x.x*hh
+------------------------------------------------------------------------------
+
+Field Number:
+
+1. UTC
+2. Latitude
+3. N or S (North or South)
+4. Longitude
+5. E or W (East or West)
+6. Mode indicator
+7. Total number of satelites in use,00-99
+8. HDROP
+9. Antenna altitude, meters, re:mean-sea-level(geoid.
+10. Goeidal separation meters
+11. Age of diferential data
+12. Differential reference station ID
+13. CRC
+
 === GRS - GPS Range Residuals ===
 
 ------------------------------------------------------------------------------
               1    2  3  4  5  6  7  8  9 10 11 12 13 14  15
               |    |  |  |  |  |  |  |  |  |  |  |  |  |   |
- $ --GST,hhmmss.ss,m,xx,xx,xx,xx,xx,xx,xx,xx,xx,xx,xx,xx,*hh<CR><LF>
+ $ --GRS,hhmmss.ss,m,xx,xx,xx,xx,xx,xx,xx,xx,xx,xx,xx,xx,*hh<CR><LF>
 ------------------------------------------------------------------------------
 
 Field Number: 
@@ -1070,7 +1139,6 @@ Field Number:
 1. Heading Degrees, true
 2. T = True
 3. Checksum
-
 
 === HFB - Trawl Headrope to Footrope and Bottom ===
 
@@ -1997,18 +2065,18 @@ $PASHR,hhmmss.sss,hhh.hh,T,rrr.rr,ppp.pp,xxx.xx,a.aaa,b.bbb,c.ccc,d,e*hh<CR><LF>
  
 Field number:
  
-1.  hhmmss.sss – UTC time
-2.  hhh.hh – Heading in degrees
-3.  T – flag to indicate that the Heading is True Heading (i.e. to True North)
-4.  rrr.rr – Roll Angle in degrees
-5.  ppp.pp – Pitch Angle in degrees
-6.  xxx.xx – Heave
-7.  a.aaa – Roll Angle Accuracy Estimate (Stdev) in degrees
-8.  b.bbb – Pitch Angle Accuracy Estimate (Stdev) in degrees
-9.  c.ccc – Heading Angle Accuracy Estimate (Stdev) in degrees
-10. d – Aiding Status
-11. e – IMU Status
-12. hh – Checksum
+1.  hhmmss.sss - UTC time
+2.  hhh.hh - Heading in degrees
+3.  T - flag to indicate that the Heading is True Heading (i.e. to True North)
+4.  rrr.rr - Roll Angle in degrees
+5.  ppp.pp - Pitch Angle in degrees
+6.  xxx.xx - Heave
+7.  a.aaa - Roll Angle Accuracy Estimate (Stdev) in degrees
+8.  b.bbb - Pitch Angle Accuracy Estimate (Stdev) in degrees
+9.  c.ccc - Heading Angle Accuracy Estimate (Stdev) in degrees
+10. d - Aiding Status
+11. e - IMU Status
+12. hh - Checksum
 
 [PASHR] describes this sentence as NMEA, though other sources say it is Ashtech 
 proprietary and describe a different format.
@@ -2135,6 +2203,11 @@ Only emitted by uBlox Antaris chipset.
     http://www.mx-marine.com/downloads/MX521_Install_manual_051804.pdf
     Used for GBS, GRS.
 
+- [[[MX535]]
+    "MX535 UAIS Ship Borne Class A Transponder Unit Techical & Installation Manual"
+    http://www.mx-marine.com/downloads/mx535/MX535_Tech_Manual_Rev_E.pdf
+    Used for GNS.
+
 - [[[ZODIAC]]]
     "Zodiac Serial Data Interface Specification"
     http://users.rcn.com/mardor/serial.pdf
@@ -2185,3 +2258,7 @@ Only emitted by uBlox Antaris chipset.
 - [[[WAAS]]]
     "WAAS Information"
     http://gpsinformation.net/exe/waas.html
+
+- [[[PPS]]]
+    "Pulse per second"
+    http://en.wikipedia.org/wiki/Pulse_per_second

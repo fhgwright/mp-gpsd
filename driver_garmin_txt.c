@@ -3,7 +3,7 @@
  * Tested with the 'Garmin eTrex Legend' device working in 'Text Out' mode.
  *
  * Protocol info from:
- *	 http://gpsd.berlios.de/vendor-docs/garmin/garmin_simpletext.txt
+ *	 http://www8.garmin.com/support/text_out.html
  *       http://www.garmin.com/support/commProtocol.html
  *
  * Code by: Petr Slansky <slansky@usa.net>
@@ -106,31 +106,14 @@ invalid data.
 
 ***************************************************/
 
-#include <sys/types.h>
 
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <math.h>
-
 #include <string.h>
-#ifndef S_SPLINT_S
-#include <unistd.h>
-#endif /* S_SPLINT_S */
-#include <errno.h>
-#include <inttypes.h>
-
-#include "gpsd_config.h"
-#if defined (HAVE_SYS_SELECT_H)
-#include <sys/select.h>
-#endif
-
-#if defined(HAVE_STRINGS_H)
 #include <strings.h>
-#endif
 
 #include "gpsd.h"
-#include "gps.h"
-#include "timebase.h"
 
 #ifdef GARMINTXT_ENABLE
 
@@ -173,7 +156,7 @@ static int gar_decode(const char *data, const size_t length, const char *prefix,
     }
 
     bzero(buf, (int)sizeof(buf));
-    (void)strncpy(buf, data, length);
+    (void)strlcpy(buf, data, length);
     gpsd_report(LOG_RAW + 2, "Decoded string: %s\n", buf);
 
     if (strchr(buf, '_') != NULL) {
@@ -241,7 +224,7 @@ static int gar_int_decode(const char *data, const size_t length,
     }
 
     bzero(buf, (int)sizeof(buf));
-    (void)strncpy(buf, data, length);
+    (void)strlcpy(buf, data, length);
     gpsd_report(LOG_RAW + 2, "Decoded string: %s\n", buf);
 
     if (strchr(buf, '_') != NULL) {
@@ -280,21 +263,18 @@ gps_mask_t garmintxt_parse(struct gps_device_t * session)
 
     gps_mask_t mask = 0;
 
-    gpsd_report(LOG_PROG, "Garmin Simple Text packet, len %zd\n",
-		session->packet.outbuflen);
-    gpsd_report(LOG_RAW, "%s\n",
-		gpsd_hexdump_wrapper(session->packet.outbuffer,
-				     session->packet.outbuflen, LOG_RAW));
+    gpsd_report(LOG_PROG, "Garmin Simple Text packet, len %zd: %s\n",
+		session->packet.outbuflen, (char*)session->packet.outbuffer);
 
     if (session->packet.outbuflen < 54) {
 	/* trailing CR and LF can be ignored; ('@' + 54x 'DATA' + '\r\n') has length 57 */
 	gpsd_report(LOG_WARN, "Message is too short, rejected.\n");
-	return ONLINE_IS;
+	return ONLINE_SET;
     }
 
     session->packet.type = GARMINTXT_PACKET;
     /* TAG message as GTXT, Garmin Simple Text Message */
-    strncpy(session->gpsdata.tag, "GTXT", MAXTAGLEN);
+    (void)strlcpy(session->gpsdata.tag, "GTXT", MAXTAGLEN);
 
     /* only one message, set cycle start */
     session->cycle_end_reliable = true;
@@ -307,7 +287,7 @@ gps_mask_t garmintxt_parse(struct gps_device_t * session)
 	if (0 != gar_int_decode(buf + 0, 2, 0, 99, &result))
 	    break;
 	session->driver.garmintxt.date.tm_year =
-	    (CENTURY_BASE + (int)result) - 1900;
+	    (session->context->century + (int)result) - 1900;
 	/* month */
 	if (0 != gar_int_decode(buf + 2, 2, 1, 12, &result))
 	    break;
@@ -331,15 +311,15 @@ gps_mask_t garmintxt_parse(struct gps_device_t * session)
 	session->driver.garmintxt.date.tm_sec = (int)result;
 	session->driver.garmintxt.subseconds = 0;
 	session->newdata.time =
-	    (double)mkgmtime(&session->driver.garmintxt.date) +
+	    (timestamp_t)mkgmtime(&session->driver.garmintxt.date) +
 	    session->driver.garmintxt.subseconds;
-	mask |= TIME_IS;
+	mask |= TIME_SET;
     } while (0);
 
     /* assume that possition is unknown; if the position is known we will fix status information later */
     session->newdata.mode = MODE_NO_FIX;
     session->gpsdata.status = STATUS_NO_FIX;
-    mask |= MODE_IS | STATUS_IS | CLEAR_IS | REPORT_IS;
+    mask |= MODE_SET | STATUS_SET | CLEAR_IS | REPORT_IS;
 
     /* process position */
 
@@ -401,7 +381,7 @@ gps_mask_t garmintxt_parse(struct gps_device_t * session)
 	    session->newdata.mode = MODE_NO_FIX;
 	    session->gpsdata.status = STATUS_NO_FIX;
 	}
-	mask |= MODE_IS | STATUS_IS | LATLON_IS;
+	mask |= MODE_SET | STATUS_SET | LATLON_SET;
     } while (0);
 
     /* EPH */
@@ -414,7 +394,7 @@ gps_mask_t garmintxt_parse(struct gps_device_t * session)
 	/* eph is a circular error, sqrt(epx**2 + epy**2) */
 	session->newdata.epx = session->newdata.epy =
 	    eph * (1 / sqrt(2)) * (GPSD_CONFIDENCE / CEP50_SIGMA);
-	mask |= HERR_IS;
+	mask |= HERR_SET;
     } while (0);
 
     /* Altitude */
@@ -425,7 +405,7 @@ gps_mask_t garmintxt_parse(struct gps_device_t * session)
 		       &alt))
 	    break;
 	session->newdata.altitude = alt;
-	mask |= ALTITUDE_IS;
+	mask |= ALTITUDE_SET;
     } while (0);
 
     /* Velocity */
@@ -445,7 +425,7 @@ gps_mask_t garmintxt_parse(struct gps_device_t * session)
 	if (track < 0.0)
 	    track += 360.0;
 	session->newdata.track = track;
-	mask |= SPEED_IS | TRACK_IS;
+	mask |= SPEED_SET | TRACK_SET;
     } while (0);
 
 
@@ -457,17 +437,17 @@ gps_mask_t garmintxt_parse(struct gps_device_t * session)
 		       &climb))
 	    break;
 	session->newdata.climb = climb;	/* climb in mps */
-	mask |= CLIMB_IS;
+	mask |= CLIMB_SET;
     } while (0);
 
     gpsd_report(LOG_DATA,
-		"GTXT: time=%.2f, lat=%.2f lon=%.2f alt=%.2f speed=%.2f track=%.2f climb=%.2f exp=%.2f epy=%.2f mode=%d status=%d mask=%s\n",
+		"GTXT: time=%.2f, lat=%.2f lon=%.2f alt=%.2f speed=%.2f track=%.2f climb=%.2f exp=%.2f epy=%.2f mode=%d status=%d\n",
 		session->newdata.time, session->newdata.latitude,
 		session->newdata.longitude, session->newdata.altitude,
 		session->newdata.speed, session->newdata.track,
 		session->newdata.climb, session->newdata.epx,
 		session->newdata.epy, session->newdata.mode,
-		session->gpsdata.status, gpsd_maskdump(mask));
+		session->gpsdata.status);
     return mask;
 }
 

@@ -49,7 +49,7 @@ Shift 6 bytes of RTCM data in as such:
 The code was originally by Wolfgang Rupprecht.  ESR severely hacked
 it, with Wolfgang's help, in order to separate message analysis from
 message dumping and separate this lower layer from the upper layer 
-handing GPS and RTCM decoding.  
+handing GPS-subframe and RTCM decoding.  
 
 You are not expected to understand any of this.
 
@@ -58,14 +58,7 @@ BSD terms apply: see the file COPYING in the distribution root for details.
 
 *****************************************************************************/
 
-#include <sys/types.h>
-#ifndef S_SPLINT_S
-#include <unistd.h>
-#endif /* S_SPLINT_S */
-#include <stdlib.h>
-#include <string.h>
 #include <stdbool.h>
-
 #include "gpsd.h"
 
 #define MAG_SHIFT 6u
@@ -178,6 +171,7 @@ void isgps_init( /*@out@*/ struct gps_packet_t *session)
     session->isgps.curr_offset = 24;	/* first word */
     session->isgps.locked = false;
     session->isgps.bufindex = 0;
+    session->isgps.buflen = 0;
 }
 
 /*@ -usereleased -compdef @*/
@@ -285,6 +279,7 @@ enum isgpsstat_t isgps_decode(struct gps_packet_t *session,
 
 		    if (length_check(session)) {
 			/* jackpot, we have a complete packet */
+			session->isgps.buflen = session->isgps.bufindex * sizeof(isgps30bits_t);
 			session->isgps.bufindex = 0;
 			res = ISGPS_MESSAGE;
 		    }

@@ -16,18 +16,17 @@ PERMISSIONS
 ***************************************************************************/
 
 #include <math.h>
-#include <assert.h>
-#include <string.h>
-#include <stdio.h>
-#include <ctype.h>
+#include <stdbool.h>
 
 #include "gpsd.h"
+#ifdef SOCKET_EXPORT_ENABLE
 #include "gps_json.h"
 
 int json_device_read(const char *buf,
 		     /*@out@*/ struct devconfig_t *dev,
 		     /*@null@*/ const char **endptr)
 {
+    char tbuf[JSON_DATE_MAX+1];
     /*@ -fullinitblock @*/
     /* *INDENT-OFF* */
     const struct json_attr_t json_attrs_device[] = {
@@ -35,6 +34,8 @@ int json_device_read(const char *buf,
 	
         {"path",       t_string,     .addr.string  = dev->path,
 	                                .len = sizeof(dev->path)},
+	{"activated",  t_string,     .addr.string = tbuf,
+			                .len = sizeof(tbuf)},
 	{"activated",  t_real,       .addr.real = &dev->activated},
 	{"flags",      t_integer,    .addr.integer = &dev->flags},
 	{"driver",     t_string,     .addr.string  = dev->driver,
@@ -59,9 +60,19 @@ int json_device_read(const char *buf,
     /*@ +fullinitblock @*/
     int status;
 
+    tbuf[0] = '\0';
     status = json_read_object(buf, json_attrs_device, endptr);
     if (status != 0)
 	return status;
+
+    /*@-usedef@*/
+    if (isnan(dev->activated)!=0) {
+	if (tbuf[0] == '\0')
+	    dev->activated = NAN;
+	else
+	    dev->activated = iso8601_to_unix(tbuf);
+    }
+    /*@+usedef@*/
 
     return 0;
 }
@@ -87,6 +98,8 @@ int json_watch_read(const char *buf,
 	{"timing",         t_boolean,  .addr.boolean = &ccp->timing},
 	{"device",         t_string,   .addr.string = ccp->devpath,
 	                                  .len = sizeof(ccp->devpath)},
+	{"remote",         t_string,   .addr.string = ccp->remote,
+	                                  .len = sizeof(ccp->remote)},
 	{NULL},
     };
     /* *INDENT-ON* */
@@ -96,5 +109,7 @@ int json_watch_read(const char *buf,
     status = json_read_object(buf, chanconfig_attrs, endptr);
     return status;
 }
+
+#endif /* SOCKET_EXPORT_ENABLE */
 
 /* shared_json.c ends here */

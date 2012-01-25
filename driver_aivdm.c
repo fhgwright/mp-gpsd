@@ -5,29 +5,29 @@
  *
  * Code for message types 1-15, 18-21, and 24 has been tested against
  * live data with known-good decodings. Code for message types 16-17,
- * 22-23, and 25-26 has not.
+ * 22-23, and 25-27 has not.  The IMO special messages in types 6 and 8
+ * are also untested.
  *
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
-#include <sys/types.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 #include <ctype.h>
-#ifndef S_SPLINT_S
-#include <unistd.h>
-#endif /* S_SPLINT_S */
-#include <time.h>
-#include <stdio.h>
 
 #include "gpsd.h"
 #include "bits.h"
 
-/**
+/*
  * Parse the data from the device
  */
+
+#define DAC1FID31_AIRTEMP_OFFSET		600
+#define DAC1FID31_DEWPOINT_OFFSET		200
+#define DAC1FID31_PRESSURE_OFFSET		800
+#define DAC1FID11_LEVEL_OFFSET			10
+#define DAC1FID31_LEVEL_OFFSET			100
+#define DAC1FID31_WATERTEMP_OFFSET		100
 
 static void from_sixbit(char *bitvec, uint start, int count, char *to)
 {
@@ -62,8 +62,9 @@ static void from_sixbit(char *bitvec, uint start, int count, char *to)
 
 /*@ +charint -fixedformalarray -usedef -branchstate @*/
 bool aivdm_decode(const char *buf, size_t buflen,
-		  struct aivdm_context_t ais_contexts[AIVDM_CHANNELS], 
-		  struct ais_t *ais)
+		  struct aivdm_context_t ais_contexts[AIVDM_CHANNELS],
+		  struct ais_t *ais,
+		  int debug)
 {
 #ifdef __UNUSED_DEBUG__
     char *sixbits[64] = {
@@ -85,10 +86,12 @@ bool aivdm_decode(const char *buf, size_t buflen,
     int nfrags, ifrag, nfields = 0;
     unsigned char *field[NMEA_MAX*2];
     unsigned char fieldcopy[NMEA_MAX*2+1];
-    unsigned char *data, *cp = fieldcopy;
+    unsigned char *data, *cp;
     unsigned char ch, pad;
     struct aivdm_context_t *ais_context;
+    bool imo;
     int i;
+    unsigned int u;
 
     if (buflen == 0)
 	return false;
@@ -124,9 +127,18 @@ bool aivdm_decode(const char *buf, size_t buflen,
     switch (field[4][0]) {
     /* FIXME: if fields[4] == "12", it doesn't detect the error */
     case '\0':
+	/*
+	 * Apparently an empty channel is normal for AIVDO sentences,
+	 * which makes sense as they don't come in over radio.  This
+	 * is going to break if there's ever an AIVDO type 24, though.
+	 */
+	if (strncmp((const char *)field[0], "!AIVDO", 6) != 0)
+	    gpsd_report(LOG_ERROR, "invalid empty AIS channel. Assuming 'A'\n");
+	ais_context = &ais_contexts[0];
+	break;
     case '1':
-	gpsd_report(LOG_ERROR, "invalid AIS channel '%c'. Assuming 'A'\n",
-	                       field[4][0]);
+	gpsd_report(LOG_ERROR, "invalid AIS channel 0x%0x '%c'. Assuming 'A'\n",
+	                       field[4][0], (field[4][0] != '\0' ? field[4][0]:' '));
 	/*@fallthrough@*/
     case 'A':
 	ais_context = &ais_contexts[0];
@@ -138,7 +150,7 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	ais_context = &ais_contexts[1];
 	break;
     default:
-	gpsd_report(LOG_ERROR, "invalid AIS channel.\n");
+	gpsd_report(LOG_ERROR, "invalid AIS channel 0x%0X .\n", field[4][0]);
 	return false;
     }
 
@@ -192,10 +204,12 @@ bool aivdm_decode(const char *buf, size_t buflen,
 
     /* time to pass buffered-up data to where it's actually processed? */
     if (ifrag == nfrags) {
-	size_t clen = (ais_context->bitlen + 7) / 8;
-	gpsd_report(LOG_INF, "AIVDM payload is %zd bits, %zd chars: %s\n",
-		    ais_context->bitlen, clen,
-		    gpsd_hexdump_wrapper(ais_context->bits, clen, LOG_INF));
+	if (debug >= LOG_INF) { 
+	    size_t clen = (ais_context->bitlen + 7) / 8;
+	    gpsd_report(LOG_INF, "AIVDM payload is %zd bits, %zd chars: %s\n",
+			ais_context->bitlen, clen,
+			gpsd_hexdump((char *)ais_context->bits, clen));
+	}
 
         /* clear waiting fragments count */
         ais_context->decoded_frags = 0;
@@ -228,7 +242,7 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    ais->type1.status		= UBITS(38, 4);
 	    ais->type1.turn		= SBITS(42, 8);
 	    ais->type1.speed		= UBITS(50, 10);
-	    ais->type1.accuracy	        = (bool)UBITS(60, 1);
+	    ais->type1.accuracy	        = UBITS(60, 1)!=0;
 	    ais->type1.lon		= SBITS(61, 28);
 	    ais->type1.lat		= SBITS(89, 27);
 	    ais->type1.course		= UBITS(116, 12);
@@ -238,17 +252,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    //ais->type1.spare	        = UBITS(145, 3);
 	    ais->type1.raim		= UBITS(148, 1)!=0;
 	    ais->type1.radio		= UBITS(149, 20);
-	    gpsd_report(LOG_INF,
-			"Nav=%d TURN=%d SPEED=%d Q=%d Lon=%d Lat=%d COURSE=%d TH=%d Sec=%d\n",
-			ais->type1.status,
-			ais->type1.turn,
-			ais->type1.speed,
-			(uint)ais->type1.accuracy,
-			ais->type1.lon,
-			ais->type1.lat,
-			ais->type1.course,
-			ais->type1.heading,
-			ais->type1.second);
 	    break;
 	case 4: 	/* Base Station Report */
 	case 11:	/* UTC/Date Response */
@@ -271,18 +274,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    //ais->type4.spare		= UBITS(138, 10);
 	    ais->type4.raim		= UBITS(148, 1)!=0;
 	    ais->type4.radio		= UBITS(149, 19);
-	    gpsd_report(LOG_INF,
-			"Date: %4d:%02d:%02dT%02d:%02d:%02d Q=%d Lat=%d  Lon=%d epfd=%d\n",
-			ais->type4.year,
-			ais->type4.month,
-			ais->type4.day,
-			ais->type4.hour,
-			ais->type4.minute,
-			ais->type4.second,
-			(uint)ais->type4.accuracy,
-			ais->type4.lat,
-			ais->type4.lon,
-			ais->type4.epfd);
 	    break;
 	case 5: /* Ship static and voyage related data */
 	    if (ais_context->bitlen != 424) {
@@ -308,12 +299,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    UCHARS(302, ais->type5.destination);
 	    ais->type5.dte          = UBITS(422, 1);
 	    //ais->type5.spare        = UBITS(423, 1);
-	    gpsd_report(LOG_INF,
-			"AIS=%d callsign=%s, name=%s destination=%s\n",
-			ais->type5.ais_version,
-			ais->type5.callsign,
-			ais->type5.shipname,
-			ais->type5.destination);
 	    break;
 	case 6: /* Addressed Binary Message */
 	    if (ais_context->bitlen < 88 || ais_context->bitlen > 1008) {
@@ -323,20 +308,178 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    }
 	    ais->type6.seqno          = UBITS(38, 2);
 	    ais->type6.dest_mmsi      = UBITS(40, 30);
-	    ais->type6.retransmit     = (bool)UBITS(70, 1);
+	    ais->type6.retransmit     = UBITS(70, 1)!=0;
 	    //ais->type6.spare        = UBITS(71, 1);
 	    ais->type6.dac            = UBITS(72, 10);
 	    ais->type6.fid            = UBITS(82, 6);
 	    ais->type6.bitcount       = ais_context->bitlen - 88;
-	    (void)memcpy(ais->type6.bitdata,
-			 (char *)ais_context->bits + (88 / BITS_PER_BYTE),
-			 (ais->type6.bitcount + 7) / 8);
-	    gpsd_report(LOG_INF, "seqno=%d, dest=%u, dac=%u, fid=%u, cnt=%zd\n",
-			ais->type6.seqno,
-			ais->type6.dest_mmsi,
-			ais->type6.dac,
-			ais->type6.fid,
-			ais->type6.bitcount);
+	    imo = false;
+	    if (ais->type6.dac == 1)
+		switch (ais->type6.fid) {
+		case 12:	/* IMO236 - Dangerous cargo indication */
+		    UCHARS(88, ais->type6.dac1fid12.lastport);
+		    ais->type6.dac1fid12.lmonth		= UBITS(118, 4);
+		    ais->type6.dac1fid12.lday		= UBITS(122, 5);
+		    ais->type6.dac1fid12.lhour		= UBITS(127, 5);
+		    ais->type6.dac1fid12.lminute	= UBITS(132, 6);
+		    UCHARS(138, ais->type6.dac1fid12.nextport);
+		    ais->type6.dac1fid12.nmonth		= UBITS(168, 4);
+		    ais->type6.dac1fid12.nday		= UBITS(172, 5);
+		    ais->type6.dac1fid12.nhour		= UBITS(177, 5);
+		    ais->type6.dac1fid12.nminute	= UBITS(182, 6);
+		    UCHARS(188, ais->type6.dac1fid12.dangerous);
+		    UCHARS(308, ais->type6.dac1fid12.imdcat);
+		    ais->type6.dac1fid12.unid		= UBITS(332, 13);
+		    ais->type6.dac1fid12.amount		= UBITS(345, 10);
+		    ais->type6.dac1fid12.unit		= UBITS(355, 2);
+		    /* skip 3 bits */
+		    break;
+		case 14:	/* IMO236 - Tidal Window */
+		    ais->type6.dac1fid32.month	= UBITS(88, 4);
+		    ais->type6.dac1fid32.day	= UBITS(92, 5);
+#define ARRAY_BASE 97
+#define ELEMENT_SIZE 93
+		    for (u = 0; ARRAY_BASE + (ELEMENT_SIZE*u) <= ais_context->bitlen; u++) {
+			int a = ARRAY_BASE + (ELEMENT_SIZE*u);
+			struct tidal_t *tp = &ais->type6.dac1fid32.tidals[u];
+			tp->lat	= SBITS(a + 0, 27);
+			tp->lon	= SBITS(a + 27, 28);
+			tp->from_hour	= UBITS(a + 55, 5);
+			tp->from_min	= UBITS(a + 60, 6);
+			tp->to_hour	= UBITS(a + 66, 5);
+			tp->to_min	= UBITS(a + 71, 6);
+			tp->cdir	= UBITS(a + 77, 9);
+			tp->cspeed	= UBITS(a + 86, 7);
+		    }
+		    ais->type6.dac1fid32.ntidals = i;
+#undef ARRAY_BASE
+#undef ELEMENT_SIZE
+		    break;
+		case 15:	/* IMO236 - Extended Ship Static and Voyage Related Data */
+		    ais->type6.dac1fid15.airdraught	= UBITS(56, 11);
+		    break;
+		case 16:	/* IMO236 - Number of persons on board */
+		    if (ais->type6.bitcount == 136)
+			ais->type6.dac1fid16.persons = UBITS(88, 13);/* 289 */
+		    else
+			ais->type6.dac1fid16.persons = UBITS(55, 13);/* 236 */
+		    imo = true;
+		    break;
+		case 18:	/* IMO289 - Clearance time to enter port */
+		    ais->type6.dac1fid18.linkage	= UBITS(88, 10);
+		    ais->type6.dac1fid18.month	= UBITS(98, 4);
+		    ais->type6.dac1fid18.day	= UBITS(102, 5);
+		    ais->type6.dac1fid18.hour	= UBITS(107, 5);
+		    ais->type6.dac1fid18.minute	= UBITS(112, 6);
+		    UCHARS(118, ais->type6.dac1fid18.portname);
+		    UCHARS(238, ais->type6.dac1fid18.destination);
+		    ais->type6.dac1fid18.lon	= SBITS(268, 25);
+		    ais->type6.dac1fid18.lat	= SBITS(293, 24);
+		    /* skip 43 bits */
+		    break;
+		case 20:	/* IMO289 - Berthing data - addressed */
+		    ais->type6.dac1fid20.linkage	= UBITS(88, 10);
+		    ais->type6.dac1fid20.berth_length	= UBITS(98, 9);
+		    ais->type6.dac1fid20.berth_depth	= UBITS(107, 8);
+		    ais->type6.dac1fid20.position	= UBITS(115, 3);
+		    ais->type6.dac1fid20.month		= UBITS(118, 4);
+		    ais->type6.dac1fid20.day		= UBITS(122, 5);
+		    ais->type6.dac1fid20.hour		= UBITS(127, 5);
+		    ais->type6.dac1fid20.minute		= UBITS(132, 6);
+		    ais->type6.dac1fid20.availability	= UBITS(138, 1);
+		    ais->type6.dac1fid20.agent		= UBITS(139, 2);
+		    ais->type6.dac1fid20.fuel		= UBITS(141, 2);
+		    ais->type6.dac1fid20.chandler	= UBITS(143, 2);
+		    ais->type6.dac1fid20.stevedore	= UBITS(145, 2);
+		    ais->type6.dac1fid20.electrical	= UBITS(147, 2);
+		    ais->type6.dac1fid20.water		= UBITS(149, 2);
+		    ais->type6.dac1fid20.customs	= UBITS(151, 2);
+		    ais->type6.dac1fid20.cartage	= UBITS(153, 2);
+		    ais->type6.dac1fid20.crane		= UBITS(155, 2);
+		    ais->type6.dac1fid20.lift		= UBITS(157, 2);
+		    ais->type6.dac1fid20.medical	= UBITS(159, 2);
+		    ais->type6.dac1fid20.navrepair	= UBITS(161, 2);
+		    ais->type6.dac1fid20.provisions	= UBITS(163, 2);
+		    ais->type6.dac1fid20.shiprepair	= UBITS(165, 2);
+		    ais->type6.dac1fid20.surveyor	= UBITS(167, 2);
+		    ais->type6.dac1fid20.steam		= UBITS(169, 2);
+		    ais->type6.dac1fid20.tugs		= UBITS(171, 2);
+		    ais->type6.dac1fid20.solidwaste	= UBITS(173, 2);
+		    ais->type6.dac1fid20.liquidwaste	= UBITS(175, 2);
+		    ais->type6.dac1fid20.hazardouswaste	= UBITS(177, 2);
+		    ais->type6.dac1fid20.ballast	= UBITS(179, 2);
+		    ais->type6.dac1fid20.additional	= UBITS(181, 2);
+		    ais->type6.dac1fid20.regional1	= UBITS(183, 2);
+		    ais->type6.dac1fid20.regional2	= UBITS(185, 2);
+		    ais->type6.dac1fid20.future1	= UBITS(187, 2);
+		    ais->type6.dac1fid20.future2	= UBITS(189, 2);
+		    UCHARS(191, ais->type6.dac1fid20.berth_name);
+		    ais->type6.dac1fid20.berth_lon	= SBITS(311, 25);
+		    ais->type6.dac1fid20.berth_lat	= SBITS(336, 24);
+		    break;
+		case 23:        /* IMO289 - Area notice - addressed */
+		    break;
+		case 25:	/* IMO289 - Dangerous cargo indication */
+		    ais->type6.dac1fid25.unit 	= UBITS(88, 2);
+		    ais->type6.dac1fid25.amount	= UBITS(90, 10);
+		    for (i = 0;	100 + i*17 < (int)ais_context->bitlen; i++) {
+			ais->type6.dac1fid25.cargos[i].code 	= UBITS(100 + i*17, 4);
+			ais->type6.dac1fid25.cargos[i].subtype	= UBITS(104 + i*17, 13);
+		    }
+		    ais->type6.dac1fid25.ncargos = i;
+		    break;
+		case 28:	/* IMO289 - Route info - addressed */
+		    ais->type6.dac1fid28.linkage	= UBITS(88, 10);
+		    ais->type6.dac1fid28.sender		= UBITS(98, 3);
+		    ais->type6.dac1fid28.rtype		= UBITS(101, 5);
+		    ais->type6.dac1fid28.month		= UBITS(106, 4);
+		    ais->type6.dac1fid28.day		= UBITS(110, 5);
+		    ais->type6.dac1fid28.hour		= UBITS(115, 5);
+		    ais->type6.dac1fid28.minute		= UBITS(120, 6);
+		    ais->type6.dac1fid28.duration	= UBITS(126, 18);
+		    ais->type6.dac1fid28.waycount	= UBITS(144, 5);
+#define ARRAY_BASE 149
+#define ELEMENT_SIZE 55
+		    for (i = 0; i < ais->type6.dac1fid28.waycount; u++) {
+			int a = ARRAY_BASE + (ELEMENT_SIZE*i);
+			ais->type6.dac1fid28.waypoints[i].lon = SBITS(a+0, 28);
+			ais->type6.dac1fid28.waypoints[i].lat = SBITS(a+28,27);
+		    }
+#undef ARRAY_BASE
+#undef ELEMENT_SIZE
+		    break;
+		case 30:	/* IMO289 - Text description - addressed */
+		    ais->type6.dac1fid30.linkage   = UBITS(88, 10);
+		    from_sixbit((char *)ais_context->bits,
+				98, ais_context->bitlen-98,
+				ais->type6.dac1fid30.text);
+		    break;
+		case 32:	/* IMO289 - Tidal Window */
+		    ais->type6.dac1fid32.month	= UBITS(88, 4);
+		    ais->type6.dac1fid32.day	= UBITS(92, 5);
+#define ARRAY_BASE 97
+#define ELEMENT_SIZE 88
+		    for (u = 0; ARRAY_BASE + (ELEMENT_SIZE*u) <= ais_context->bitlen; u++) {
+			int a = ARRAY_BASE + (ELEMENT_SIZE*u);
+			struct tidal_t *tp = &ais->type6.dac1fid32.tidals[u];
+			tp->lon	= SBITS(a + 0, 25);
+			tp->lat	= SBITS(a + 25, 24);
+			tp->from_hour	= UBITS(a + 49, 5);
+			tp->from_min	= UBITS(a + 54, 6);
+			tp->to_hour	= UBITS(a + 60, 5);
+			tp->to_min	= UBITS(a + 65, 6);
+			tp->cdir	= UBITS(a + 71, 9);
+			tp->cspeed	= UBITS(a + 80, 8);
+		    }
+		    ais->type6.dac1fid32.ntidals = u;
+#undef ARRAY_BASE
+#undef ELEMENT_SIZE
+		    break;
+		}
+	    if (!imo)
+		(void)memcpy(ais->type6.bitdata,
+			     (char *)ais_context->bits + (88 / BITS_PER_BYTE),
+			     (ais->type6.bitcount + 7) / 8);
 	    break;
 	case 7: /* Binary acknowledge */
 	case 13: /* Safety Related Acknowledge */
@@ -348,18 +491,17 @@ bool aivdm_decode(const char *buf, size_t buflen,
 			    ais_context->bitlen);
 		return false;
 	    }
-	    for (i = 0; i < sizeof(mmsi)/sizeof(mmsi[0]); i++)
-		if (ais_context->bitlen > 40 + 32*i)
-		    mmsi[i] = UBITS(40 + 32*i, 30);
+	    for (u = 0; u < sizeof(mmsi)/sizeof(mmsi[0]); u++)
+		if (ais_context->bitlen > 40 + 32*u)
+		    mmsi[u] = UBITS(40 + 32*u, 30);
 		else
-		    mmsi[i] = 0;
+		    mmsi[u] = 0;
 	    /*@ -usedef @*/
 	    ais->type7.mmsi1 = mmsi[0];
 	    ais->type7.mmsi2 = mmsi[1];
 	    ais->type7.mmsi3 = mmsi[2];
 	    ais->type7.mmsi4 = mmsi[3];
 	    /*@ +usedef @*/
-	    gpsd_report(LOG_INF, "\n");
 	    break;
 	}
 	case 8: /* Binary Broadcast Message */
@@ -370,15 +512,208 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    }
 	    //ais->type8.spare        = UBITS(38, 2);
 	    ais->type8.dac            = UBITS(40, 10);
-	    ais->type8.fid            = UBITS(40, 6);
+	    ais->type8.fid            = UBITS(50, 6);
 	    ais->type8.bitcount       = ais_context->bitlen - 56;
-	    (void)memcpy(ais->type8.bitdata,
+	    imo = false;
+	    if (ais->type8.dac == 1)
+		switch (ais->type8.fid) {
+		case 11:        /* IMO236 - Meteorological/Hydrological data */
+		    /* layout is almost identical to FID=31 from IMO289 */
+		    ais->type8.dac1fid31.lat		= SBITS(56, 24);
+		    ais->type8.dac1fid31.lon		= SBITS(80, 25);
+		    ais->type8.dac1fid31.accuracy       = false;
+		    ais->type8.dac1fid31.day		= UBITS(105, 5);
+		    ais->type8.dac1fid31.hour		= UBITS(110, 5);
+		    ais->type8.dac1fid31.minute		= UBITS(115, 6);
+		    ais->type8.dac1fid31.wspeed		= UBITS(121, 7);
+		    ais->type8.dac1fid31.wgust		= UBITS(128, 7);
+		    ais->type8.dac1fid31.wdir		= UBITS(135, 9);
+		    ais->type8.dac1fid31.wgustdir	= UBITS(144, 9); 
+		    ais->type8.dac1fid31.airtemp	= SBITS(153, 11)
+			- DAC1FID31_AIRTEMP_OFFSET;
+		    ais->type8.dac1fid31.humidity	= UBITS(164, 7);
+		    ais->type8.dac1fid31.dewpoint	= UBITS(171, 10)
+			- DAC1FID31_DEWPOINT_OFFSET;
+		    ais->type8.dac1fid31.pressure	= UBITS(181, 9)
+			- DAC1FID31_PRESSURE_OFFSET;
+		    ais->type8.dac1fid31.pressuretend	= UBITS(190, 2);
+		    ais->type8.dac1fid31.visgreater     = false;
+		    ais->type8.dac1fid31.visibility	= UBITS(192, 8);
+		    ais->type8.dac1fid31.waterlevel	= UBITS(200, 9)
+			- DAC1FID11_LEVEL_OFFSET;
+		    ais->type8.dac1fid31.leveltrend	= UBITS(209, 2);
+		    ais->type8.dac1fid31.cspeed		= UBITS(211, 8);
+		    ais->type8.dac1fid31.cdir		= UBITS(219, 9);
+		    ais->type8.dac1fid31.cspeed2	= UBITS(228, 8);
+		    ais->type8.dac1fid31.cdir2		= UBITS(236, 9);
+		    ais->type8.dac1fid31.cdepth2	= UBITS(245, 5);
+		    ais->type8.dac1fid31.cspeed3	= UBITS(250, 8);
+		    ais->type8.dac1fid31.cdir3		= UBITS(258, 9);
+		    ais->type8.dac1fid31.cdepth3	= UBITS(267, 5);
+		    ais->type8.dac1fid31.waveheight	= UBITS(272, 8);
+		    ais->type8.dac1fid31.waveperiod	= UBITS(280, 6);
+		    ais->type8.dac1fid31.wavedir	= UBITS(286, 9);
+		    ais->type8.dac1fid31.swellheight	= UBITS(295, 8);
+		    ais->type8.dac1fid31.swellperiod	= UBITS(303, 6);
+		    ais->type8.dac1fid31.swelldir	= UBITS(309, 9);
+		    ais->type8.dac1fid31.seastate	= UBITS(318, 4);
+		    ais->type8.dac1fid31.watertemp	= UBITS(322, 10)
+			- DAC1FID31_WATERTEMP_OFFSET;
+		    ais->type8.dac1fid31.preciptype	= UBITS(332, 3);
+		    ais->type8.dac1fid31.salinity	= UBITS(335, 9);
+		    ais->type8.dac1fid31.ice		= UBITS(344, 2);
+		    imo = true;
+		    break;
+		case 13:        /* IMO236 - Fairway closed */
+		    UCHARS(56, ais->type8.dac1fid13.reason);
+		    UCHARS(176, ais->type8.dac1fid13.closefrom);
+		    UCHARS(296, ais->type8.dac1fid13.closeto);
+		    ais->type8.dac1fid13.radius 	= UBITS(416, 10);
+		    ais->type8.dac1fid13.extunit	= UBITS(426, 2);
+		    ais->type8.dac1fid13.fday   	= UBITS(428, 5);
+		    ais->type8.dac1fid13.fmonth 	= UBITS(433, 4);
+		    ais->type8.dac1fid13.fhour  	= UBITS(437, 5);
+		    ais->type8.dac1fid13.fminute	= UBITS(442, 6);
+		    ais->type8.dac1fid13.tday   	= UBITS(448, 5);
+		    ais->type8.dac1fid13.tmonth 	= UBITS(453, 4);
+		    ais->type8.dac1fid13.thour  	= UBITS(457, 5);
+		    ais->type8.dac1fid13.tminute	= UBITS(462, 6);
+		    /* skip 4 bits */
+		    break;
+		case 15:        /* IMO236 - Extended ship and voyage */
+		    ais->type8.dac1fid15.airdraught	= UBITS(56, 11);
+		    /* skip 5 bits */
+		    break;
+		case 17:        /* IMO289 - VTS-generated/synthetic targets */
+#define ARRAY_BASE 56
+#define ELEMENT_SIZE 122
+		    for (u = 0; ARRAY_BASE + (ELEMENT_SIZE*u) <= ais_context->bitlen; u++) {
+			struct target_t *tp = &ais->type8.dac1fid17.targets[u];
+			int a = ARRAY_BASE + (ELEMENT_SIZE*u);
+			tp->idtype = UBITS(a + 0, 2);
+			switch (tp->idtype) {
+			case DAC1FID17_IDTYPE_MMSI:
+			    tp->id.mmsi	= UBITS(a + 2, 42);
+			    break;
+			case DAC1FID17_IDTYPE_IMO:
+			    tp->id.imo	= UBITS(a + 2, 42);
+			    break;
+			case DAC1FID17_IDTYPE_CALLSIGN:
+			    UCHARS(a+2, tp->id.callsign);
+			    break;
+			default:
+			    UCHARS(a+2, tp->id.other);
+			    break;
+			}
+			/* skip 4 bits */
+			tp->lat	= SBITS(a + 48, 24);
+			tp->lon	= SBITS(a + 72, 25);
+			tp->course	= UBITS(a + 97, 9);
+			tp->second	= UBITS(a + 106, 6);
+			tp->speed	= UBITS(a + 112, 10);
+		    }
+		    ais->type8.dac1fid17.ntargets = u;
+#undef ARRAY_BASE
+#undef ELEMENT_SIZE
+		    break;
+		case 19:        /* IMO289 - Marine Traffic Signal */
+		    ais->type8.dac1fid19.linkage	= UBITS(56, 10);
+		    UCHARS(66, ais->type8.dac1fid19.station);
+		    ais->type8.dac1fid19.lon	= SBITS(186, 25);
+		    ais->type8.dac1fid19.lat	= SBITS(211, 24);
+		    ais->type8.dac1fid19.status	= UBITS(235, 2);
+		    ais->type8.dac1fid19.signal	= UBITS(237, 5);
+		    ais->type8.dac1fid19.hour	= UBITS(242, 5);
+		    ais->type8.dac1fid19.minute	= UBITS(247, 6);
+		    ais->type8.dac1fid19.nextsignal	= UBITS(253, 5);
+		    /* skip 102 bits */
+		    break;
+		case 21:        /* IMO289 - Weather obs. report from ship */
+		    break;
+		case 22:        /* IMO289 - Area notice - broadcast */
+		    break;
+		case 24:        /* IMO289 - Extended ship static & voyage-related data */
+		    break;
+		case 26:        /* IMO289 - Environmental */
+		    break;
+		case 27:        /* IMO289 - Route information - broadcast */
+		    ais->type8.dac1fid27.linkage	= UBITS(56, 10);
+		    ais->type8.dac1fid27.sender	= UBITS(66, 3);
+		    ais->type8.dac1fid27.rtype	= UBITS(69, 5);
+		    ais->type8.dac1fid27.month	= UBITS(74, 4);
+		    ais->type8.dac1fid27.day	= UBITS(78, 5);
+		    ais->type8.dac1fid27.hour	= UBITS(83, 5);
+		    ais->type8.dac1fid27.minute	= UBITS(88, 6);
+		    ais->type8.dac1fid27.duration	= UBITS(94, 18);
+		    ais->type8.dac1fid27.waycount	= UBITS(112, 5);
+#define ARRAY_BASE 117
+#define ELEMENT_SIZE 55
+		    for (i = 0; i < ais->type8.dac1fid27.waycount; i++) {
+			int a = ARRAY_BASE + (ELEMENT_SIZE*i);
+			ais->type8.dac1fid27.waypoints[i].lon	= SBITS(a + 0, 28);
+			ais->type8.dac1fid27.waypoints[i].lat	= SBITS(a + 28, 27);
+		    }
+#undef ARRAY_BASE
+#undef ELEMENT_SIZE
+		    break;
+		case 29:        /* IMO289 - Text Description - broadcast */
+		    ais->type8.dac1fid29.linkage   = UBITS(56, 10);
+		    from_sixbit((char *)ais_context->bits,
+				66, ais_context->bitlen-66,
+				ais->type8.dac1fid29.text);
+		    break;
+		case 31:        /* IMO289 - Meteorological/Hydrological data */
+		    ais->type8.dac1fid31.lat		= SBITS(56, 24);
+		    ais->type8.dac1fid31.lon		= SBITS(80, 25);
+		    ais->type8.dac1fid31.accuracy       = (bool)UBITS(105, 1);
+		    ais->type8.dac1fid31.day		= UBITS(106, 5);
+		    ais->type8.dac1fid31.hour		= UBITS(111, 5);
+		    ais->type8.dac1fid31.minute		= UBITS(116, 6);
+		    ais->type8.dac1fid31.wspeed		= UBITS(122, 7);
+		    ais->type8.dac1fid31.wgust		= UBITS(129, 7);
+		    ais->type8.dac1fid31.wdir		= UBITS(136, 9);
+		    ais->type8.dac1fid31.wgustdir	= UBITS(145, 9); 
+		    ais->type8.dac1fid31.airtemp	= SBITS(154, 11)
+			- DAC1FID31_AIRTEMP_OFFSET;
+		    ais->type8.dac1fid31.humidity	= UBITS(165, 7);
+		    ais->type8.dac1fid31.dewpoint	= UBITS(172, 10)
+			- DAC1FID31_DEWPOINT_OFFSET;
+		    ais->type8.dac1fid31.pressure	= UBITS(182, 9)
+			- DAC1FID31_PRESSURE_OFFSET;
+		    ais->type8.dac1fid31.pressuretend	= UBITS(191, 2);
+		    ais->type8.dac1fid31.visgreater	= UBITS(193, 1);
+		    ais->type8.dac1fid31.visibility	= UBITS(194, 7);
+		    ais->type8.dac1fid31.waterlevel	= UBITS(200, 12)
+			- DAC1FID31_LEVEL_OFFSET;
+		    ais->type8.dac1fid31.leveltrend	= UBITS(213, 2);
+		    ais->type8.dac1fid31.cspeed		= UBITS(215, 8);
+		    ais->type8.dac1fid31.cdir		= UBITS(223, 9);
+		    ais->type8.dac1fid31.cspeed2	= UBITS(232, 8);
+		    ais->type8.dac1fid31.cdir2		= UBITS(240, 9);
+		    ais->type8.dac1fid31.cdepth2	= UBITS(249, 5);
+		    ais->type8.dac1fid31.cspeed3	= UBITS(254, 8);
+		    ais->type8.dac1fid31.cdir3		= UBITS(262, 9);
+		    ais->type8.dac1fid31.cdepth3	= UBITS(271, 5);
+		    ais->type8.dac1fid31.waveheight	= UBITS(276, 8);
+		    ais->type8.dac1fid31.waveperiod	= UBITS(284, 6);
+		    ais->type8.dac1fid31.wavedir	= UBITS(290, 9);
+		    ais->type8.dac1fid31.swellheight	= UBITS(299, 8);
+		    ais->type8.dac1fid31.swellperiod	= UBITS(307, 6);
+		    ais->type8.dac1fid31.swelldir	= UBITS(313, 9);
+		    ais->type8.dac1fid31.seastate	= UBITS(322, 4);
+		    ais->type8.dac1fid31.watertemp	= UBITS(326, 10)
+			- DAC1FID31_WATERTEMP_OFFSET;
+		    ais->type8.dac1fid31.preciptype	= UBITS(336, 3);
+		    ais->type8.dac1fid31.salinity	= UBITS(339, 9);
+		    ais->type8.dac1fid31.ice		= UBITS(348, 2);
+		    imo = true;
+		    break;
+		}
+	    /* land here if we failed to match a known DAC/FID */
+	    if (!imo)
+		(void)memcpy(ais->type8.bitdata,
 			 (char *)ais_context->bits + (56 / BITS_PER_BYTE),
-			 (ais->type8.bitcount + 7) / 8);
-	    gpsd_report(LOG_INF, "dac=%u, fid=%u, cnt=%zd\n",
-			ais->type8.dac,
-			ais->type8.fid,
-			ais->type8.bitcount);
+			     (ais->type8.bitcount + 7) / 8);
 	    break;
 	case 9: /* Standard SAR Aircraft Position Report */
 	    if (ais_context->bitlen != 168) {
@@ -399,15 +734,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    ais->type9.assigned		= UBITS(146, 1)!=0;
 	    ais->type9.raim		= UBITS(147, 1)!=0;
 	    ais->type9.radio		= UBITS(148, 19);
-	    gpsd_report(LOG_INF,
-			"Alt=%d SPEED=%d Q=%d Lon=%d Lat=%d COURSE=%d Sec=%d\n",
-			ais->type9.alt,
-			ais->type9.speed,
-			(uint)ais->type9.accuracy,
-			ais->type9.lon,
-			ais->type9.lat,
-			ais->type9.course,
-			ais->type9.second);
 	    break;
 	case 10: /* UTC/Date inquiry */
 	    if (ais_context->bitlen != 72) {
@@ -418,7 +744,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    //ais->type10.spare        = UBITS(38, 2);
 	    ais->type10.dest_mmsi      = UBITS(40, 30);
 	    //ais->type10.spare2       = UBITS(70, 2);
-	    gpsd_report(LOG_INF, "dest=%u\n", ais->type10.dest_mmsi);
 	    break;
 	case 12: /* Safety Related Message */
 	    if (ais_context->bitlen < 72 || ais_context->bitlen > 1008) {
@@ -433,9 +758,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    from_sixbit((char *)ais_context->bits,
 			72, ais_context->bitlen-72,
 			ais->type12.text);
-	    gpsd_report(LOG_INF, "seqno=%d, dest=%u\n",
-			ais->type12.seqno,
-			ais->type12.dest_mmsi);
 	    break;
 	case 14:	/* Safety Related Broadcast Message */
 	    if (ais_context->bitlen < 40 || ais_context->bitlen > 1008) {
@@ -447,7 +769,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    from_sixbit((char *)ais_context->bits,
 			40, ais_context->bitlen-40,
 			ais->type14.text);
-	    gpsd_report(LOG_INF, "\n");
 	    break;
 	case 15:	/* Interrogation */
 	    if (ais_context->bitlen < 88 || ais_context->bitlen > 168) {
@@ -473,7 +794,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 		    //ais->type14.spare4	= UBITS(158, 2);
 		}
 	    }
-	    gpsd_report(LOG_INF, "\n");
 	    break;
 	case 16:	/* Assigned Mode Command */
 	    if (ais_context->bitlen != 96 && ais_context->bitlen != 144) {
@@ -491,7 +811,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 		ais->type16.offset2	= UBITS(122, 12);
 		ais->type16.increment2	= UBITS(134, 10);
 	    }
-	    gpsd_report(LOG_INF, "\n");
 	    break;
 	case 17:	/* GNSS Broadcast Binary Message */
 	    if (ais_context->bitlen < 80 || ais_context->bitlen > 816) {
@@ -507,7 +826,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    (void)memcpy(ais->type17.bitdata,
 			 (char *)ais_context->bits + (80 / BITS_PER_BYTE),
 			 (ais->type17.bitcount + 7) / 8);
-	    gpsd_report(LOG_INF, "\n");
 	    break;
 	case 18:	/* Standard Class B CS Position Report */
 	    if (ais_context->bitlen != 168) {
@@ -532,17 +850,7 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    ais->type18.assigned	= UBITS(146, 1)!=0;
 	    ais->type18.raim		= UBITS(147, 1)!=0;
 	    ais->type18.radio		= UBITS(148, 20);
-	    gpsd_report(LOG_INF,
-			"reserved=%d speed=%d accuracy=%d lon=%d lat=%d course=%d heading=%d sec=%d\n",
-			ais->type18.reserved,
-			ais->type18.speed,
-			(uint)ais->type18.accuracy,
-			ais->type18.lon,
-			ais->type18.lat,
-			ais->type18.course,
-			ais->type18.heading,
-			ais->type18.second);
-	    break;	
+	    break;
 	case 19:	/* Extended Class B CS Position Report */
 	    if (ais_context->bitlen != 312) {
 		gpsd_report(LOG_WARN, "AIVDM message type 19 size not 312 bits (%zd).\n",
@@ -569,17 +877,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    ais->type19.dte          = UBITS(305, 1)!=0;
 	    ais->type19.assigned     = UBITS(306, 1)!=0;
 	    //ais->type19.spare      = UBITS(307, 5);
-	    gpsd_report(LOG_INF,
-			"reserved=%d speed=%d accuracy=%d lon=%d lat=%d course=%d heading=%d sec=%d name=%s\n",
-			ais->type19.reserved,
-			ais->type19.speed,
-			(uint)ais->type19.accuracy,
-			ais->type19.lon,
-			ais->type19.lat,
-			ais->type19.course,
-			ais->type19.heading,
-			ais->type19.second,
-			ais->type19.shipname);
 	    break;
 	case 20:	/* Data Link Management Message */
 	    if (ais_context->bitlen < 72 || ais_context->bitlen > 160) {
@@ -612,11 +909,11 @@ bool aivdm_decode(const char *buf, size_t buflen,
 		return false;
 	    }
 	    ais->type21.aid_type = UBITS(38, 5);
-	    from_sixbit((char *)ais_context->bits, 
+	    from_sixbit((char *)ais_context->bits,
 			43, 21, ais->type21.name);
 	    if (strlen(ais->type21.name) == 20 && ais_context->bitlen > 272)
-		from_sixbit((char *)ais_context->bits, 
-			    272, (ais_context->bitlen - 272)/6, 
+		from_sixbit((char *)ais_context->bits,
+			    272, (ais_context->bitlen - 272)/6,
 			    ais->type21.name+20);
 	    ais->type21.accuracy     = UBITS(163, 1);
 	    ais->type21.lon          = SBITS(164, 28);
@@ -633,13 +930,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    ais->type21.virtual_aid  = UBITS(269, 1)!=0;
 	    ais->type21.assigned     = UBITS(270, 1)!=0;
 	    //ais->type21.spare      = UBITS(271, 1);
-	    gpsd_report(LOG_INF,
-			"name=%s accuracy=%d lon=%d lat=%d sec=%d\n",
-			ais->type21.name,
-			(uint)ais->type19.accuracy,
-			ais->type19.lon,
-			ais->type19.lat,
-			ais->type19.second);
 	    break;
 	case 22:	/* Channel Management */
 	    if (ais_context->bitlen != 168) {
@@ -699,8 +989,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 		ais_context->mmsi24 = ais->mmsi;
 		UCHARS(40, ais_context->shipname24);
 		//ais->type24.a.spare	= UBITS(160, 8);
-		gpsd_report(LOG_INF, "subtype=A name=%s\n",
-			ais_context->shipname24);
 		return false;	/* data only partially decoded */
 	    case 1:
 		if (ais_context->bitlen != 168) {
@@ -721,7 +1009,7 @@ bool aivdm_decode(const char *buf, size_t buflen,
 			            ais->mmsi);
 		    return false;
 		}
-		(void)strlcpy(ais->type24.shipname, 
+		(void)strlcpy(ais->type24.shipname,
 			      ais_context->shipname24,
 			      sizeof(ais_context->shipname24));
 		ais->type24.shiptype = UBITS(40, 8);
@@ -729,31 +1017,17 @@ bool aivdm_decode(const char *buf, size_t buflen,
 		UCHARS(90, ais->type24.callsign);
 		if (AIS_AUXILIARY_MMSI(ais->mmsi)) {
 		    ais->type24.mothership_mmsi   = UBITS(132, 30);
-		    gpsd_report(LOG_INF,
-		                "subtype=B subsubtype=aux "
-		                "shiptype=%u vendor=%s callsign=%s "
-		                "mothership=%09u\n",
-		                ais->type24.shiptype, ais->type24.vendorid, ais->type24.callsign,
-		                ais->type24.mothership_mmsi);
 		} else {
 		    ais->type24.dim.to_bow        = UBITS(132, 9);
 		    ais->type24.dim.to_stern      = UBITS(141, 9);
 		    ais->type24.dim.to_port       = UBITS(150, 6);
 		    ais->type24.dim.to_starboard  = UBITS(156, 6);
-		    gpsd_report(LOG_INF,
-		                "subtype=B subsubtype=dim "
-		                "shiptype=%u vendor=%s callsign=%s "
-		                "bow=%u stern=%u port=%u starboard=%u\n",
-		                ais->type24.shiptype, ais->type24.vendorid, ais->type24.callsign,
-		                ais->type24.dim.to_bow, ais->type24.dim.to_stern,
-		                ais->type24.dim.to_port, ais->type24.dim.to_starboard);
 		}
 		//ais->type24.b.spare	    = UBITS(162, 8);
 		ais_context->mmsi24 = 0; /* reset last know 24A for collision detection */
 		break;
 	    default:
 		gpsd_report(LOG_WARN, "AIVDM message type 24 of subtype unknown.\n");
-		gpsd_report(LOG_INF, "\n");
 		return false;
 	    }
 	    break;
@@ -766,7 +1040,7 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    }
 	    ais->type25.addressed	= (bool)UBITS(38, 1);
 	    ais->type25.structured	= (bool)UBITS(39, 1);
-	    if (ais_context->bitlen < (40 + (16*ais->type25.structured) + (30*ais->type25.addressed))) {
+	    if (ais_context->bitlen < (unsigned)(40 + (16*ais->type25.structured) + (30*ais->type25.addressed))) {
 		gpsd_report(LOG_WARN, "AIVDM message type 25 too short for mode.\n");
 		return false;
 	    }
@@ -787,12 +1061,6 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    (void)memcpy(ais->type25.bitdata,
 			 (char *)ais_context->bits+5 + 2 * ais->type25.structured,
 			 (ais->type25.bitcount + 7) / 8);
-	    gpsd_report(LOG_INF, "addressed=%d, structured=%d, dest=%u, id=%u, cnt=%zd\n",
-			ais->type25.addressed,
-			ais->type25.structured,
-			ais->type25.dest_mmsi,
-			ais->type25.app_id,
-			ais->type25.bitcount);		
 	    break;
 	case 26:	/* Binary Message, Multiple Slot */
 	    if (ais_context->bitlen < 60 || ais_context->bitlen > 1004) {
@@ -802,6 +1070,10 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    }
 	    ais->type26.addressed	= (bool)UBITS(38, 1);
 	    ais->type26.structured	= (bool)UBITS(39, 1);
+	    if ((signed)ais_context->bitlen < 40 + 16*ais->type26.structured + 30*ais->type26.addressed + 20) {
+		gpsd_report(LOG_WARN, "AIVDM message type 26 too short for mode.\n");
+		return false;
+	    }
 	    if (ais->type26.addressed)
 		ais->type26.dest_mmsi   = UBITS(40, 30);
 	    if (ais->type26.structured)
@@ -810,15 +1082,18 @@ bool aivdm_decode(const char *buf, size_t buflen,
 	    (void)memcpy(ais->type26.bitdata,
 			 (char *)ais_context->bits+5 + 2 * ais->type26.structured,
 			 (ais->type26.bitcount + 7) / 8);
-	    gpsd_report(LOG_INF, "addressed=%d, structured=%d, dest=%u, id=%u, cnt=%zd\n",
-			ais->type26.addressed,
-			ais->type26.structured,
-			ais->type26.dest_mmsi,
-			ais->type26.app_id,
-			ais->type26.bitcount);
+	    break;
+	case 27:	/* Long Range AIS Broadcast message */
+	    ais->type27.accuracy        = (bool)UBITS(38, 1);
+	    ais->type27.raim		= UBITS(39, 1)!=0;
+	    ais->type27.status		= UBITS(40, 4);
+	    ais->type27.lon		= SBITS(44, 18);
+	    ais->type27.lat		= SBITS(62, 17);
+	    ais->type27.speed		= UBITS(79, 6);
+	    ais->type27.course		= UBITS(85, 9);
+	    ais->type27.gnss            = (bool)UBITS(94, 1);
 	    break;
 	default:
-	    gpsd_report(LOG_INF, "\n");
 	    gpsd_report(LOG_ERROR, "Unparsed AIVDM message type %d.\n",ais->type);
 	    return false;
 	}

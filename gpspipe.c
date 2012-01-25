@@ -23,26 +23,22 @@
  *
  */
 
-#include <stdlib.h>
-#include <time.h>
-#include "gpsd_config.h"
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <errno.h>
+#include <string.h>
+#include <strings.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <time.h>
+#include <sys/time.h>
 #ifndef S_SPLINT_S
-#if HAVE_SYS_SOCKET_H
-#include <sys/socket.h>
-#endif /* HAVE_SYS_SOCKET_H */
 #include <unistd.h>
 #endif /* S_SPLINT_S */
-#include <errno.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdbool.h>
-#include <fcntl.h>
-#if HAVE_TERMIOS
-#include <termios.h>
-#endif /* HAVE_TERMIOS */
-#include <assert.h>
+
 #include "gpsd.h"
 #include "gpsdclient.h"
 #include "revision.h"
@@ -58,48 +54,6 @@ static struct termios oldtio, newtio;
 static int fd_out = 1;		/* output initially goes to standard output */
 static char serbuf[255];
 static int debug;
-
-static void daemonize(void)
-/* Daemonize me. */
-{
-    int i;
-    pid_t pid;
-
-    /* Run as my child. */
-    pid = fork();
-    if (pid == -1)
-	exit(1);		/* fork error */
-    if (pid > 0)
-	exit(0);		/* parent exits */
-
-    /* Obtain a new process group. */
-    (void)setsid();
-
-    /* Close all open descriptors. */
-    for (i = getdtablesize(); i >= 0; --i)
-	(void)close(i);
-
-    /* Reopen STDIN, STDOUT, STDERR to /dev/null. */
-    i = open("/dev/null", O_RDWR);	/* STDIN */
-    /*@ -sefparams @*/
-    assert(dup(i) != -1);	/* STDOUT */
-    assert(dup(i) != -1);	/* STDERR */
-
-    /* Know thy mask. */
-    (void)umask(0x033);
-
-    /* Run from a known spot. */
-    assert(chdir("/") != -1);
-    /*@ +sefparams @*/
-
-    /* Catch child sig */
-    (void)signal(SIGCHLD, SIG_IGN);
-
-    /* Ignore tty signals */
-    (void)signal(SIGTSTP, SIG_IGN);
-    (void)signal(SIGTTOU, SIG_IGN);
-    (void)signal(SIGTTIN, SIG_IGN);
-}
 
 static void open_serial(char *device)
 /* open the serial port and set it up */
@@ -139,8 +93,10 @@ static void usage(void)
 {
     (void)fprintf(stderr,
 		  "Usage: gpspipe [OPTIONS] [server[:port[:device]]]\n\n"
-		  "-d Run as a daemon.\n" "-f [file] Write output to file.\n"
-		  "-h Show this help.\n" "-r Dump raw NMEA.\n"
+		  "-d Run as a daemon.\n" 
+		  "-o [file] Write output to file.\n"
+		  "-h Show this help.\n" 
+		  "-r Dump raw NMEA.\n"
 		  "-R Dump super-raw mode (GPS binary).\n"
 		  "-w Dump gpsd native data.\n"
 		  "-l Sleep for ten seconds before connecting to gpsd.\n"
@@ -149,9 +105,10 @@ static void usage(void)
 		  "-s [serial dev] emulate a 4800bps NMEA GPS on serial port (use with '-r').\n"
 		  "-n [count] exit after count packets.\n"
 		  "-v Print a little spinner.\n"
+		  "-p Include profiling info in the JSON.\n"
 		  "-V Print version and exit.\n\n"
-		  "You must specify one, or both, of -r/-w.\n"
-		  "You must use -f if you use -d.\n");
+		  "You must specify one, or more, of -r, -R, or -w\n"
+		  "You must use -o if you use -d.\n");
 }
 
 /*@ -compdestroy @*/
@@ -161,17 +118,19 @@ int main(int argc, char **argv)
     bool timestamp = false;
     char *format = "%c";
     char tmstr[200];
-    bool daemon = false;
+    bool daemonize = false;
     bool binary = false;
     bool sleepy = false;
     bool new_line = true;
     bool raw = false;
     bool watch = false;
+    bool profile = false;
     long count = -1;
     int option;
     unsigned int vflag = 0, l = 0;
     FILE *fp;
     unsigned int flags;
+    fd_set fds;
 
     struct fixsource_t source;
     char *serialport = NULL;
@@ -179,7 +138,7 @@ int main(int argc, char **argv)
 
     /*@-branchstate@*/
     flags = WATCH_ENABLE;
-    while ((option = getopt(argc, argv, "?dD:lhrRwtT:vVn:s:o:")) != -1) {
+    while ((option = getopt(argc, argv, "?dD:lhrRwtT:vVn:s:o:p")) != -1) {
 	switch (option) {
 	case 'D':
 	    debug = atoi(optarg);
@@ -203,7 +162,7 @@ int main(int argc, char **argv)
 	    binary = true;
 	    break;
 	case 'd':
-	    daemon = true;
+	    daemonize = true;
 	    break;
 	case 'l':
 	    sleepy = true;
@@ -221,6 +180,9 @@ int main(int argc, char **argv)
 	case 'w':
 	    flags |= WATCH_JSON;
 	    watch = true;
+	    break;
+	case 'p':
+	    profile = true;
 	    break;
 	case 'V':
 	    (void)fprintf(stderr, "%s: %s (revision %s)\n",
@@ -252,20 +214,25 @@ int main(int argc, char **argv)
 	exit(1);
     }
 
-    if (outfile == NULL && daemon) {
+    if (outfile == NULL && daemonize) {
 	(void)fprintf(stderr, "gpspipe: use of '-d' requires '-f'.\n");
 	exit(1);
     }
 
     if (!raw && !watch && !binary) {
 	(void)fprintf(stderr,
-		      "gpspipe: one of '-R', '-r' or '-w' is required.\n");
+		      "gpspipe: one of '-R', '-r', or '-w' is required.\n");
 	exit(1);
     }
 
     /* Daemonize if the user requested it. */
-    if (daemon)
-	daemonize();
+    /*@ -unrecog @*/
+    if (daemonize)
+	if (daemon(0, 0) != 0)
+	    (void)fprintf(stderr,
+			  "gpspipe: demonization failed: %s\n",
+			  strerror(errno));
+    /*@ +unrecog @*/
 
     /* Sleep for ten seconds if the user requested it. */
     if (sleepy)
@@ -295,7 +262,7 @@ int main(int argc, char **argv)
 	open_serial(serialport);
 
     /*@ -nullpass -onlytrans @*/
-    if (gps_open_r(source.server, source.port, &gpsdata) != 0) {
+    if (gps_open(source.server, source.port, &gpsdata) != 0) {
 	(void)fprintf(stderr,
 		      "gpspipe: could not connect to gpsd %s:%s, %s(%d)\n",
 		      source.server, source.port, strerror(errno), errno);
@@ -303,25 +270,42 @@ int main(int argc, char **argv)
     }
     /*@ +nullpass +onlytrans @*/
 
+    if (profile)
+	flags |= WATCH_TIMING;
     if (source.device != NULL)
 	flags |= WATCH_DEVICE;
     (void)gps_stream(&gpsdata, flags, source.device);
 
-    if ((isatty(STDERR_FILENO) == 0) || daemon)
+    if ((isatty(STDERR_FILENO) == 0) || daemonize)
 	vflag = 0;
 
     for (;;) {
 	int i = 0;
 	int j = 0;
-	int readbytes = 0;
+	int r = 0;
+	struct timeval tv;
+
+	tv.tv_sec = 0;
+	tv.tv_usec = 100000;
+	FD_ZERO(&fds);
+	FD_SET(gpsdata.gps_fd, &fds);
+	errno = 0;
+	r = select(gpsdata.gps_fd+1, &fds, NULL, NULL, &tv);
+	if (r == -1 && errno != EINTR) {
+	    (void)fprintf(stderr, "gpspipe: select error %s(%d)\n",
+			  strerror(errno), errno);
+	    exit(1);
+	} else if (r == 0)
+		continue;
 
 	if (vflag)
 	    spinner(vflag, l++);
 
 	/* reading directly from the socket avoids decode overhead */
-	readbytes = (int)read(gpsdata.gps_fd, buf, sizeof(buf));
-	if (readbytes > 0) {
-	    for (i = 0; i < readbytes; i++) {
+	errno = 0;
+	r = (int)read(gpsdata.gps_fd, buf, sizeof(buf));
+	if (r > 0) {
+	    for (i = 0; i < r; i++) {
 		char c = buf[i];
 		if (j < (int)(sizeof(serbuf) - 1)) {
 		    serbuf[j++] = buf[i];
@@ -373,8 +357,11 @@ int main(int argc, char **argv)
 		}
 	    }
 	} else {
-	    if (readbytes == -1) {
-		(void)fprintf(stderr, "gpspipe: read error %s(%d)\n",
+	    if (r == -1) {
+		if (errno == EAGAIN)
+		    continue;
+		else
+		    (void)fprintf(stderr, "gpspipe: read error %s(%d)\n",
 			      strerror(errno), errno);
 		exit(1);
 	    } else {
@@ -393,7 +380,7 @@ int main(int argc, char **argv)
     }
 #endif /* __UNUSED__ */
 
-    /*@i1@*/ exit(0);
+    exit(0);
 }
 
 /*@ +compdestroy @*/

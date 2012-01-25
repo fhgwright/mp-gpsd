@@ -7,35 +7,23 @@
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <ctype.h>
+#include <assert.h>
+#include <stdarg.h>
 #ifndef S_SPLINT_S
 #include <unistd.h>
 #endif /* S_SPLINT_S */
-#include <stdarg.h>
-#include <stdbool.h>
-#include <assert.h>
 
-#include "gpsd_config.h"
-
-#ifdef HAVE_NCURSES_H
-#include <ncurses.h>
-#else
-#include <curses.h>
-#endif /* HAVE_NCURSES_H */
 #include "gpsd.h"
-
-#include "bits.h"
 #include "gpsmon.h"
 #include "gpsdclient.h"
 
 #ifdef NMEA_ENABLE
 extern const struct gps_type_t nmea;
 
-static WINDOW *cookedwin, *nmeawin, *satwin, *gprmcwin, *gpggawin, *gpgsawin;
-static double last_tick, tick_interval;
+static WINDOW *cookedwin, *nmeawin, *satwin, *gprmcwin, *gpggawin, *gpgsawin, *gpgstwin;
+static timestamp_t last_tick, tick_interval;
 
 /*****************************************************************************
  *
@@ -50,25 +38,28 @@ static bool nmea_initialize(void)
 {
     int i;
 
-    /*@ -onlytrans @*/
+    /*@ -globstate -onlytrans @*/
     cookedwin = derwin(devicewin, 3, 80, 0, 0);
+    assert(cookedwin !=NULL);
     (void)wborder(cookedwin, 0, 0, 0, 0, 0, 0, 0, 0);
     (void)syncok(cookedwin, true);
-    wattrset(cookedwin, A_BOLD);
-    mvwaddstr(cookedwin, 1, 1, "Time: ");
-    mvwaddstr(cookedwin, 1, 31, "Lat: ");
-    mvwaddstr(cookedwin, 1, 55, "Lon: ");
-    mvwaddstr(cookedwin, 2, 34, " Cooked PVT ");
-    wattrset(cookedwin, A_NORMAL);
+    (void)wattrset(cookedwin, A_BOLD);
+    (void)mvwaddstr(cookedwin, 1, 1, "Time: ");
+    (void)mvwaddstr(cookedwin, 1, 32, "Lat: ");
+    (void)mvwaddstr(cookedwin, 1, 55, "Lon: ");
+    (void)mvwaddstr(cookedwin, 2, 34, " Cooked PVT ");
+    (void)wattrset(cookedwin, A_NORMAL);
 
     nmeawin = derwin(devicewin, 3, 80, 3, 0);
+    assert(nmeawin !=NULL);
     (void)wborder(nmeawin, 0, 0, 0, 0, 0, 0, 0, 0);
     (void)syncok(nmeawin, true);
-    wattrset(nmeawin, A_BOLD);
-    mvwaddstr(nmeawin, 2, 34, " Sentences ");
-    wattrset(nmeawin, A_NORMAL);
+    (void)wattrset(nmeawin, A_BOLD);
+    (void)mvwaddstr(nmeawin, 2, 34, " Sentences ");
+    (void)wattrset(nmeawin, A_NORMAL);
 
     satwin = derwin(devicewin, MAXSATS + 3, 20, 6, 0);
+    assert(satwin !=NULL);
     (void)wborder(satwin, 0, 0, 0, 0, 0, 0, 0, 0), (void)syncok(satwin, true);
     (void)wattrset(satwin, A_BOLD);
     (void)mvwprintw(satwin, 1, 1, "Ch PRN  Az El S/N");
@@ -78,6 +69,7 @@ static bool nmea_initialize(void)
     (void)wattrset(satwin, A_NORMAL);
 
     gprmcwin = derwin(devicewin, 9, 30, 6, 20);
+    assert(gprmcwin !=NULL);
     (void)wborder(gprmcwin, 0, 0, 0, 0, 0, 0, 0, 0),
 	(void)syncok(gprmcwin, true);
     (void)wattrset(gprmcwin, A_BOLD);
@@ -92,8 +84,9 @@ static bool nmea_initialize(void)
     (void)wattrset(gprmcwin, A_NORMAL);
 
     gpgsawin = derwin(devicewin, 5, 30, 15, 20);
-    (void)wborder(gpgsawin, 0, 0, 0, 0, 0, 0, 0, 0),
-	(void)syncok(gpgsawin, true);
+    assert(gpgsawin !=NULL);
+    (void)wborder(gpgsawin, 0, 0, 0, 0, 0, 0, 0, 0);
+    (void)syncok(gpgsawin, true);
     (void)wattrset(gpgsawin, A_BOLD);
     (void)mvwprintw(gpgsawin, 1, 1, "Mode: ");
     (void)mvwprintw(gpgsawin, 2, 1, "Sats: ");
@@ -102,8 +95,9 @@ static bool nmea_initialize(void)
     (void)wattrset(gpgsawin, A_NORMAL);
 
     gpggawin = derwin(devicewin, 9, 30, 6, 50);
-    (void)wborder(gpggawin, 0, 0, 0, 0, 0, 0, 0, 0),
-	(void)syncok(gpggawin, true);
+    assert(gpggawin !=NULL);
+    (void)wborder(gpggawin, 0, 0, 0, 0, 0, 0, 0, 0);
+    (void)syncok(gpggawin, true);
     (void)wattrset(gpggawin, A_BOLD);
     (void)mvwprintw(gpggawin, 1, 1, "Time: ");
     (void)mvwprintw(gpggawin, 2, 1, "Latitude: ");
@@ -114,11 +108,29 @@ static bool nmea_initialize(void)
     (void)mvwprintw(gpggawin, 7, 1, "Geoid: ");
     (void)mvwprintw(gpggawin, 8, 12, " GGA ");
     (void)wattrset(gpggawin, A_NORMAL);
+
+    gpgstwin = derwin(devicewin, 6, 30, 15, 50);
+    assert(gpgstwin !=NULL);
+    (void)wborder(gpgstwin, 0, 0, 0, 0, 0, 0, 0, 0);
+    (void)syncok(gpgstwin, true);
+    (void)wattrset(gpgstwin, A_BOLD);
+    (void)mvwprintw(gpgstwin, 1,  1, "UTC: ");
+    (void)mvwprintw(gpgstwin, 1, 16, "RMS: ");
+    (void)mvwprintw(gpgstwin, 2,  1, "MAJ: ");
+    (void)mvwprintw(gpgstwin, 2, 16, "MIN: ");
+    (void)mvwprintw(gpgstwin, 3,  1, "ORI: ");
+    (void)mvwprintw(gpgstwin, 3, 16, "LAT: ");
+    (void)mvwprintw(gpgstwin, 4,  1, "LON: ");
+    (void)mvwprintw(gpgstwin, 4, 16, "ALT: ");
+    (void)mvwprintw(gpgstwin, 5, 12, " GST ");
+    (void)wattrset(gpgstwin, A_NORMAL);
+
     /*@ +onlytrans @*/
 
     last_tick = timestamp();
 
     return (nmeawin != NULL);
+    /*@ +globstate @*/
 }
 
 static void cooked_pvt(void)
@@ -129,7 +141,7 @@ static void cooked_pvt(void)
 	(void)unix_to_iso8601(session.gpsdata.fix.time, scr, sizeof(scr));
     } else
 	(void)snprintf(scr, sizeof(scr), "n/a");
-    (void)mvwprintw(cookedwin, 1, 7, "%-22s", scr);
+    (void)mvwprintw(cookedwin, 1, 7, "%-24s", scr);
 
 
     if (session.gpsdata.fix.mode >= MODE_2D
@@ -140,7 +152,7 @@ static void cooked_pvt(void)
 		       (session.gpsdata.fix.latitude < 0) ? 'S' : 'N');
     } else
 	(void)snprintf(scr, sizeof(scr), "n/a");
-    (void)mvwprintw(cookedwin, 1, 36, "%-17s", scr);
+    (void)mvwprintw(cookedwin, 1, 37, "%-17s", scr);
 
     if (session.gpsdata.fix.mode >= MODE_2D
 	&& isnan(session.gpsdata.fix.longitude) == 0) {
@@ -165,13 +177,15 @@ static void nmea_update(void)
     assert(gpgsawin != NULL);
     assert(gpggawin != NULL);
     assert(gprmcwin != NULL);
+    assert(gpgstwin != NULL);
 
     fields = session.driver.nmea.field;
 
     if (session.packet.outbuffer[0] == (unsigned char)'$') {
 	int ymax, xmax;
-	double now;
+	timestamp_t now;
 	getmaxyx(nmeawin, ymax, xmax);
+	assert(ymax > 0);
 	if (strstr(sentences, fields[0]) == NULL) {
 	    char *s_end = sentences + strlen(sentences);
 	    if ((int)(strlen(sentences) + strlen(fields[0])) < xmax - 2) {
@@ -182,7 +196,7 @@ static void nmea_update(void)
 		*--s_end = '.';
 		*--s_end = '.';
 	    }
-	    mvwaddstr(nmeawin, SENTENCELINE, 1, sentences);
+	    (void)mvwaddstr(nmeawin, SENTENCELINE, 1, sentences);
 	}
 
 	/*
@@ -196,10 +210,10 @@ static void nmea_update(void)
 
 	    tick_interval = now - last_tick;
 	    if (findme != NULL) {
-		mvwchgat(nmeawin, SENTENCELINE, 1, xmax - 13, A_NORMAL, 0,
-			 NULL);
-		mvwchgat(nmeawin, SENTENCELINE, 1 + (findme - sentences),
-			 (int)strlen(fields[0]), A_BOLD, 0, NULL);
+		(void)mvwchgat(nmeawin, SENTENCELINE, 1, xmax - 13, A_NORMAL, 0,
+			       NULL);
+		(void)mvwchgat(nmeawin, SENTENCELINE, 1 + (findme - sentences),
+			       (int)strlen(fields[0]), A_BOLD, 0, NULL);
 	    }
 	}
 	last_tick = now;
@@ -261,9 +275,9 @@ static void nmea_update(void)
 	    getmaxyx(gpgsawin, ymax, xmax);
 	    (void)mvwaddnstr(gpgsawin, 2, 7, scr, xmax - 2 - 7);
 	    if (strlen(scr) >= (size_t) (xmax - 2)) {
-		mvwaddch(gpgsawin, 2, xmax - 2 - 7, (chtype) '.');
-		mvwaddch(gpgsawin, 2, xmax - 3 - 7, (chtype) '.');
-		mvwaddch(gpgsawin, 2, xmax - 4 - 7, (chtype) '.');
+		(void)mvwaddch(gpgsawin, 2, xmax - 2 - 7, (chtype) '.');
+		(void)mvwaddch(gpgsawin, 2, xmax - 3 - 7, (chtype) '.');
+		(void)mvwaddch(gpgsawin, 2, xmax - 4 - 7, (chtype) '.');
 	    }
 	    monitor_fixframe(gpgsawin);
 	    (void)mvwprintw(gpgsawin, 3, 8, "%-5s", fields[16]);
@@ -282,6 +296,16 @@ static void nmea_update(void)
 	    (void)mvwprintw(gpggawin, 5, 22, "%2.2s", fields[7]);
 	    (void)mvwprintw(gpggawin, 6, 12, "%-5.5s", fields[8]);
 	    (void)mvwprintw(gpggawin, 7, 12, "%-5.5s", fields[11]);
+	}
+	if (strcmp(fields[0], "GPGST") == 0) {
+	    (void)mvwprintw(gpgstwin, 1,  6, "%-10s", fields[1]);
+	    (void)mvwprintw(gpgstwin, 1, 21,  "%-8s", fields[2]);
+	    (void)mvwprintw(gpgstwin, 2,  6, "%-10s", fields[3]);
+	    (void)mvwprintw(gpgstwin, 2, 21,  "%-8s", fields[4]);
+	    (void)mvwprintw(gpgstwin, 3,  6, "%-10s", fields[5]);
+	    (void)mvwprintw(gpgstwin, 3, 21,  "%-8s", fields[6]);
+	    (void)mvwprintw(gpgstwin, 4,  6, "%-10s", fields[7]);
+	    (void)mvwprintw(gpgstwin, 4, 21,  "%-8s", fields[8]);
 	}
     }
 }
@@ -313,7 +337,7 @@ const struct monitor_object_t nmea_mmt = {
  *
  *****************************************************************************/
 
-#ifdef ALLOW_CONTROLSEND
+#if defined(CONTROLSEND_ENABLE) && defined(ASHTECH_ENABLE)
 static void monitor_nmea_send(const char *fmt, ...)
 {
     char buf[BUFSIZ];
@@ -324,7 +348,7 @@ static void monitor_nmea_send(const char *fmt, ...)
     va_end(ap);
     (void)monitor_control_send((unsigned char *)buf, strlen(buf));
 }
-#endif /* ALLOW_CONTROLSEND */
+#endif /* defined(CONTROLSEND_ENABLE) && defined(ASHTECH_ENABLE) */
 
 /*
  * Yes, it's OK for most of these to be clones of the generic NMEA monitor
@@ -354,7 +378,7 @@ extern const struct gps_type_t ashtech;
 #define ASHTECH_SPEED_9600 5
 #define ASHTECH_SPEED_57600 8
 
-#ifdef ALLOW_CONTROLSEND
+#ifdef CONTROLSEND_ENABLE
 static int ashtech_command(char line[])
 {
     switch (line[0]) {
@@ -402,16 +426,16 @@ static int ashtech_command(char line[])
 
     return COMMAND_UNKNOWN;
 }
-#endif /* ALLOW_CONTROLSEND */
+#endif /* CONTROLSEND_ENABLE */
 
 const struct monitor_object_t ashtech_mmt = {
     .initialize = nmea_initialize,
     .update = nmea_update,
-#ifdef ALLOW_CONTROLSEND
+#ifdef CONTROLSEND_ENABLE
     .command = ashtech_command,
 #else
     .command = NULL,
-#endif /* ALLOW_CONTROLSEND */
+#endif /* CONTROLSEND_ENABLE */
     .wrap = nmea_wrap,
     .min_y = 21,.min_x = 80,
     .driver = &ashtech,

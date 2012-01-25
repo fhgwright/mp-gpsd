@@ -1,19 +1,23 @@
 /*
  * Handle the Rockwell binary packet format supported by the old Zodiac chipset
  *
+ * Week counters are not limited to 10 bits. It's unknown what
+ * the firmware is doing to disambiguate them, if anything; it might just
+ * be adding a fixed offset based on a hidden epoch value, in which case 
+ * unhappy things will occur on the next rollover.
+ *
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
-#include <sys/types.h>
 #include <stdio.h>
-#include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
+#include <math.h>
 #ifndef S_SPLINT_S
 #include <unistd.h>
 #endif /* S_SPLINT_S */
-#include <math.h>
-#include "gpsd.h"
 
+#include "gpsd.h"
 #include "bits.h"
 
 #ifdef ZODIAC_ENABLE
@@ -99,7 +103,7 @@ static ssize_t zodiac_spew(struct gps_device_t *session, unsigned short type,
 }
 
 static void send_rtcm(struct gps_device_t *session,
-		      char *rtcmbuf, size_t rtcmbytes)
+		      const char *rtcmbuf, size_t rtcmbytes)
 {
     unsigned short data[34];
     int n = 1 + (int)(rtcmbytes / 2 + rtcmbytes % 2);
@@ -116,7 +120,7 @@ static void send_rtcm(struct gps_device_t *session,
 }
 
 static ssize_t zodiac_send_rtcm(struct gps_device_t *session,
-				char *rtcmbuf, size_t rtcmbytes)
+				const char *rtcmbuf, size_t rtcmbytes)
 {
     size_t len;
 
@@ -129,8 +133,8 @@ static ssize_t zodiac_send_rtcm(struct gps_device_t *session,
     return 1;
 }
 
-#define getzword(n)	getwordz(session->packet.outbuffer, n)
-#define getzlong(n)	getlongz(session->packet.outbuffer, n)
+#define getzword(n)	get16z(session->packet.outbuffer, n)
+#define getzlong(n)	get32z(session->packet.outbuffer, n)
 
 static gps_mask_t handle1000(struct gps_device_t *session)
 /* time-position-velocity report */
@@ -163,7 +167,7 @@ static gps_mask_t handle1000(struct gps_device_t *session)
     unpacked_date.tm_sec = (int)getzword(24);
     subseconds = (int)getzlong(25) / 1e9;
     /*@ -compdef */
-    session->newdata.time = (double)mkgmtime(&unpacked_date) + subseconds;
+    session->newdata.time = (timestamp_t)mkgmtime(&unpacked_date) + subseconds;
     /*@ +compdef */
     /*@ -type @*/
     session->newdata.latitude = ((long)getzlong(27)) * RAD_2_DEG * 1e-8;
@@ -197,15 +201,15 @@ static gps_mask_t handle1000(struct gps_device_t *session)
     /* clock_drift_sd              = (int)getzlong(53) * 1e-2; */
 
     mask =
-	TIME_IS | LATLON_IS | ALTITUDE_IS | CLIMB_IS | SPEED_IS | TRACK_IS |
-	STATUS_IS | MODE_IS;
+	TIME_SET | PPSTIME_IS | LATLON_SET | ALTITUDE_SET | CLIMB_SET | SPEED_SET |
+	TRACK_SET | STATUS_SET | MODE_SET;
     gpsd_report(LOG_DATA,
-		"1000: time=%.2f lat=%.2f lon=%.2f alt=%.2f track=%.2f speed=%.2f climb=%.2f mode=%d status=%d mask=%s\n",
+		"1000: time=%.2f lat=%.2f lon=%.2f alt=%.2f track=%.2f speed=%.2f climb=%.2f mode=%d status=%d\n",
 		session->newdata.time, session->newdata.latitude,
 		session->newdata.longitude, session->newdata.altitude,
 		session->newdata.track, session->newdata.speed,
 		session->newdata.climb, session->newdata.mode,
-		session->gpsdata.status, gpsd_maskdump(mask));
+		session->gpsdata.status);
     return mask;
 }
 
@@ -222,6 +226,7 @@ static gps_mask_t handle1002(struct gps_device_t *session)
     int gps_seconds = getzlong(11);
     /* gps_nanoseconds            = getzlong(13); */
     /*@-charint@*/
+    /* Note: this week counter is not limited to 10 bits. */
     session->context->gps_week = (unsigned short)gps_week;
     session->gpsdata.satellites_used = 0;
     memset(session->gpsdata.used, 0, sizeof(session->gpsdata.used));
@@ -240,14 +245,13 @@ static gps_mask_t handle1002(struct gps_device_t *session)
 	    break;
 	}
     }
-    session->context->gps_week = (unsigned short)gps_week;
-    session->context->gps_tow = (double)gps_seconds;
-    session->gpsdata.skyview_time =
-	gpstime_to_unix(gps_week, session->context->gps_tow);
+    session->gpsdata.skyview_time = gpsd_gpstime_resolve(session,
+						      (unsigned short)gps_week,
+						      (double)gps_seconds);
     gpsd_report(LOG_DATA, "1002: visible=%d used=%d mask={SATELLITE|USED}\n",
 		session->gpsdata.satellites_visible,
 		session->gpsdata.satellites_used);
-    return SATELLITE_IS | USED_IS;
+    return SATELLITE_SET | USED_IS;
 }
 
 static gps_mask_t handle1003(struct gps_device_t *session)
@@ -296,7 +300,7 @@ static gps_mask_t handle1003(struct gps_device_t *session)
 		session->gpsdata.dop.hdop,
 		session->gpsdata.dop.vdop,
 		session->gpsdata.dop.pdop, session->gpsdata.dop.tdop);
-    return SATELLITE_IS | DOP_IS;
+    return SATELLITE_SET | DOP_SET;
 }
 
 static void handle1005(struct gps_device_t *session UNUSED)
@@ -325,7 +329,7 @@ static gps_mask_t handle1011(struct gps_device_t *session)
     getstringz(session->subtype, session->packet.outbuffer, 19, 28);	/* software version field */
     gpsd_report(LOG_DATA, "1011: subtype=%s mask={DEVICEID}\n",
 		session->subtype);
-    return DEVICEID_IS;
+    return DEVICEID_SET;
 }
 
 
@@ -336,8 +340,10 @@ static void handle1108(struct gps_device_t *session)
     /* sequence           = getzword(8); */
     /* utc_week_seconds   = getzlong(14); */
     /* leap_nanoseconds   = getzlong(17); */
-    if ((int)(getzword(19) & 3) == 3)
+    if ((int)(getzword(19) & 3) == 3) {
+	session->context->valid |= LEAP_SECOND_VALID;
 	session->context->leap_seconds = (int)getzword(16);
+    }
 }
 
 static gps_mask_t zodiac_analyze(struct gps_device_t *session)
@@ -413,7 +419,7 @@ static gps_mask_t zodiac_analyze(struct gps_device_t *session)
     }
 }
 
-#ifdef ALLOW_CONTROLSEND
+#ifdef CONTROLSEND_ENABLE
 static ssize_t zodiac_control_send(struct gps_device_t *session,
 				   char *msg, size_t len)
 {
@@ -423,9 +429,9 @@ static ssize_t zodiac_control_send(struct gps_device_t *session,
     return zodiac_spew(session, shortwords[0], shortwords + 1,
 		       (int)(len / 2 - 1));
 }
-#endif /* ALLOW_CONTROLSEND */
+#endif /* CONTROLSEND_ENABLE */
 
-#ifdef ALLOW_RECONFIGURE
+#ifdef RECONFIGURE_ENABLE
 static bool zodiac_speed_switch(struct gps_device_t *session,
 				speed_t speed, char parity, int stopbits)
 {
@@ -463,10 +469,10 @@ static bool zodiac_speed_switch(struct gps_device_t *session,
     (void)zodiac_spew(session, 1330, data, 15);
     return true;		/* it would be nice to error-check this */
 }
-#endif /* ALLOW_RECONFIGURE */
+#endif /* RECONFIGURE_ENABLE */
 
 #ifdef NTPSHM_ENABLE
-static double zodiac_ntp_offset(struct gps_device_t *session)
+static double zodiac_ntp_offset(struct gps_device_t *session UNUSED)
 {
     /* Removing/changing the magic number below is likely to disturb
      * the handling of the 1pps signal from the gps device. The regression
@@ -482,6 +488,7 @@ const struct gps_type_t zodiac_binary =
 {
     .type_name      = "Zodiac binary",	/* full name of type */
     .packet_type    = ZODIAC_PACKET,	/* associated lexer packet type */
+    .flags	    = DRIVER_NOFLAGS,	/* no flags set */
     .trigger	    = NULL,		/* no trigger */
     .channels       = 12,		/* consumer-grade GPS */
     .probe_detect   = NULL,		/* no probe */
@@ -489,15 +496,15 @@ const struct gps_type_t zodiac_binary =
     .parse_packet   = zodiac_analyze,	/* parse message packets */
     .rtcm_writer    = zodiac_send_rtcm,	/* send DGPS correction */
     .event_hook     = NULL,		/* no configuration */
-#ifdef ALLOW_RECONFIGURE
+#ifdef RECONFIGURE_ENABLE
     .speed_switcher = zodiac_speed_switch,/* we can change baud rate */
     .mode_switcher  = NULL,		/* no mode switcher */
     .rate_switcher  = NULL,		/* no sample-rate switcher */
     .min_cycle      = 1,		/* not relevant, no rate switch */
-#endif /* ALLOW_RECONFIGURE */
-#ifdef ALLOW_CONTROLSEND
+#endif /* RECONFIGURE_ENABLE */
+#ifdef CONTROLSEND_ENABLE
     .control_send   = zodiac_control_send,	/* for gpsctl and friends */
-#endif /* ALLOW_CONTROLSEND */
+#endif /* CONTROLSEND_ENABLE */
 #ifdef NTPSHM_ENABLE
     .ntp_offset     = zodiac_ntp_offset,	/* compute NTO fudge factor */
 #endif /* NTPSHM_ENABLE */

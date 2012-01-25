@@ -69,6 +69,15 @@ a:hover {background-color:#ccc;}
 	border:1px dashed #999;
 	}
 
+/* For internal tables of contents on a page. E.g. hacking.html. */
+ol.ToC {
+    list-style: upper-roman;
+}
+
+div.strike {
+    text-decoration: line-through;
+}
+
 @media print {
 	#Content {
 		/* Left margin is menu width + 3em
@@ -102,8 +111,3 @@ a:hover {background-color:#ccc;}
 	font-size:small;
 	text-indent: 0;
 }
-/*
-Local Variables:
-compile-command: "(scp main.css esr@shell.berlios.de:/home/groups/gpsd/htdocs)"
-End:
-*/

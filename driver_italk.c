@@ -3,18 +3,20 @@
  * BSD terms apply: see the file COPYING in the distribution root for details.
  *
  * Driver for the iTalk binary protocol used by FasTrax
+ *
+ * Week counters are not limited to 10 bits. It's unknown what
+ * the firmware is doing to disambiguate them, if anything; it might just
+ * be adding a fixed offset based on a hidden epoch value, in which case 
+ * unhappy things will occur on the next rollover.
  */
-#include <sys/types.h>
 #include <stdio.h>
-#include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <math.h>
-#include <ctype.h>
+#include <termios.h>
 #ifndef S_SPLINT_S
 #include <unistd.h>
 #endif /* S_SPLINT_S */
-#include <time.h>
-#include <stdio.h>
 
 #include "gpsd.h"
 #if defined(ITRAX_ENABLE) && defined(BINARY_ENABLE)
@@ -35,11 +37,9 @@ static gps_mask_t decode_itk_subframe(struct gps_device_t *, unsigned char *,
 static gps_mask_t decode_itk_navfix(struct gps_device_t *session,
 				    unsigned char *buf, size_t len)
 {
-    unsigned int tow;
-    unsigned short gps_week, flags, cflags, pflags;
+    unsigned short flags, pflags;
     gps_mask_t mask = 0;
     double epx, epy, epz, evx, evy, evz, eph;
-    double t;
 
     if (len != 296) {
 	gpsd_report(LOG_PROG, "ITALK: bad NAV_FIX (len %zu, should be 296)\n",
@@ -47,54 +47,50 @@ static gps_mask_t decode_itk_navfix(struct gps_device_t *session,
 	return -1;
     }
 
-    flags = (ushort) getleuw(buf, 7 + 4);
-    cflags = (ushort) getleuw(buf, 7 + 6);
-    pflags = (ushort) getleuw(buf, 7 + 8);
+    flags = (ushort) getleu16(buf, 7 + 4);
+    //cflags = (ushort) getleu16(buf, 7 + 6);
+    pflags = (ushort) getleu16(buf, 7 + 8);
 
     session->gpsdata.status = STATUS_NO_FIX;
     session->newdata.mode = MODE_NO_FIX;
-    mask = ONLINE_IS | MODE_IS | STATUS_IS | CLEAR_IS;
+    mask = ONLINE_SET | MODE_SET | STATUS_SET | CLEAR_IS;
 
     /* just bail out if this fix is not marked valid */
     if (0 != (pflags & FIX_FLAG_MASK_INVALID)
 	|| 0 == (flags & FIXINFO_FLAG_VALID))
 	return mask;
 
-    gps_week = (ushort) getlesw(buf, 7 + 82);
-    session->context->gps_week = gps_week;
-    tow = (uint) getleul(buf, 7 + 84);
-    session->context->gps_tow = tow / 1000.0;
-    t = gpstime_to_unix((int)gps_week, session->context->gps_tow)
-	- session->context->leap_seconds;
-    session->newdata.time = t;
-    mask |= TIME_IS;
+    session->newdata.time = gpsd_gpstime_resolve(session,
+	(unsigned short) getles16(buf, 7 + 82),
+	(unsigned int)getleu32(buf, 7 + 84) / 1000.0);
+    mask |= TIME_SET | PPSTIME_IS;
 
-    epx = (double)(getlesl(buf, 7 + 96) / 100.0);
-    epy = (double)(getlesl(buf, 7 + 100) / 100.0);
-    epz = (double)(getlesl(buf, 7 + 104) / 100.0);
-    evx = (double)(getlesl(buf, 7 + 186) / 1000.0);
-    evy = (double)(getlesl(buf, 7 + 190) / 1000.0);
-    evz = (double)(getlesl(buf, 7 + 194) / 1000.0);
+    epx = (double)(getles32(buf, 7 + 96) / 100.0);
+    epy = (double)(getles32(buf, 7 + 100) / 100.0);
+    epz = (double)(getles32(buf, 7 + 104) / 100.0);
+    evx = (double)(getles32(buf, 7 + 186) / 1000.0);
+    evy = (double)(getles32(buf, 7 + 190) / 1000.0);
+    evz = (double)(getles32(buf, 7 + 194) / 1000.0);
     ecef_to_wgs84fix(&session->newdata, &session->gpsdata.separation,
 		     epx, epy, epz, evx, evy, evz);
-    mask |= LATLON_IS | ALTITUDE_IS | SPEED_IS | TRACK_IS | CLIMB_IS;
-    eph = (double)(getlesl(buf, 7 + 252) / 100.0);
+    mask |= LATLON_SET | ALTITUDE_SET | SPEED_SET | TRACK_SET | CLIMB_SET;
+    eph = (double)(getles32(buf, 7 + 252) / 100.0);
     /* eph is a circular error, sqrt(epx**2 + epy**2) */
     session->newdata.epx = session->newdata.epy = eph / sqrt(2);
-    session->newdata.eps = (double)(getlesl(buf, 7 + 254) / 100.0);
+    session->newdata.eps = (double)(getles32(buf, 7 + 254) / 100.0);
 
 #define MAX(a,b) (((a) > (b)) ? (a) : (b))
     session->gpsdata.satellites_used =
-	(int)MAX(getleuw(buf, 7 + 12), getleuw(buf, 7 + 14));
+	(int)MAX(getleu16(buf, 7 + 12), getleu16(buf, 7 + 14));
     mask |= USED_IS;
 
     if (flags & FIX_CONV_DOP_VALID) {
-	session->gpsdata.dop.hdop = (double)(getleuw(buf, 7 + 56) / 100.0);
-	session->gpsdata.dop.gdop = (double)(getleuw(buf, 7 + 58) / 100.0);
-	session->gpsdata.dop.pdop = (double)(getleuw(buf, 7 + 60) / 100.0);
-	session->gpsdata.dop.vdop = (double)(getleuw(buf, 7 + 62) / 100.0);
-	session->gpsdata.dop.tdop = (double)(getleuw(buf, 7 + 64) / 100.0);
-	mask |= DOP_IS;
+	session->gpsdata.dop.hdop = (double)(getleu16(buf, 7 + 56) / 100.0);
+	session->gpsdata.dop.gdop = (double)(getleu16(buf, 7 + 58) / 100.0);
+	session->gpsdata.dop.pdop = (double)(getleu16(buf, 7 + 60) / 100.0);
+	session->gpsdata.dop.vdop = (double)(getleu16(buf, 7 + 62) / 100.0);
+	session->gpsdata.dop.tdop = (double)(getleu16(buf, 7 + 64) / 100.0);
+	mask |= DOP_SET;
     }
 
     if ((pflags & FIX_FLAG_MASK_INVALID) == 0
@@ -111,52 +107,44 @@ static gps_mask_t decode_itk_navfix(struct gps_device_t *session,
     }
 
     gpsd_report(LOG_DATA,
-		"NAV_FIX: time=%.2f, lat=%.2f lon=%.2f alt=%.f speed=%.2f track=%.2f climb=%.2f mode=%d status=%d gdop=%.2f pdop=%.2f hdop=%.2f vdop=%.2f tdop=%.2f mask=%s\n",
+		"NAV_FIX: time=%.2f, lat=%.2f lon=%.2f alt=%.f speed=%.2f track=%.2f climb=%.2f mode=%d status=%d gdop=%.2f pdop=%.2f hdop=%.2f vdop=%.2f tdop=%.2f\n",
 		session->newdata.time, session->newdata.latitude,
 		session->newdata.longitude, session->newdata.altitude,
 		session->newdata.speed, session->newdata.track,
 		session->newdata.climb, session->newdata.mode,
 		session->gpsdata.status, session->gpsdata.dop.gdop,
 		session->gpsdata.dop.pdop, session->gpsdata.dop.hdop,
-		session->gpsdata.dop.vdop, session->gpsdata.dop.tdop,
-		gpsd_maskdump(mask));
+		session->gpsdata.dop.vdop, session->gpsdata.dop.tdop);
     return mask;
 }
 
 static gps_mask_t decode_itk_prnstatus(struct gps_device_t *session,
 				       unsigned char *buf, size_t len)
 {
-    unsigned int i, tow, nsv, nchan, st;
-    unsigned short gps_week;
-    double t;
+    unsigned int i, nsv, nchan, st;
     gps_mask_t mask;
 
     if (len < 62) {
 	gpsd_report(LOG_PROG, "ITALK: runt PRN_STATUS (len=%zu)\n", len);
 	mask = 0;
     } else {
-	gps_week = (ushort) getleuw(buf, 7 + 4);
-	session->context->gps_week = gps_week;
-	tow = (uint) getleul(buf, 7 + 6);
-	session->context->gps_tow = tow / 1000.0;
-	t = gpstime_to_unix((int)gps_week, session->context->gps_tow)
-	    - session->context->leap_seconds;
-	session->gpsdata.skyview_time = t;
-
+	session->gpsdata.skyview_time = gpsd_gpstime_resolve(session,
+	    (unsigned short)getleu16(buf, 7 + 4),
+	    (unsigned int)getleu32(buf, 7 + 6) / 1000.0),
 	gpsd_zero_satellites(&session->gpsdata);
 	nsv = 0;
-	nchan = (unsigned int)getleuw(buf, 7 + 50);
+	nchan = (unsigned int)getleu16(buf, 7 + 50);
 	if (nchan > MAX_NR_VISIBLE_PRNS)
 	    nchan = MAX_NR_VISIBLE_PRNS;
 	for (i = st = 0; i < nchan; i++) {
 	    unsigned int off = 7 + 52 + 10 * i;
 	    unsigned short flags;
 
-	    flags = (ushort) getleuw(buf, off);
-	    session->gpsdata.ss[i] = (float)(getleuw(buf, off + 2) & 0xff);
-	    session->gpsdata.PRN[i] = (int)getleuw(buf, off + 4) & 0xff;
-	    session->gpsdata.elevation[i] = (int)getlesw(buf, off + 6) & 0xff;
-	    session->gpsdata.azimuth[i] = (int)getlesw(buf, off + 8) & 0xff;
+	    flags = (ushort) getleu16(buf, off);
+	    session->gpsdata.ss[i] = (float)(getleu16(buf, off + 2) & 0xff);
+	    session->gpsdata.PRN[i] = (int)getleu16(buf, off + 4) & 0xff;
+	    session->gpsdata.elevation[i] = (int)getles16(buf, off + 6) & 0xff;
+	    session->gpsdata.azimuth[i] = (int)getles16(buf, off + 8) & 0xff;
 	    if (session->gpsdata.PRN[i]) {
 		st++;
 		if (flags & PRN_FLAG_USE_IN_NAV)
@@ -165,7 +153,7 @@ static gps_mask_t decode_itk_prnstatus(struct gps_device_t *session,
 	}
 	session->gpsdata.satellites_visible = (int)st;
 	session->gpsdata.satellites_used = (int)nsv;
-	mask = USED_IS | SATELLITE_IS;;
+	mask = USED_IS | SATELLITE_SET;;
 
 	gpsd_report(LOG_DATA,
 		    "PRN_STATUS: time=%.2f visible=%d used=%d mask={USED|SATELLITE}\n",
@@ -180,10 +168,8 @@ static gps_mask_t decode_itk_prnstatus(struct gps_device_t *session,
 static gps_mask_t decode_itk_utcionomodel(struct gps_device_t *session,
 					  unsigned char *buf, size_t len)
 {
-    unsigned int tow;
     int leap;
-    unsigned short gps_week, flags;
-    double t;
+    unsigned short flags;
 
     if (len != 64) {
 	gpsd_report(LOG_PROG,
@@ -192,33 +178,29 @@ static gps_mask_t decode_itk_utcionomodel(struct gps_device_t *session,
 	return 0;
     }
 
-    flags = (ushort) getleuw(buf, 7);
+    flags = (ushort) getleu16(buf, 7);
     if (0 == (flags & UTC_IONO_MODEL_UTCVALID))
 	return 0;
 
-    leap = (int)getleuw(buf, 7 + 24);
+    leap = (int)getleu16(buf, 7 + 24);
     if (session->context->leap_seconds < leap)
 	session->context->leap_seconds = leap;
 
-    gps_week = (ushort) getleuw(buf, 7 + 36);
-    session->context->gps_week = gps_week;
-    tow = (uint) getleul(buf, 7 + 38);
-    session->context->gps_tow = tow / 1000.0;
-    t = gpstime_to_unix((int)gps_week, session->context->gps_tow)
-	- session->context->leap_seconds;
-    session->newdata.time = t;
-
+    session->newdata.time = gpsd_gpstime_resolve(session,
+	(unsigned short) getleu16(buf, 7 + 36),
+	(unsigned int)getleu32(buf, 7 + 38)  / 1000.0);
     gpsd_report(LOG_DATA,
 		"UTC_IONO_MODEL: time=%.2f mask={TIME}\n",
 		session->newdata.time);
-    return TIME_IS;
+    return TIME_SET | PPSTIME_IS;
 }
 
 static gps_mask_t decode_itk_subframe(struct gps_device_t *session,
 				      unsigned char *buf, size_t len)
 {
     unsigned short flags, prn, sf;
-    unsigned int i, words[10];
+    unsigned int i; 
+    uint32_t words[10];
 
     if (len != 64) {
 	gpsd_report(LOG_PROG,
@@ -226,9 +208,9 @@ static gps_mask_t decode_itk_subframe(struct gps_device_t *session,
 	return 0;
     }
 
-    flags = (ushort) getleuw(buf, 7 + 4);
-    prn = (ushort) getleuw(buf, 7 + 6);
-    sf = (ushort) getleuw(buf, 7 + 8);
+    flags = (ushort) getleu16(buf, 7 + 4);
+    prn = (ushort) getleu16(buf, 7 + 6);
+    sf = (ushort) getleu16(buf, 7 + 8);
     gpsd_report(LOG_PROG, "iTalk 50B SUBFRAME prn %u sf %u - decode %s %s\n",
 		prn, sf,
 		flags & SUBFRAME_WORD_FLAG_MASK ? "error" : "ok",
@@ -241,22 +223,18 @@ static gps_mask_t decode_itk_subframe(struct gps_device_t *session,
      * words with parity checking done but parity bits still present."
      */
     for (i = 0; i < 10; i++)
-	words[i] =
-	    (unsigned int)(getleul(buf, 7 + 14 + 4 * i) >> 6) & 0xffffff;
+	words[i] = (uint32_t)(getleu32(buf, 7 + 14 + 4 * i) >> 6) & 0xffffff;
 
-    gpsd_interpret_subframe(session, words);
-    return ONLINE_IS;
+    return gpsd_interpret_subframe(session, prn, words);
 }
 
 static gps_mask_t decode_itk_pseudo(struct gps_device_t *session,
 				      unsigned char *buf, size_t len)
 {
-    unsigned short gps_week, flags, n, i;
-    unsigned int tow;
+    unsigned short flags, n, i;
     union long_double l_d;
-    double t;
 
-    n = (ushort) getleuw(buf, 7 + 4);
+    n = (ushort) getleu16(buf, 7 + 4);
     if ((n < 1) || (n > MAXCHANNELS)){
 	gpsd_report(LOG_INF, "ITALK: bad PSEUDO channel count\n");
 	return 0;
@@ -268,27 +246,24 @@ static gps_mask_t decode_itk_pseudo(struct gps_device_t *session,
     }
 
     gpsd_report(LOG_PROG, "iTalk PSEUDO [%u]\n", n);
-    flags = (unsigned short)getleuw(buf, 7 + 6);
+    flags = (unsigned short)getleu16(buf, 7 + 6);
     if ((flags & 0x3) != 0x3)
 	return 0; // bail if measurement time not valid.
 
-    gps_week = (ushort) getleuw(buf, 7 + 8);
-    tow = (uint) getleul(buf, 7 + 38);
-    session->context->gps_week = gps_week;
-    session->context->gps_tow = tow / 1000.0;
-    t = gpstime_to_unix((int)gps_week, session->context->gps_tow)
-	- session->context->leap_seconds;
+    session->newdata.time = gpsd_gpstime_resolve(session,
+	(unsigned short int) getleu16(buf, 7 + 8),
+	(unsigned int)getleu32(buf, 7 + 38) / 1000.0);
 
     /*@-type@*/
     for (i = 0; i < n; i++){
-	session->gpsdata.PRN[i] = getleuw(buf, 7 + 26 + (i*36)) & 0xff;
-	session->gpsdata.ss[i] = getleuw(buf, 7 + 26 + (i*36 + 2)) & 0x3f;
-	session->gpsdata.raw.satstat[i] = getleul(buf, 7 + 26 + (i*36 + 4));
+	session->gpsdata.PRN[i] = getleu16(buf, 7 + 26 + (i*36)) & 0xff;
+	session->gpsdata.ss[i] = getleu16(buf, 7 + 26 + (i*36 + 2)) & 0x3f;
+	session->gpsdata.raw.satstat[i] = getleu32(buf, 7 + 26 + (i*36 + 4));
 	session->gpsdata.raw.pseudorange[i] = getled(buf, 7 + 26 + (i*36 + 8));
 	session->gpsdata.raw.doppler[i] = getled(buf, 7 + 26 + (i*36 + 16));
-	session->gpsdata.raw.carrierphase[i] = getleuw(buf, 7 + 26 + (i*36 + 28));
+	session->gpsdata.raw.carrierphase[i] = getleu16(buf, 7 + 26 + (i*36 + 28));
 
-	session->gpsdata.raw.mtime[i] = t;
+	session->gpsdata.raw.mtime[i] = session->newdata.time;
 	session->gpsdata.raw.codephase[i] = NAN;
 	session->gpsdata.raw.deltarange[i] = NAN;
     }
@@ -308,8 +283,7 @@ static gps_mask_t italk_parse(struct gps_device_t *session,
 
     type = (uint) getub(buf, 4);
     /* we may need to dump the raw packet */
-    gpsd_report(LOG_RAW, "raw italk packet type 0x%02x length %zu: %s\n",
-		type, len, gpsd_hexdump_wrapper(buf, len, LOG_RAW));
+    gpsd_report(LOG_RAW, "raw italk packet type 0x%02x\n", type);
 
     session->cycle_end_reliable = true;
 
@@ -392,7 +366,7 @@ static gps_mask_t italk_parse(struct gps_device_t *session,
     (void)snprintf(session->gpsdata.tag, sizeof(session->gpsdata.tag),
 		       "ITK-%02x", type);
 
-    return mask | ONLINE_IS;
+    return mask | ONLINE_SET;
 }
 
 /*@ -charint @*/
@@ -416,107 +390,37 @@ static gps_mask_t italk_parse_input(struct gps_device_t *session)
 	return 0;
 }
 
-#ifdef ALLOW_CONTROLSEND
-/*@ +charint -usedef -compdef @*/
-static ssize_t italk_control_send(struct gps_device_t *session,
-				  char *msg, size_t msglen)
-{
-    ssize_t status;
-
-    /*@ -mayaliasunique @*/
-    session->msgbuflen = msglen;
-    (void)memcpy(session->msgbuf, msg, msglen);
-    /*@ +mayaliasunique @*/
-    /* we may need to dump the message */
-    gpsd_report(LOG_IO, "writing italk control type %02x:%s\n",
-		msg[0], gpsd_hexdump_wrapper(msg, msglen, LOG_IO));
-    status = write(session->gpsdata.gps_fd, msg, msglen);
-    (void)tcdrain(session->gpsdata.gps_fd);
-    return status;
-}
-
-/*@ -charint +usedef +compdef @*/
-#endif /* ALLOW_CONTROLSEND */
-
-static bool italk_set_mode(struct gps_device_t *session UNUSED,
-			   speed_t speed UNUSED,
-			   char parity UNUSED, int stopbits UNUSED,
-			   bool mode UNUSED)
-{
-#ifdef __NOT_YET__
-    /*@ +charint @*/
-    char msg[] = { 0, };
-
-    /* HACK THE MESSAGE */
-
-    return (italk_control_send(session, msg, sizeof(msg)) != -1);
-    /*@ +charint @*/
-#endif
-
-    return false;		/* until this actually works */
-}
-
-#ifdef ALLOW_RECONFIGURE
-static bool italk_speed(struct gps_device_t *session,
-			speed_t speed, char parity, int stopbits)
-{
-    return italk_set_mode(session, speed, parity, stopbits, true);
-}
-
-static void italk_mode(struct gps_device_t *session, int mode)
-{
-    if (mode == MODE_NMEA) {
-	(void)italk_set_mode(session,
-			     session->gpsdata.dev.baudrate,
-			     (char)session->gpsdata.dev.parity,
-			     (int)session->gpsdata.dev.stopbits, false);
-    }
-}
-#endif /* ALLOW_RECONFIGURE */
-
-static void italk_event_hook(struct gps_device_t *session, event_t event)
-{
-    /*
-     * FIX-ME: It might not be necessary to call this on reactivate.
-     * Experiment to see if the holds its settings through a close.
-     */
-    if ((event == event_identified || event == event_reactivate)
-	&& session->packet.type == NMEA_PACKET)
-	(void)italk_set_mode(session, session->gpsdata.dev.baudrate,
-			     (char)session->gpsdata.dev.parity,
-			     (int)session->gpsdata.dev.stopbits, true);
-}
-
-#ifdef __not_yet__
+#ifdef __future__
 static void italk_ping(struct gps_device_t *session)
 /* send a "ping". it may help us detect an itrax more quickly */
 {
     char *ping = "<?>";
     (void)gpsd_write(session, ping, 3);
 }
-#endif /* __not_yet__ */
+#endif /* __future__ */
 
 /* *INDENT-OFF* */
 const struct gps_type_t italk_binary =
 {
     .type_name      = "iTalk binary",	/* full name of type */
     .packet_type    = ITALK_PACKET,	/* associated lexer packet type */
+    .flags	    = DRIVER_NOFLAGS,	/* no rollover or other flags */
     .trigger	    = NULL,		/* recognize the type */
     .channels       = 12,		/* consumer-grade GPS */
     .probe_detect   = NULL,		/* how to detect at startup time */
     .get_packet     = generic_get,	/* use generic packet grabber */
     .parse_packet   = italk_parse_input,/* parse message packets */
-    .rtcm_writer    = pass_rtcm,	/* send RTCM data straight */
-    .event_hook     = italk_event_hook,	/* lifetime event handler */
-#ifdef ALLOW_RECONFIGURE
-    .speed_switcher = italk_speed,	/* we can change baud rates */
-    .mode_switcher  = italk_mode,	/* there is a mode switcher */
+    .rtcm_writer    = gpsd_write,	/* send RTCM data straight */
+    .event_hook     = NULL,		/* lifetime event handler */
+#ifdef RECONFIGURE_ENABLE
+    .speed_switcher = NULL,		/* no speed switcher */
+    .mode_switcher  = NULL,		/* no mode switcher */
     .rate_switcher  = NULL,		/* no sample-rate switcher */
     .min_cycle      = 1,		/* not relevant, no rate switch */
-#endif /* ALLOW_RECONFIGURE */
-#ifdef ALLOW_CONTROLSEND
-    .control_send   = italk_control_send,	/* how to send a control string */
-#endif /* ALLOW_CONTROLSEND */
+#endif /* RECONFIGURE_ENABLE */
+#ifdef CONTROLSEND_ENABLE
+    .control_send   = NULL,		/* no control string sender */
+#endif /* CONTROLSEND_ENABLE */
 #ifdef NTPSHM_ENABLE
     .ntp_offset     = NULL,		/* no method for NTP fudge factor */
 #endif /* NTPSHM_ ENABLE */

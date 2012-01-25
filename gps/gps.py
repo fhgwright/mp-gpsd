@@ -14,46 +14,44 @@
 # The JSON parts of this (which will be reused by any new interface)
 # now live in a different module.
 #
-import time
 from client import *
+from misc import isotime
 
 NaN = float('nan')
 def isnan(x): return str(x) == 'nan'
 
 # Don't hand-hack this list, it's generated.
-ONLINE_SET     	= 0x00000001
-TIME_SET       	= 0x00000002
-TIMERR_SET     	= 0x00000004
-LATLON_SET     	= 0x00000008
-ALTITUDE_SET   	= 0x00000010
-SPEED_SET      	= 0x00000020
-TRACK_SET      	= 0x00000040
-CLIMB_SET      	= 0x00000080
-STATUS_SET     	= 0x00000100
-MODE_SET       	= 0x00000200
-DOP_SET        	= 0x00000400
-VERSION_SET    	= 0x00000800
-HERR_SET       	= 0x00001000
-VERR_SET       	= 0x00002000
-ATTITUDE_SET   	= 0x00004000
-POLICY_SET     	= 0x00008000
-SATELLITE_SET  	= 0x00010000
-RAW_SET        	= 0x00020000
-USED_SET       	= 0x00040000
-SPEEDERR_SET   	= 0x00080000
-TRACKERR_SET   	= 0x00100000
-CLIMBERR_SET   	= 0x00200000
-DEVICE_SET     	= 0x00400000
-DEVICELIST_SET 	= 0x00800000
-DEVICEID_SET   	= 0x01000000
-ERROR_SET      	= 0x02000000
-RTCM2_SET      	= 0x04000000
-RTCM3_SET      	= 0x08000000
-AIS_SET        	= 0x10000000
-PACKET_SET     	= 0x20000000
-AUXDATA_SET    	= 0x80000000
-UNION_SET      	= (RTCM2_SET|RTCM3_SET|AIS_SET|VERSION_SET|DEVICELIST_SET|ERROR_SET)
-
+ONLINE_SET     	= (1<<1)
+TIME_SET       	= (1<<2)
+TIMERR_SET     	= (1<<3)
+LATLON_SET     	= (1<<4)
+ALTITUDE_SET   	= (1<<5)
+SPEED_SET      	= (1<<6)
+TRACK_SET      	= (1<<7)
+CLIMB_SET      	= (1<<8)
+STATUS_SET     	= (1<<9)
+MODE_SET       	= (1<<10)
+DOP_SET        	= (1<<11)
+HERR_SET       	= (1<<12)
+VERR_SET       	= (1<<13)
+ATTITUDE_SET   	= (1<<14)
+SATELLITE_SET  	= (1<<15)
+SPEEDERR_SET   	= (1<<16)
+TRACKERR_SET   	= (1<<17)
+CLIMBERR_SET   	= (1<<18)
+DEVICE_SET     	= (1<<19)
+DEVICELIST_SET 	= (1<<20)
+DEVICEID_SET   	= (1<<21)
+RTCM2_SET      	= (1<<22)
+RTCM3_SET      	= (1<<23)
+AIS_SET        	= (1<<24)
+PACKET_SET     	= (1<<25)
+SUBFRAME_SET   	= (1<<26)
+GST_SET        	= (1<<27)
+VERSION_SET    	= (1<<28)
+POLICY_SET     	= (1<<29)
+ERROR_SET      	= (1<<30)
+UNION_SET      	= (RTCM2_SET|RTCM3_SET|SUBFRAME_SET|AIS_SET|VERSION_SET|DEVICELIST_SET|ERROR_SET|GST_SET)
 STATUS_NO_FIX = 0
 STATUS_FIX = 1
 STATUS_DGPS_FIX = 2
@@ -63,8 +61,8 @@ MODE_3D = 3
 MAXCHANNELS = 20
 SIGNAL_STRENGTH_UNKNOWN = NaN
 
-WATCH_NEWSTYLE	= 0x00080
-WATCH_OLDSTYLE	= 0x10000
+WATCH_NEWSTYLE	= 0x010000	# force JSON streaming
+WATCH_OLDSTYLE	= 0x020000	# force old-style streaming
 
 class gpsfix:
     def __init__(self):
@@ -126,7 +124,6 @@ class gpsdata:
         self.devices = []
 
         self.version = None
-        self.timings = None
 
     def __repr__(self):
         st = "Time:     %s (%s)\n" % (self.utc, self.fix.time)
@@ -149,7 +146,7 @@ class gpsdata:
               (self.satellites_used, self.pdop, self.hdop, self.vdop, self.tdop, self.gdop)
         st += "Y: %s satellites in view:\n" % len(self.satellites)
         for sat in self.satellites:
-          st += "    %r\n" % sat
+            st += "    %r\n" % sat
         return st
 
 class gps(gpsdata, gpsjson):
@@ -157,13 +154,9 @@ class gps(gpsdata, gpsjson):
     def __init__(self, host="127.0.0.1", port=GPSD_PORT, verbose=0, mode=0):
         gpscommon.__init__(self, host, port, verbose)
         gpsdata.__init__(self)
-        self.raw_hook = None
         self.newstyle = False
         if mode:
             self.stream(mode)
-
-    def set_raw_hook(self, hook):
-        self.raw_hook = hook
 
     def __oldstyle_unpack(self, buf):
         # unpack a daemon response into the gps instance members
@@ -265,7 +258,13 @@ class gps(gpsdata, gpsjson):
             self.mincycle    = default("mincycle", NaN)
         elif self.data.get("class") == "TPV":
             self.valid = ONLINE_SET
-            self.fix.time = default("time", NaN, TIME_SET)
+            self.utc = default("time", None, TIME_SET)
+            if self.utc is not None:
+                # Time can be either Unix time as a float or an ISO8601 string
+                if type(self.fix.time) == type(0.0):
+                    self.fix.time = self.utc
+                else:
+                    self.fix.time = isotime(self.utc.encode("ascii"))
             self.fix.ept =       default("ept",   NaN, TIMERR_SET)
             self.fix.latitude =  default("lat",   NaN, LATLON_SET)
             self.fix.longitude = default("lon",   NaN)
@@ -281,7 +280,7 @@ class gps(gpsdata, gpsjson):
             self.fix.epc =       default("epc",   NaN, CLIMBERR_SET)
             self.fix.mode =      default("mode",  0,   MODE_SET)
         elif self.data.get("class") == "SKY":
-            for attrp in "xyvhpg":
+            for attrp in ("x", "y", "v", "h", "p", "g"):
                 setattr(self, attrp+"dop", default(attrp+"dop", NaN, DOP_SET))
             if "satellites" in self.data.keys():
                 self.satellites = [] 
@@ -292,20 +291,14 @@ class gps(gpsdata, gpsjson):
                 if sat.used:
                     self.satellites_used += 1
             self.valid = ONLINE_SET | SATELLITE_SET
-        elif self.data.get("class") == "TIMING":
-            self.data["c_recv"] = self.received
-            self.data["c_decode"] = time.time()
-            self.timings = self.data
 
-    def poll(self):
+    def read(self):
         "Read and interpret data from the daemon."
         status = gpscommon.read(self)
         if status <= 0:
             return status
-        if self.raw_hook:
-            self.raw_hook(self.response);
         if self.response.startswith("{") and self.response.endswith("}\r\n"):
-            self.json_unpack(self.response)
+            self.unpack(self.response)
             self.__oldstyle_shim()
             self.newstyle = True
             self.valid |= PACKET_SET
@@ -315,40 +308,36 @@ class gps(gpsdata, gpsjson):
         return 0
 
     def next(self):
-        if self.poll() == -1:
+        if self.read() == -1:
             raise StopIteration
         if hasattr(self, "data"):
             return self.data
         else:
             return self.response
 
-    def stream(self, flags=0, outfile=None):
+    def stream(self, flags=0, devpath=None):
         "Ask gpsd to stream reports at your client."
         if (flags & (WATCH_JSON|WATCH_OLDSTYLE|WATCH_NMEA|WATCH_RAW)) == 0:
-            # If we're looking at a daemon that speaks JSON, this
-            # should have been set when we saw the initial VERSION
-            # response.  Note, however, that this requires at
-            # least one poll() before stream() is called
-            if self.newstyle or flags & WATCH_NEWSTYLE:
-                flags |= WATCH_JSON
-            else:
-                flags |= WATCH_OLDSTYLE
-        if flags & WATCH_OLDSTYLE:
-            if flags & WATCH_DISABLE:
+            flags |= WATCH_JSON
+        if flags & WATCH_DISABLE:
+            if flags & WATCH_OLDSTYLE:
                 arg = "w-"
                 if flags & WATCH_NMEA:
                     arg += 'r-'
                     return self.send(arg)
-            else: # flags & WATCH_ENABLE:
+            else:
+                gpsjson.stream(self, ~flags, devpath)
+        else: # flags & WATCH_ENABLE:
+            if flags & WATCH_OLDSTYLE:
                 arg = 'w+'
-                if self.raw_hook or (flags & WATCH_NMEA):
+                if (flags & WATCH_NMEA):
                     arg += 'r+'
                     return self.send(arg)
-        else: # flags & WATCH_NEWSTYLE:
-            gpsjson.stream(self, flags)
+            else:
+                gpsjson.stream(self, flags, devpath)
 
 if __name__ == '__main__':
-    import readline, getopt, sys
+    import getopt, sys
     (options, arguments) = getopt.getopt(sys.argv[1:], "v")
     streaming = False
     verbose = False
@@ -366,9 +355,12 @@ if __name__ == '__main__':
         opts["port"] = arguments[1]
 
     session = gps(**opts)
-    session.set_raw_hook(lambda s: sys.stdout.write(s.strip() + "\n"))
-    session.stream(WATCH_ENABLE|WATCH_NEWSTYLE)
-    for report in session:
-        print report
+    session.stream(WATCH_ENABLE)
+    try:
+        for report in session:
+            print report
+    except KeyboardInterrupt:
+        # Avoid garble on ^C
+        print ""
 
 # gps.py ends here

@@ -20,8 +20,6 @@ void gpsd_report(int errlevel, const char *fmt, ... )
     PyObject *args;
     va_list ap;
 
-    gpsd_hexdump_level = errlevel;
-
     if (!report_callback)   /* no callback defined, exit early */
 	return;	
     
@@ -50,7 +48,7 @@ typedef struct {
 } LexerObject;
 
 static LexerObject *
-newLexerObject(PyObject *arg)
+newLexerObject(PyObject *arg UNUSED)
 {
     LexerObject *self;
     self = PyObject_New(LexerObject, &Lexer_Type);
@@ -83,11 +81,12 @@ Lexer_get(LexerObject *self, PyObject *args)
     if (PyErr_Occurred())
 	return NULL;
 
-    return Py_BuildValue("(i, i, s#)",
+    return Py_BuildValue("(i, i, s#, i)",
 			 len,
 			 self->lexer.type, 
 			 self->lexer.outbuffer, 
-			 self->lexer.outbuflen);
+			 self->lexer.outbuflen,
+			 self->lexer.char_counter);
 }
 
 static PyObject *
@@ -174,7 +173,7 @@ static PyTypeObject Lexer_Type = {
 /* Function of no arguments returning new Lexer object */
 
 static PyObject *
-gpspacket_new(PyObject *self, PyObject *args)
+gpspacket_new(PyObject *self UNUSED, PyObject *args UNUSED)
 {
     LexerObject *rv;
 
@@ -192,7 +191,7 @@ PyDoc_STRVAR(register_report__doc__,
 callback must be a callable object expecting a string as parameter.");
 
 static PyObject *
-register_report(LexerObject *self, PyObject *args)
+register_report(LexerObject *self UNUSED, PyObject *args)
 {
     PyObject *callback = NULL;
 
@@ -240,6 +239,9 @@ for debug message reporting.  The callback will get two arguments, the error\n\
 level of the message and the message itself.\n\
 ");
 
+/* banishes a pointless compiler warning */
+extern PyMODINIT_FUNC initpacket(void);
+
 PyMODINIT_FUNC
 initpacket(void)
 {
@@ -254,6 +256,8 @@ initpacket(void)
     PyModule_AddIntConstant(m, "BAD_PACKET", BAD_PACKET);
     PyModule_AddIntConstant(m, "COMMENT_PACKET", COMMENT_PACKET);
     PyModule_AddIntConstant(m, "NMEA_PACKET", NMEA_PACKET);
+    PyModule_AddIntConstant(m, "AIVDM_PACKET", AIVDM_PACKET);
+    PyModule_AddIntConstant(m, "GARMINTXT_PACKET", GARMINTXT_PACKET);
     PyModule_AddIntConstant(m, "SIRF_PACKET", SIRF_PACKET);
     PyModule_AddIntConstant(m, "ZODIAC_PACKET", ZODIAC_PACKET);
     PyModule_AddIntConstant(m, "TSIP_PACKET", TSIP_PACKET);
@@ -261,10 +265,12 @@ initpacket(void)
     PyModule_AddIntConstant(m, "ITALK_PACKET", ITALK_PACKET);
     PyModule_AddIntConstant(m, "GARMIN_PACKET", GARMIN_PACKET);
     PyModule_AddIntConstant(m, "NAVCOM_PACKET", NAVCOM_PACKET);
+    PyModule_AddIntConstant(m, "UBX_PACKET", UBX_PACKET);
+    PyModule_AddIntConstant(m, "SUPERSTAR2_PACKET", SUPERSTAR2_PACKET);
+    PyModule_AddIntConstant(m, "ONCORE_PACKET", ONCORE_PACKET);
+    PyModule_AddIntConstant(m, "GEOSTAR_PACKET", GEOSTAR_PACKET);
     PyModule_AddIntConstant(m, "RTCM2_PACKET", RTCM2_PACKET);
     PyModule_AddIntConstant(m, "RTCM3_PACKET", RTCM3_PACKET);
-    PyModule_AddIntConstant(m, "UBX_PACKET", UBX_PACKET);
-    PyModule_AddIntConstant(m, "GARMINTXT_PACKET", GARMINTXT_PACKET);
 
     PyModule_AddIntConstant(m, "LOG_IO", LOG_IO);
 }

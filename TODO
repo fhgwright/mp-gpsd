@@ -3,25 +3,52 @@ doing Ctl-C Ctl-t and browsing through the outline headers.  Ctl-C Ctl-a
 will unfold them again.
 
 For contribution guidelines and internals documentation, please see
-<http://gpsd.berlios.de/hacking.html>.
+the "Hacking Guide" on the project website.
 
 The list of bugs exposed by gpsd in other software has moved to
-<http://gpsd.berlios.de/upstream-bugs.html>.
+the "Upstream Bugs" page on the project website.
 
 ** Bugs in gpsd and its clients:
 
+*** Old Earthmate support is currently broken
+
+Support for the the pre-2003 version of the Earthmate using Zodiac 
+binary protocol is currently broken.  Sometime after 2.96 the code
+for dealing with the EARTHA handshake came unstuck.
+
 *** Tracker bugs
 
-See the GPSD bug tracker at https://developer.berlios.de/bugs/?group_id=2116
-but don't be surprised if it's empty or very sparse.  Our rate of new defects
-per month is quite low.
+See the GPSD bug tracker on the project website, but don't be
+surprised if it's empty or very sparse.  Our rate of new defects per
+month is quite low.
+
+** Dispatcher/network issues
+
+**** Reading AISHub data via UDP confuses xgps with short writes
+
+To reproduce, "gpsd -D 5 -N -n udp://192.168.1.3:12346" (only
+works inside thyrsus.com) and run xgps. Probably some kind of
+packet aggregation issue.
 
 *** Driver issues
 
 **** gpsctl -b should work on UBX, but does not.
 
 Presently this means there's no way to kick a UBX into returning
-binary data.
+binary data.  Chris Kuethe is supposed to fix this one.
+
+**** RTCM3 analysis is incomplete
+
+We can presently decode RTCM3 messages of type 1004, 1005, 1006, 1008, 1012, 
+1013, and 1029.  This is not the complete set. We need more test data with
+different types in them, and a copy of the RTCM3 standard at latest revision
+(all we have is revision 3).
+
+**** Reporting code for specialized Type 6 and 8 AIS messages is incomplete.
+
+This one is mine and Kurt Schwehr's. Support is currently nearly
+complete; the only missing cases are a handful of IMO 236 and IMO 289
+message 6 and 8 subtypes.
 
 ** Ports
 
@@ -31,11 +58,11 @@ Partially complete. David Ludlow <dave@adsllc.com> is working on it.
 
 ** To do:
 
-*** Bump MAXCHANNELS to support GPS/GLONASS devices
+***  Make subframe reports available in the C API.
 
-This will require a major soname bump. Probably goes with the API 
-changes on the Future page. Here's a test log for a GPS/GLONASS device,
-the Geostar Geos 1M: <http://old.nabble.com/new-gps-report-to29115582.html>.
+gpsd now reports subframes when they're available, but the C client
+library doesn't yet parse them.  A sample program to dump the SUBFRAME
+data would also be useful. Gary Miller has this in his queue.
 
 *** Write advanced features for TNT Revolution device
 
@@ -47,6 +74,11 @@ for possibilities.
 
 Jon Schlueter has one of these on a flock machine, so testing 
 shouldn't be difficult.
+
+*** Enable flocktest on the Debian server farm
+
+Debian server farm boxes have a screwy chrooted envoronment setup.
+flocktest needs to be modified to deal with it.
 
 *** Finish gpssim
 
@@ -78,7 +110,7 @@ there should be a (privileged) command to redirect RTCM connections.
 *** Per-driver restore of changed config settings on exit.
 
 This is a solved problem for generic NMEA, EverMore, TripMate,
-EarthMate, TNTC, Zodiac, and RTCM104 drivers (if only because they
+EarthMate, TNT, Zodiac, and RTCM104 drivers (if only because they
 don't configure any device settings).
 
 The SiRF driver now restores NMEA when necessary.  It also restores
@@ -104,119 +136,41 @@ checking to see if it's already on, and stops navigation methods on
 wrapup.  It also forces the set of sentences issued.  There doesn't
 seem to be any way to query these settings.
 
+** Future features (?)
+
 *** Industry-standard format dumping of raw satellite data
 
-It would be useful to be able to extract RINEX (or some other standard)
-format data from any GPS device that can report pseudoranges etc.  This
-belongs in the daemon because the device drivers are already doing the
-packet-cracking needed to get the data off the chips.
+It would be useful to be able to report raw GPS data (pseudoranges,
+clock, doppler carrier) from any GPS device that can report
+pseudoranges etc.  This belongs in the daemon because the device
+drivers are already doing the packet-cracking needed to get the data
+off the chips.
 
 Several commodity chipsets (ANTARIS, iTrax3, SiRF and Trimble) readily
 output enough data to make this a chore, rather than a hard problem.
+Probably the best way to do this would be to add support for unscaled
+output of pseudoranges in SKY and add clock and doppler carrier
+phase. This JSON could then be interpreted by a client program and
+dunmped in various standard formats.
 
-It has been suggested one way to do this is to have a generic structure
-in memory and corresponding output message with clock, doppler carrier
-phase and pseudoranges. This message is then reformatted by a client
-program. There are numerous formats for this information, and it would
-be easier to adapt to new formats if the formatting and use was handled
-by something other than the gpsd daemon. Currently the RT-IGS format is
-looking like the favorite for implementation; it's a fairly lightweight
-protocol, flexible enough to handle all the quantities required, and it
-is actually in use in production reference networks. RT-IGS is also a
-packet-oriented format, rather than a file-oriented format like RINEX.
+Currently the RT-IGS format is looking like the favorite for
+implementation; it's a fairly lightweight protocol, flexible enough to
+handle all the quantities required, and it is actually in use in
+production reference networks. RT-IGS is also a packet-oriented
+format, rather than a file-oriented format like RINEX.
 
-*** RTCM3 support.
+*** NOFLOAT build
 
-Previous plans for more RTCM2 support seem to have been overtaken by
-events, e.g. the world moving to RTCM3. We have support for analyzing
-RTCM3 messages, but it's entirely theoretical - written from the
-standard.  We need to find a pair of files consisting of a
-representative set of RTCM3 sentences and some sort of ASCII dump of
-them so we can test whether our analyzer gets all the bitfield
-boundaries right.
-
-** Future features (?)
+We want to be able to build a minimalist version that doesn't require
+floating-point arithmetic, for deployment on low-power ARM devices 
+without FPU.
 
 *** Support for more survey / professional / up-scale receivers.
 
 Devices such as the Javad JNSCore, Hemisphere Crescent, Septentrio
 AsteRx and PolaRx, NovAtel Superstar2 and OEMV, Thales (Magellan
 Professional) AC12 and DG14 would all be welcome. Of course, these
-are not $50 usb mice...
-
-*** Audio cues in the client when the fix status changes
-
-Calum writes:
->Is it possible to add functionality (with a switch to enable it to
->avoid annoying those that don't want it) so that beeps indicate NO
->FIX, FIX, and OFFLINE status changes?
->
->For example - I run cgps and my laptop battery doesn't always supply
->my PS2 port-powered GPS device with enough power, and it goes into
->OFFLINE mode. As I can't drive, and check my laptop all the time, if
->it emitted 5 1 second beeps when it went OFFLINE, it would be a handy alert.
->
->Similarly, a PCMCIA "eject" 2 beeps for NO FIX, and a PCMCIA "happy" 2
->beeps when it gets a fix again?
->
->Or something like that.
-
-This is a good idea for supporting hands-free operation, e.g. while driving.
-
-It would be an easy first project for somebody who wants to get into
-the client code.
-
-*** Set the system time zone from latitude/longitude
-
-If we're going to give gpsd the capability to set system time via
-ntpd, why not let it set timezone as well?  A good thing for hackers
-travelling with laptops!
-
-The major issue here is that I have not yet found code, or a
-database, that would allow mapping from lon/lat to timezone.
-And the rules change from year to year.
-
-Actually this should be built as a specialized client, as some
-people won't want it.
-
-From <http://www.linuxsa.org.au/tips/time.html>:
-
-    The timezone under Linux is set by a symbolic link from
-    /etc/localtime[1] to a file in the /usr/share/zoneinfo[2] directory
-    that corresponds with what timezone you are in. For example, since I'm
-    in South Australia, /etc/localtime is a symlink to
-    /usr/share/zoneinfo/Australia/South. To set this link, type:
-
-    ln -sf ../usr/share/zoneinfo/your/zone /etc/localtime
-
-    Replace your/zone with something like Australia/NSW or
-    Australia/Perth. Have a look in the directories under
-    /usr/share/zoneinfo to see what timezones are available.
-
-    [1] This assumes that /usr/share/zoneinfo is linked to /etc/localtime as it is under Red Hat Linux.
-
-    [2] On older systems, you'll find that /usr/lib/zoneinfo is used
-    instead of /usr/share/zoneinfo.
-
-Changing the hardlink will, of course, update the system timezone for
-all users.  If I were designing this feature, I'd ensure that the
-system timezone can be overridden by a user-set TZ, but I don't know
-if it actually works that way.
-
-If I'm reading the tea leaves correctly, this functionality is actually
-embedded in the GCC library version of tzset(), so the same method will
-work on any system that uses that.
-
-Problem: system daemons use the timezone set when they start up. You
-can't get them to grok a new one short of rebooting.
-
-Sources: 
-
-Sources for Time Zone and Daylight Saving Time Data
-http://www.twinsun.com/tz/tz-link.htm
-
-Free time-zone maps of the U.S.
-http://www.manifold.net/download/freemaps.html
+are not $50 USB mice...
 
 Local variables:
 mode: outline

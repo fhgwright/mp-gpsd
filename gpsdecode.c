@@ -2,24 +2,23 @@
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
-#include <sys/types.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
+#include <stdarg.h>
 #ifndef S_SPLINT_S
 #include <unistd.h>
 #endif /* S_SPLINT_S */
-#include <stdlib.h>
-#include <string.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <ctype.h>
 
 #include "gpsd.h"
 #include "gps_json.h"
 
 static int verbose = 0;
 static bool scaled = true;
-static bool json = false;
+static bool json = true;
+static unsigned int ntypes = 0;
+static unsigned int typelist[32];
 
 /**************************************************************************
  *
@@ -39,10 +38,11 @@ void gpsd_report(int errlevel, const char *fmt, ...)
 	(void)vsnprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), fmt,
 			ap);
 	va_end(ap);
-	(void)fputs(buf, stdout);
+	(void)fputs(buf, stderr);
     }
 }
 
+#ifdef AIVDM_ENABLE
 static void aivdm_csv_dump(struct ais_t *ais, char *buf, size_t buflen)
 {
     (void)snprintf(buf, buflen, "%u|%u|%09u|", ais->type, ais->repeat,
@@ -358,97 +358,124 @@ static void aivdm_csv_dump(struct ais_t *ais, char *buf, size_t buflen)
     /*@ +formatcode @*/
     (void)strlcat(buf, "\r\n", buflen);
 }
+#endif
 
-/*@ -compdestroy -compdef -usedef @*/
-static void decode(FILE * fpin, FILE * fpout)
-/* RTCM or AIS packets on fpin to dump format on fpout */
+static bool filter(gps_mask_t changed, struct gps_device_t *session)
+/* say whether a given message should be visible */
 {
-    struct gps_packet_t lexer;
-    struct rtcm2_t rtcm2;
-    struct rtcm3_t rtcm3;
-    struct ais_t ais;
-    struct aivdm_context_t aivdm[AIVDM_CHANNELS];
-    char buf[BUFSIZ];
+    if (ntypes == 0)
+	return true;
+    else {
+	unsigned int i, t;
 
-    memset(&aivdm, '\0', sizeof(aivdm));
-    packet_reset(&lexer);
+	if ((changed & AIS_SET)!=0)
+	    t = session->gpsdata.ais.type;
+	else if ((changed & RTCM2_SET)!=0)
+	    t = session->gpsdata.rtcm2.type;
+	else if ((changed & RTCM3_SET)!=0)
+	    t = session->gpsdata.rtcm3.type;
+	else
+	    return true;
+	for (i = 0; i < ntypes; i++)
+	    if (t == typelist[i])
+		return true;
+    }
+    return false;
+}
 
-    while (packet_get(fileno(fpin), &lexer) > 0) {
-	if (lexer.type == COMMENT_PACKET)
+/*@ -compdestroy -compdef -usedef -uniondef @*/
+static void decode(FILE *fpin, FILE*fpout)
+/* sensor data on fpin to dump format on fpout */
+{
+    struct gps_device_t session;
+    struct gps_context_t context;
+    struct policy_t policy;
+    char buf[GPS_JSON_RESPONSE_MAX * 4];
+
+    //This looks like a good idea, but it breaks regression tests
+    //(void)strlcpy(session.gpsdata.dev.path, "stdin", sizeof(session.gpsdata.dev.path));
+    memset(&policy, '\0', sizeof(policy));
+    policy.json = json;
+
+    gps_context_init(&context);
+    gpsd_time_init(&context, time(NULL));
+    context.readonly = true;
+    gpsd_init(&session, &context, NULL);
+    gpsd_clear(&session);
+    session.gpsdata.gps_fd = fileno(fpin);
+    session.gpsdata.dev.baudrate = 38400;     /* hack to enable subframes */
+
+    for (;;)
+    {
+	gps_mask_t changed = gpsd_poll(&session);
+
+	if (changed == ERROR_SET || changed == NODATA_IS)
+	    break;
+	if (session.packet.type == COMMENT_PACKET)
+	    gpsd_set_century(&session);
+	if (verbose >= 1 && TEXTUAL_PACKET_TYPE(session.packet.type))
+	    (void)fputs((char *)session.packet.outbuffer, fpout);
+	if ((changed & (REPORT_IS|SUBFRAME_SET|AIS_SET|RTCM2_SET|RTCM3_SET|PASSTHROUGH_IS)) == 0)
 	    continue;
-#ifdef RTCM104V2_ENABLE
-	else if (lexer.type == RTCM2_PACKET) {
-	    rtcm2_unpack(&rtcm2, (char *)lexer.isgps.buf);
-	    if (json)
-		rtcm2_json_dump(&rtcm2, buf, sizeof(buf));
+	if (!filter(changed, &session))
+	    continue;
+	else if (json) {
+	    if ((changed & PASSTHROUGH_IS) != 0) {
+		(void)fputs((char *)session.packet.outbuffer, fpout);
+		(void)fputs("\n", fpout);
+	    } 
+#ifdef SOCKET_EXPORT_ENABLE
 	    else
-		rtcm2_sager_dump(&rtcm2, buf, sizeof(buf));
-	    (void)fputs(buf, fpout);
-	}
-#endif
-#ifdef RTCM104V3_ENABLE
-	else if (lexer.type == RTCM3_PACKET) {
-	    rtcm3_unpack(&rtcm3, (char *)lexer.outbuffer);
-	    rtcm3_dump(&rtcm3, stdout);
-	}
-#endif
-	else if (lexer.type == AIVDM_PACKET) {
-	    if (verbose >= 1)
-		(void)fputs((char *)lexer.outbuffer, stdout);
-	    /*@ -uniondef */
-	    if (aivdm_decode
-		((char *)lexer.outbuffer, lexer.outbuflen, aivdm, &ais)) {
-		if (!json)
-		    aivdm_csv_dump(&ais, buf, sizeof(buf));
-		else
-		    aivdm_json_dump(&ais, scaled, buf, sizeof(buf));
+		json_data_report(changed, 
+				 &session, &policy, 
+				 buf, sizeof(buf));
+#endif /* SOCKET_EXPORT_ENABLE */
+	    (void)fputs(buf, fpout);	
+#ifdef AIVDM_ENABLE
+	} else if (session.packet.type == AIVDM_PACKET) {
+	    if ((changed & AIS_SET)!=0) {
+		aivdm_csv_dump(&session.gpsdata.ais, buf, sizeof(buf));
 		(void)fputs(buf, fpout);
 	    }
-
-	    /*@ +uniondef */
+#endif /* AIVDM_ENABLE */
 	}
     }
 }
 
-/*@ +compdestroy +compdef +usedef @*/
-
-/*@ -compdestroy @*/
-static void encode(FILE * fpin, FILE * fpout)
-/* dump format on fpin to RTCM-104 on fpout */
+#ifdef SOCKET_EXPORT_ENABLE
+static void encode(FILE *fpin, FILE *fpout)
+/* JSON format on fpin to JSON on fpout - idempotency test */
 {
     char inbuf[BUFSIZ];
-    struct gps_data_t gpsdata;
+    struct policy_t policy;
+    struct gps_device_t session;
     int lineno = 0;
 
-    memset(&gpsdata, '\0', sizeof(gpsdata));	/* avoid segfault due to garbage in thread-hook slots */
+    memset(&policy, '\0', sizeof(policy));
+    memset(&session, '\0', sizeof(session));
+    policy.json = true;
+
     while (fgets(inbuf, (int)sizeof(inbuf), fpin) != NULL) {
 	int status;
 
 	++lineno;
 	if (inbuf[0] == '#')
 	    continue;
-	status = libgps_json_unpack(inbuf, &gpsdata, NULL);
+	status = libgps_json_unpack(inbuf, &session.gpsdata, NULL);
 	if (status != 0) {
 	    (void)fprintf(stderr,
-			  "gpsdecode: bailing out with status %d (%s) on line %d\n",
+			  "gpsdecode: dying with status %d (%s) on line %d\n",
 			  status, json_error_string(status), lineno);
 	    exit(1);
 	}
-	if ((gpsdata.set & RTCM2_SET) != 0) {
-	    /* this works */
-	    char outbuf[BUFSIZ];
-	    rtcm2_json_dump(&gpsdata.rtcm2, outbuf, sizeof(outbuf));
-	    (void)fputs(outbuf, fpout);
-	}
-	if ((gpsdata.set & AIS_SET) != 0) {
-	    char outbuf[BUFSIZ];
-	    aivdm_json_dump(&gpsdata.ais, false, outbuf, sizeof(outbuf));
-	    (void)fputs(outbuf, fpout);
-	}
+	json_data_report(session.gpsdata.set, 
+			 &session, &policy, 
+			 inbuf, sizeof(inbuf));
+	(void)fputs(inbuf, fpout);	
     }
 }
-
-/*@ +compdestroy @*/
+/*@ +compdestroy +compdef +usedef @*/
+#endif /* SOCKET_EXPORT_ENABLE */
 
 int main(int argc, char **argv)
 {
@@ -456,7 +483,7 @@ int main(int argc, char **argv)
     enum
     { doencode, dodecode } mode = dodecode;
 
-    while ((c = getopt(argc, argv, "cdejpuVD:")) != EOF) {
+    while ((c = getopt(argc, argv, "cdejpt:uvVD:")) != EOF) {
 	switch (c) {
 	case 'c':
 	    json = false;
@@ -474,14 +501,29 @@ int main(int argc, char **argv)
 	    json = true;
 	    break;
 
+	case 't':
+	    /*@-nullpass@*/
+	    typelist[ntypes++] = (unsigned int)atoi(strtok(optarg, ","));
+	    for(;;) {
+		char *next = strtok(NULL, ",");
+		if (next == NULL)
+		    break;
+		typelist[ntypes++] = (unsigned int)atoi(next);
+	    }
+	    /*@+nullpass@*/
+	    break;
+
 	case 'u':
 	    scaled = false;
 	    break;
 
+	case 'v':
+	    verbose = 1;
+	    break;
+		
 	case 'D':
 	    verbose = atoi(optarg);
-	    gpsd_hexdump_level = verbose;
-#ifdef CLIENTDEBUG_ENABLE
+#if defined(CLIENTDEBUG_ENABLE) && defined(SOCKET_EXPORT_ENABLE)
 	    json_enable_debug(verbose - 2, stderr);
 #endif
 	    break;
@@ -496,12 +538,17 @@ int main(int argc, char **argv)
 	    exit(1);
 	}
     }
-    argc -= optind;
-    argv += optind;
+    //argc -= optind;
+    //argv += optind;
 
-    if (mode == doencode)
+    if (mode == doencode) {
+#ifdef SOCKET_EXPORT_ENABLE
 	encode(stdin, stdout);
-    else
+#else
+	(void)fprintf(stderr, "gpsdecode: encoding support isn't compiled.\n");
+	exit(1);
+#endif /* SOCKET_EXPORT_ENABLE */
+    } else
 	decode(stdin, stdout);
     exit(0);
 }

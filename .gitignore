@@ -4,21 +4,23 @@ xgps
 rtcmdecode
 gpsmon
 gpsctl
+gpsdctl
 gpsdecode
 cgps
 lcdgps
 gpxlogger
 cgpxlogger
 gpspipe
-libgps
-gpspacket.so
+clockwatcher
 # These are built from .in files
 gpscat
 gpsfake
 gpsprof
 jsongen.py
 maskaudit.py
-valgrind-audit
+upload
+gpsd.php
+valgrind-audit.py
 # Unit tests
 test_float
 test_bits
@@ -29,11 +31,13 @@ test_mkgmtime
 test_geoid
 test_json
 test_trig
+test_libgps
 # Other generated files
 gps.html
 gpscat.html
 gpsctl.html
 gpsd.html
+gpsd_json.html
 gpsdecode.html
 gpsfake.html
 gpsmon.html
@@ -42,7 +46,6 @@ gpsprof.html
 libgps.html
 libgpsd.html
 libgpsmm.html
-rtcm-104.html
 srec.html
 *.[1358]
 *.pyc
@@ -50,18 +53,27 @@ srec.html
 *.sum
 *.i
 *.o
+*.os
+*.a
 *.lo
-*.so
 *.la
+*.so
+*.so.[0-9.]*
+*.dylib
 *~
+*.swp
+*.egg-info
+# Built sources
 gps_maskdump.c
 gpsd_maskdump.c
 gpsd.h
 gpsd_config.h.in
 gpsd_config.h
 packet_names.h
-gpsd.spec
 revision.h
+timebase.h
+pps_pin.h
+gpsd.spec
 MANIFEST
 .kdbgrc.*
 tags
@@ -74,28 +86,18 @@ xgpsc
 xgpsspeedc
 # Developer sandbox directory for patches that haven't been applied yet
 patches
-# autotools cruft
-configure
-Makefile.in
-Makefile
-config.*
-aclocal.m4
-py-compile
-ltmain.sh
-missing
-autom4te.cache
-depcomp
-install-sh
-stamp-*
-.libs
-.deps
-libtool
-NEWS
-ChangeLog
+# SCons cruft
+config.log
+.sconsign.dblite
+.sconf_temp
+.scons-option-cache
+stamp-python
 # Documentation
 www/AIVDM.html
 www/NMEA.html
+www/faq.html
 www/gps.html
+www/gps_report.cgi
 www/gpscat.html
 www/gpsctl.html
 www/gpsd.html
@@ -104,8 +106,11 @@ www/gpsfake.html
 www/gpsmon.html
 www/gpspipe.html
 www/gpsprof.html
+www/hacking.html
 www/hardware.html
+www/hardware-head.html
 www/index.html
+www/installation.html
 www/libgps.html
 www/libgpsd.html
 www/libgpsmm.html
@@ -113,7 +118,6 @@ www/performance/performance.html
 www/protocol-evolution.html
 www/protocol-transition.html
 www/client-howto.html
-www/rtcm-104.html
 www/srec.html
 www/writing-a-driver.html
 www/internals.html

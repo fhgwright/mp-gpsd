@@ -13,13 +13,14 @@ PERMISSIONS
 
 ***************************************************************************/
 
+#include <stdio.h>
 #include <math.h>
-#include <assert.h>
 #include <string.h>
 #include <stddef.h>
-#include <stdio.h>
 
 #include "gpsd.h"
+
+#ifdef SOCKET_EXPORT_ENABLE
 #include "gps_json.h"
 
 /* common fields in every RTCM2 message */
@@ -50,17 +51,17 @@ int json_rtcm2_read(const char *buf,
 
     /*@ -fullinitblock @*/
     const struct json_attr_t rtcm1_satellite[] = {
-	{"ident",     t_uinteger, STRUCTOBJECT(struct rangesat_t, ident)},
-	{"udre",      t_uinteger, STRUCTOBJECT(struct rangesat_t, udre)},
-	{"issuedata", t_uinteger, STRUCTOBJECT(struct rangesat_t, issuedata)},
-	{"rangerr",   t_real,     STRUCTOBJECT(struct rangesat_t, rangerr)},
-	{"rangerate", t_real,     STRUCTOBJECT(struct rangesat_t, rangerate)},
+	{"ident",     t_uinteger, STRUCTOBJECT(struct gps_rangesat_t, ident)},
+	{"udre",      t_uinteger, STRUCTOBJECT(struct gps_rangesat_t, udre)},
+	{"iod",       t_uinteger, STRUCTOBJECT(struct gps_rangesat_t, iod)},
+	{"prc",       t_real,     STRUCTOBJECT(struct gps_rangesat_t, prc)},
+	{"rrc",       t_real,     STRUCTOBJECT(struct gps_rangesat_t, rrc)},
 	{NULL},
     };
     /*@-type@*//* STRUCTARRAY confuses splint */
     const struct json_attr_t json_rtcm1[] = {
 	RTCM2_HEADER
-        {"satellites", t_array,	STRUCTARRAY(rtcm2->ranges.sat, 
+        {"satellites", t_array,	STRUCTARRAY(rtcm2->gps_ranges.sat, 
 					    rtcm1_satellite, &satcount)},
 	{NULL},
     };
@@ -79,7 +80,7 @@ int json_rtcm2_read(const char *buf,
 
     /*
      * Beware! Needs to stay synchronized with a corresponding
-     * nam,e array in the RTCM2 JSON dump code. This interpretation of
+     * name array in the RTCM2 JSON dump code. This interpretation of
      * NAVSYSTEM_GALILEO is assumed from RTCM3, it's not actually
      * documented in RTCM 2.1.
      */
@@ -148,12 +149,50 @@ int json_rtcm2_read(const char *buf,
     };
     /*@+type@*/
 
+    const struct json_attr_t json_rtcm13[] = {
+	RTCM2_HEADER
+        {"status",       t_boolean,  .addr.boolean = &rtcm2->xmitter.status},
+        {"rangeflag",    t_boolean,  .addr.boolean = &rtcm2->xmitter.rangeflag},
+	{"lat",          t_real,     .addr.real = &rtcm2->xmitter.lat,
+			                .dflt.real = NAN},
+	{"lon",          t_real,     .addr.real = &rtcm2->xmitter.lon,
+			                .dflt.real = NAN},
+	{"range",        t_uinteger, .addr.uinteger = &rtcm2->xmitter.range},
+	{NULL},
+    };
+
+    const struct json_attr_t json_rtcm14[] = {
+	RTCM2_HEADER
+	{"week",              t_uinteger, .addr.uinteger = &rtcm2->gpstime.week},
+	{"hour",              t_uinteger, .addr.uinteger = &rtcm2->gpstime.hour},
+	{"leapsecs",          t_uinteger, .addr.uinteger = &rtcm2->gpstime.leapsecs},
+	{NULL},
+    };
+
     const struct json_attr_t json_rtcm16[] = {
 	RTCM2_HEADER
 	{"message",        t_string,  .addr.string = rtcm2->message,
 	                                 .len = sizeof(rtcm2->message)},
 	{NULL},
     };
+
+    const struct json_attr_t rtcm31_satellite[] = {
+	{"ident",     t_uinteger, STRUCTOBJECT(struct glonass_rangesat_t, ident)},
+	{"udre",      t_uinteger, STRUCTOBJECT(struct glonass_rangesat_t, udre)},
+	{"change",    t_boolean,  STRUCTOBJECT(struct glonass_rangesat_t, change)},
+	{"tod",       t_uinteger, STRUCTOBJECT(struct glonass_rangesat_t, tod)},
+	{"prc",       t_real,     STRUCTOBJECT(struct glonass_rangesat_t, prc)},
+	{"rrc",       t_real,     STRUCTOBJECT(struct glonass_rangesat_t, rrc)},
+	{NULL},
+    };
+    /*@-type@*//* STRUCTARRAY confuses splint */
+    const struct json_attr_t json_rtcm31[] = {
+	RTCM2_HEADER
+        {"satellites", t_array,	STRUCTARRAY(rtcm2->glonass_ranges.sat, 
+					    rtcm31_satellite, &satcount)},
+	{NULL},
+    };
+    /*@+type@*/
 
     /*@-type@*//* complex union array initislizations confuses splint */
     const struct json_attr_t json_rtcm2_fallback[] = {
@@ -178,7 +217,7 @@ int json_rtcm2_read(const char *buf,
 	|| strstr(buf, "\"type\":9,") != NULL) {
 	status = json_read_object(buf, json_rtcm1, endptr);
 	if (status == 0)
-	    rtcm2->ranges.nentries = (unsigned)satcount;
+	    rtcm2->gps_ranges.nentries = (unsigned)satcount;
     } else if (strstr(buf, "\"type\":3,") != NULL) {
 	status = json_read_object(buf, json_rtcm3, endptr);
 	if (status == 0) {
@@ -201,8 +240,16 @@ int json_rtcm2_read(const char *buf,
 	status = json_read_object(buf, json_rtcm7, endptr);
 	if (status == 0)
 	    rtcm2->almanac.nentries = (unsigned)satcount;
+    } else if (strstr(buf, "\"type\":13,") != NULL) {
+	status = json_read_object(buf, json_rtcm13, endptr);
+    } else if (strstr(buf, "\"type\":14,") != NULL) {
+	status = json_read_object(buf, json_rtcm14, endptr);
     } else if (strstr(buf, "\"type\":16,") != NULL) {
 	status = json_read_object(buf, json_rtcm16, endptr);
+    } else if (strstr(buf, "\"type\":31,") != NULL) {
+	status = json_read_object(buf, json_rtcm31, endptr);
+	if (status == 0)
+	    rtcm2->glonass_ranges.nentries = (unsigned)satcount;
     } else {
 	int n;
 	status = json_read_object(buf, json_rtcm2_fallback, endptr);
@@ -221,5 +268,6 @@ int json_rtcm2_read(const char *buf,
     }
     return status;
 }
+#endif /* SOCKET_EXPORT_ENABLE */
 
 /* rtcm2_json.c ends here */

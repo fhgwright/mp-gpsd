@@ -2,18 +2,16 @@
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
-#include <stdlib.h>
-#include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 #include <stdarg.h>
+#include <ctype.h>
+#include <sys/types.h>
+#include <fcntl.h>
 #ifndef S_SPLINT_S
 #include <unistd.h>
 #endif /* S_SPLINT_S */
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 
 #include "gpsd.h"
 
@@ -207,6 +205,7 @@ static struct map singletests[] = {
 	.type = EVERMORE_PACKET,                         
     },
     {
+	/* from page 4-3 of RTCM 10403.1 */
 	.legend = "RTCM104V3 type 1005 packet",
 	/*
 	 * Reference Station Id = 2003
@@ -237,6 +236,21 @@ static struct map singletests[] = {
 	.garbage_offset = 0,
 	.type = BAD_PACKET,                         
     },
+    {
+	/* from page 3-71 of the RTCM 10403.1 */
+	.legend = "RTCM104V3 type 1029 packet",
+	.test = {
+	    0xD3, 0x00, 0x27, 0x40, 0x50, 0x17, 0x00, 0x84, 
+	    0x73, 0x6E, 0x15, 0x1E, 0x55, 0x54, 0x46, 0x2D,
+	    0x38, 0x20, 0xD0, 0xBF, 0xD1, 0x80, 0xD0, 0xBE,
+	    0xD0, 0xB2, 0xD0, 0xB5, 0xD1, 0x80, 0xD0, 0xBA,
+	    0xD0, 0xB0, 0x20, 0x77, 0xC3, 0xB6, 0x72, 0x74,
+	    0x65, 0x72, 0xED, 0xA3, 0x3B
+	    },
+	.testlen = 45,
+	.garbage_offset = 0,
+	.type = RTCM3_PACKET,                         
+    },
 };
 /*@ +initallelements -charint +usedef @*/
 /* *INDENT-ON* */
@@ -262,6 +276,7 @@ static int packet_test(struct map *mp)
     int failure = 0;
 
     packet_init(&packet);
+    packet.debug = verbose;
     /*@i@*/ memcpy(packet.inbufptr = packet.inbuffer, mp->test, mp->testlen);
     packet.inbuflen = mp->testlen;
     /*@ -compdef -uniondef -usedef -formatcode @*/
@@ -277,24 +292,7 @@ static int packet_test(struct map *mp)
 	++failure;
     } else
 	printf("%2zi: %s test succeeded.\n", mp - singletests + 1,
-	       mp->legend);
-#ifdef DUMPIT
-    for (cp = packet.outbuffer;
-	 cp < packet.outbuffer + packet.outbuflen; cp++) {
-	if (lexer->type != NMEA_PACKET)
-	    (void)printf(" 0x%02x", *cp);
-	else if (*cp == '\r')
-	    (void)fputs("\\r", stdout);
-	else if (*cp == '\n')
-	    (void)fputs("\\n", stdout);
-	else if (isprint(*cp))
-	    (void)putchar(*cp);
-	else
-	    (void)printf("\\x%02x", *cp);
-    }
-    (void)putchar('\n');
-#endif /* DUMPIT */
-    /*@ +compdef +uniondef +usedef +formatcode @*/
+	       mp->legend);    /*@ +compdef +uniondef +usedef +formatcode @*/
 
     return failure;
 }
@@ -306,13 +304,14 @@ static void runon_test(struct map *mp)
     ssize_t st;
 
     packet_init(&packet);
+    packet.debug = verbose;
     /*@i@*/ memcpy(packet.inbufptr = packet.inbuffer, mp->test, mp->testlen);
     packet.inbuflen = mp->testlen;
     /*@ -compdef -uniondef -usedef -formatcode @*/
     (void)fputs(mp->test, stdout);
     do {
 	st = packet_get(nullfd, &packet);
-	printf("packet_parse() returned %zd\n", st);
+	//printf("packet_parse() returned %zd\n", st);
     } while (st > 0);
     /*@ +compdef +uniondef +usedef +formatcode @*/
 }
@@ -324,8 +323,13 @@ int main(int argc, char *argv[])
     int option, singletest = 0;
 
     verbose = 0;
-    while ((option = getopt(argc, argv, "t:v:")) != -1) {
+    while ((option = getopt(argc, argv, "e:t:v:")) != -1) {
 	switch (option) {
+	case 'e':
+	    mp = singletests + atoi(optarg) - 1;
+	    (void)fwrite(mp->test, mp->testlen, sizeof(char), stdout);
+	    (void)fflush(stdout);
+	    exit(0);
 	case 't':
 	    singletest = atoi(optarg);
 	    break;
@@ -338,7 +342,7 @@ int main(int argc, char *argv[])
     if (singletest)
 	failcount += packet_test(singletests + singletest - 1);
     else {
-	(void)fputs("=== Packet identification tests\n ===", stdout);
+	(void)fputs("=== Packet identification tests ===\n", stdout);
 	for (mp = singletests;
 	     mp < singletests + sizeof(singletests) / sizeof(singletests[0]);
 	     mp++)

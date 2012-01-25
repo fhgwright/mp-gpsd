@@ -5,26 +5,11 @@
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <ctype.h>
-#ifndef S_SPLINT_S
-#include <unistd.h>
-#endif /* S_SPLINT_S */
-#include <stdarg.h>
-#include <stdbool.h>
 #include <assert.h>
 
-#include "gpsd_config.h"
-
-#ifdef HAVE_NCURSES_H
-#include <ncurses.h>
-#else
-#include <curses.h>
-#endif /* HAVE_NCURSES_H */
 #include "gpsd.h"
-
 #include "bits.h"
 #include "gpsmon.h"
 
@@ -90,6 +75,7 @@ static const char *pos_hold_mode[] = {
 
 static bool oncore_initialize(void)
 {
+    /*@-globstate@*/
     unsigned int i;
 
     /*@ -onlytrans @*/
@@ -104,7 +90,7 @@ static bool oncore_initialize(void)
     /*@ +onlytrans @*/
 
     if (Ea1win == NULL || Eawin == NULL || Bbwin == NULL || Enwin == NULL
-	|| Bowin == NULL || Aswin == NULL || Atwin == NULL)
+	|| Bowin == NULL || Aswin == NULL || Atwin == NULL || Aywin == NULL)
 	return false;
 
     (void)syncok(Ea1win, true);
@@ -163,7 +149,7 @@ static bool oncore_initialize(void)
 
     (void)wborder(Aywin, 0, 0, 0, 0, 0, 0, 0, 0),
 	(void)wattrset(Aywin, A_BOLD);
-    (void)mvwprintw(Aywin, 1, 1, "PPS delay:");
+    (void)mvwprintw(Aywin, 1, 1, "PPS offset:");
     (void)mvwprintw(Aywin, 3, 4, " @@Ay ");
     (void)wattrset(Aywin, A_NORMAL);
 
@@ -184,6 +170,7 @@ static bool oncore_initialize(void)
     memset(EaSVlines, 0, sizeof(EaSVlines));
 
     return true;
+    /*@+globstate@*/
 }
 
 static void oncore_update(void)
@@ -209,18 +196,18 @@ static void oncore_update(void)
 
 	mon = (unsigned char)getub(buf, 4);
 	day = (unsigned char)getub(buf, 5);
-	year = (unsigned short)getbeuw(buf, 6);
+	year = (unsigned short)getbeu16(buf, 6);
 	hour = (unsigned char)getub(buf, 8);
 	min = (unsigned char)getub(buf, 9);
 	sec = (unsigned char)getub(buf, 10);
-	nsec = (unsigned int)getbeul(buf, 11);
+	nsec = (unsigned int)getbeu32(buf, 11);
 
-	lat = getbesl(buf, 15) / 3600000.0;
-	lon = getbesl(buf, 19) / 3600000.0;
-	alt = getbesl(buf, 23) / 100.0;
-	speed = (float)(getbeuw(buf, 31) / 100.0);
-	track = (float)(getbeuw(buf, 33) / 10.0);
-	dop = (float)(getbeuw(buf, 35) / 10.0);
+	lat = (double)getbes32(buf, 15) / 3600000.0;
+	lon = (double)getbes32(buf, 19) / 3600000.0;
+	alt = (double)getbes32(buf, 23) / 100.0;
+	speed = (float)(getbeu16(buf, 31) / 100.0);
+	track = (float)(getbeu16(buf, 33) / 10.0);
+	dop = (float)(getbeu16(buf, 35) / 10.0);
 	dopt = (unsigned char)getub(buf, 37);
 	nvis = (unsigned char)getub(buf, 38);
 	nsat = (unsigned char)getub(buf, 39);
@@ -231,14 +218,14 @@ static void oncore_update(void)
 	(void)mvwprintw(Ea1win, 1, 47, "%10.6lf %c",
 			fabs(lat), lat < 0 ? 'S' : lat > 0 ? 'N' : ' ');
 	(void)mvwprintw(Ea1win, 1, 66, "%10.6lf %c",
-			fabs(lon), lat < 0 ? 'W' : lon > 0 ? 'E' : ' ');
+			fabs(lon), lon < 0 ? 'W' : lon > 0 ? 'E' : ' ');
 
 	(void)mvwprintw(Ea1win, 2, 50, "%6.2f m/s", speed);
 	(void)mvwprintw(Ea1win, 2, 70, "%5.1f", track);
 	(void)mvwprintw(Ea1win, 3, 68, "%8.2f m", alt);
 
 	/*@ -predboolothers @*/
-	(void)snprintf(statusbuf, sizeof(statusbuf), "%s%s%s%s%s%s%s%s",
+	(void)snprintf(statusbuf, sizeof(statusbuf), "%s%s%s%s%s%s%s%s%s",
 		       status & 0x80 ? "PProp " : "",
 		       status & 0x40 ? "PoorGeom " : "",
 		       status & 0x20 ? "3D " : "",
@@ -246,7 +233,8 @@ static void oncore_update(void)
 		       status & 0x08 ? "Acq/PHold " : "",
 		       status & 0x04 ? "Diff " : "",
 		       status & 0x02 ? "Ins (<3 SV) " : "",
-		       status & 0x01 ? "BadAlm " : "");
+		       status & 0x01 ? "BadAlm " : "",
+		       dopt   & 0x20 ? "survey " : "");
 	/*@ +predboolothers @*/
 
 	(void)mvwprintw(Ea1win, 3, 24, "%-37s", statusbuf);
@@ -335,9 +323,9 @@ static void oncore_update(void)
 
 	    off = 5 + 7 * i;
 	    sv = (unsigned char)getub(buf, off);
-	    doppl = (int)getbesw(buf, off + 1);
+	    doppl = (int)getbes16(buf, off + 1);
 	    el = (int)getub(buf, off + 3);
-	    az = (int)getbeuw(buf, off + 4);
+	    az = (int)getbeu16(buf, off + 4);
 	    health = (int)getub(buf, off + 5);
 
 	    (void)wmove(Bbwin, (int)Bblines[i], 1);
@@ -363,13 +351,13 @@ static void oncore_update(void)
 	float alarm, sigma;
 
 	traim = (unsigned char)getub(buf, 5);
-	alarm = (float)(getbeuw(buf, 6) / 10.);
+	alarm = (float)(getbeu16(buf, 6) / 10.);
 	ctrl = (unsigned char)getub(buf, 8);
-	pulse = (unsigned char)getub(buf, 9);
-	sync = (unsigned char)getub(buf, 10);
-	sol_stat = (unsigned char)getub(buf, 11);
-	status = (unsigned char)getub(buf, 12);
-	sigma = (float)(getbeuw(buf, 13));
+	pulse = (unsigned char)getub(buf, 19);
+	sync = (unsigned char)getub(buf, 20);
+	sol_stat = (unsigned char)getub(buf, 21);
+	status = (unsigned char)getub(buf, 22);
+	sigma = (float)(getbeu16(buf, 23));
 
 	/*@ -predboolothers @*/
 	(void)mvwprintw(Enwin, 1, 24, "%3s", traim ? "on" : "off");
@@ -379,7 +367,7 @@ static void oncore_update(void)
 	(void)mvwprintw(Enwin, 5, 24, "%3s", pps_sync[sync]);
 	(void)mvwprintw(Enwin, 6, 20, "%7s", traim_sol[sol_stat]);
 	(void)mvwprintw(Enwin, 7, 11, "%16s", traim_status[status]);
-	(void)mvwprintw(Enwin, 8, 18, "%6.3f us", sigma);
+	(void)mvwprintw(Enwin, 8, 18, "%6.3f us", sigma * 0.001);
 	/*@ +predboolothers @*/
     }
 
@@ -403,11 +391,11 @@ static void oncore_update(void)
 
     case ONCTYPE('A', 'y'):
     {
-	double pps_delay;
+	double pps_offset;
 
-	pps_delay = getbesl(buf, 4) / 1000000.0;
+	pps_offset = (double)getbes32(buf, 4) / 1000000.0;
 
-	(void)mvwprintw(Aywin, 2, 2, " %7.3f ms", pps_delay);
+	(void)mvwprintw(Aywin, 2, 2, " %7.3f ms", pps_offset);
     }
 
 	monitor_log("Ay =");
@@ -429,14 +417,14 @@ static void oncore_update(void)
     {
 	double lat, lon, alt;
 
-	lat = getbesl(buf, 4) / 3600000.0;
-	lon = getbesl(buf, 8) / 3600000.0;
-	alt = getbesl(buf, 12) / 100.0;
+	lat = (double)getbes32(buf, 4) / 3600000.0;
+	lon = (double)getbes32(buf, 8) / 3600000.0;
+	alt = (double)getbes32(buf, 12) / 100.0;
 
 	(void)mvwprintw(Aswin, 1, 5, "%10.6lf %c",
 			fabs(lat), lat < 0 ? 'S' : lat > 0 ? 'N' : ' ');
 	(void)mvwprintw(Aswin, 2, 5, "%10.6lf %c",
-			fabs(lon), lat < 0 ? 'W' : lon > 0 ? 'E' : ' ');
+			fabs(lon), lon < 0 ? 'W' : lon > 0 ? 'E' : ' ');
 	(void)mvwprintw(Aswin, 3, 7, "%8.2f m", alt);
     }
 

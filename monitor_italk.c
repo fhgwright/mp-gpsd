@@ -2,32 +2,19 @@
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
+
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <ctype.h>
-#ifndef S_SPLINT_S
-#include <unistd.h>
-#endif /* S_SPLINT_S */
-#include <stdarg.h>
-#include <stdbool.h>
-#include <assert.h>
 
-#include "gpsd_config.h"
-
-#ifdef HAVE_NCURSES_H
-#include <ncurses.h>
-#else
-#include <curses.h>
-#endif /* HAVE_NCURSES_H */
 #include "gpsd.h"
-
 #include "bits.h"
 #include "gpsmon.h"
 
 #ifdef ITRAX_ENABLE
 #include "driver_italk.h"
+
+#ifdef HAVE_STRLCAT
+#include <string.h>
+#endif
 
 extern const struct gps_type_t italk_binary;
 static WINDOW *satwin, *navfixwin;
@@ -84,8 +71,8 @@ static bool italk_initialize(void)
 static void display_itk_navfix(unsigned char *buf, size_t len)
 {
 
-    unsigned int tow, tod, nsec, d, svlist;
-    unsigned short gps_week, flags, cflags, pflags, nsv;
+    unsigned int tow, tod, d, svlist;
+    unsigned short gps_week, nsv;
     unsigned short year, mon, day, hour, min, sec;
     double epx, epy, epz, evx, evy, evz;
     double latitude, longitude;
@@ -95,43 +82,45 @@ static void display_itk_navfix(unsigned char *buf, size_t len)
     if (len != 296)
 	return;
 
-    flags = (ushort) getleuw(buf, 7 + 4);
-    cflags = (ushort) getleuw(buf, 7 + 6);
-    pflags = (ushort) getleuw(buf, 7 + 8);
+#ifdef __UNUSED__
+    flags = (ushort) getleu16(buf, 7 + 4); */
+    cflags = (ushort) getleu16(buf, 7 + 6);
+    pflags = (ushort) getleu16(buf, 7 + 8);
+#endif /* __UNUSED__ */
 
 #define MAX(a,b) (((a) > (b)) ? (a) : (b))
-    nsv = (ushort) MAX(getleuw(buf, 7 + 12), getleuw(buf, 7 + 14));
-    svlist = (ushort) getleul(buf, 7 + 16) | getleul(buf, 7 + 24);
+    nsv = (ushort) MAX(getleu16(buf, 7 + 12), getleu16(buf, 7 + 14));
+    svlist = (ushort) getleu32(buf, 7 + 16) | getleu32(buf, 7 + 24);
 
-    hour = (ushort) getleuw(buf, 7 + 66);
-    min = (ushort) getleuw(buf, 7 + 68);
-    sec = (ushort) getleuw(buf, 7 + 70);
-    nsec = (ushort) getleul(buf, 7 + 72);
-    year = (ushort) getleuw(buf, 7 + 76);
-    mon = (ushort) getleuw(buf, 7 + 78);
-    day = (ushort) getleuw(buf, 7 + 80);
-    gps_week = (ushort) getlesw(buf, 7 + 82);
-    tow = (ushort) getleul(buf, 7 + 84);
+    hour = (ushort) getleu16(buf, 7 + 66);
+    min = (ushort) getleu16(buf, 7 + 68);
+    sec = (ushort) getleu16(buf, 7 + 70);
+    //nsec = (ushort) getleu32(buf, 7 + 72);
+    year = (ushort) getleu16(buf, 7 + 76);
+    mon = (ushort) getleu16(buf, 7 + 78);
+    day = (ushort) getleu16(buf, 7 + 80);
+    gps_week = (ushort) getles16(buf, 7 + 82);
+    tow = (ushort) getleu32(buf, 7 + 84);
 
-    epx = (double)(getlesl(buf, 7 + 96) / 100.0);
-    epy = (double)(getlesl(buf, 7 + 100) / 100.0);
-    epz = (double)(getlesl(buf, 7 + 104) / 100.0);
-    evx = (double)(getlesl(buf, 7 + 186) / 1000.0);
-    evy = (double)(getlesl(buf, 7 + 190) / 1000.0);
-    evz = (double)(getlesl(buf, 7 + 194) / 1000.0);
+    epx = (double)(getles32(buf, 7 + 96) / 100.0);
+    epy = (double)(getles32(buf, 7 + 100) / 100.0);
+    epz = (double)(getles32(buf, 7 + 104) / 100.0);
+    evx = (double)(getles32(buf, 7 + 186) / 1000.0);
+    evy = (double)(getles32(buf, 7 + 190) / 1000.0);
+    evz = (double)(getles32(buf, 7 + 194) / 1000.0);
 
-    latitude = (double)(getlesl(buf, 7 + 144) / 1e7);
-    longitude = (double)(getlesl(buf, 7 + 148) / 1e7);
-    altitude = (float)(getlesl(buf, 7 + 152) / 1e3);
-    climb = (float)(getlesl(buf, 7 + 206) / 1e3);
-    speed = (float)(getleul(buf, 7 + 210) / 1e3);
-    track = (float)(getleuw(buf, 7 + 214) / 1e2);
+    latitude = (double)(getles32(buf, 7 + 144) / 1e7);
+    longitude = (double)(getles32(buf, 7 + 148) / 1e7);
+    altitude = (float)(getles32(buf, 7 + 152) / 1e3);
+    climb = (float)(getles32(buf, 7 + 206) / 1e3);
+    speed = (float)(getleu32(buf, 7 + 210) / 1e3);
+    track = (float)(getleu16(buf, 7 + 214) / 1e2);
 
-    hdop = (float)(getleuw(buf, 7 + 56) / 100.0);
-    gdop = (float)(getleuw(buf, 7 + 58) / 100.0);
-    pdop = (float)(getleuw(buf, 7 + 60) / 100.0);
-    vdop = (float)(getleuw(buf, 7 + 62) / 100.0);
-    tdop = (float)(getleuw(buf, 7 + 64) / 100.0);
+    hdop = (float)(getleu16(buf, 7 + 56) / 100.0);
+    gdop = (float)(getleu16(buf, 7 + 58) / 100.0);
+    pdop = (float)(getleu16(buf, 7 + 60) / 100.0);
+    vdop = (float)(getleu16(buf, 7 + 62) / 100.0);
+    tdop = (float)(getleu16(buf, 7 + 64) / 100.0);
 
     (void)wmove(navfixwin, 1, 11);
     (void)wprintw(navfixwin, "%12.2lf %12.2lf %12.2lfm", epx, epy, epz);
@@ -195,7 +184,7 @@ static void display_itk_prnstatus(unsigned char *buf, size_t len)
     if (len < 62)
 	return;
 
-    nchan = (int)getleuw(buf, 7 + 50);
+    nchan = (int)getleu16(buf, 7 + 50);
     if (nchan > MAX_NR_VISIBLE_PRNS)
 	nchan = MAX_NR_VISIBLE_PRNS;
     for (i = 0; i < nchan; i++) {
@@ -203,11 +192,11 @@ static void display_itk_prnstatus(unsigned char *buf, size_t len)
 	unsigned short fl;
 	unsigned char ss, prn, el, az;
 
-	fl = (unsigned short)getleuw(buf, off);
-	ss = (unsigned char)getleuw(buf, off + 2) & 0xff;
-	prn = (unsigned char)getleuw(buf, off + 4) & 0xff;
-	el = (unsigned char)getlesw(buf, off + 6) & 0xff;
-	az = (unsigned char)getlesw(buf, off + 8) & 0xff;
+	fl = (unsigned short)getleu16(buf, off);
+	ss = (unsigned char)getleu16(buf, off + 2) & 0xff;
+	prn = (unsigned char)getleu16(buf, off + 4) & 0xff;
+	el = (unsigned char)getles16(buf, off + 6) & 0xff;
+	az = (unsigned char)getles16(buf, off + 8) & 0xff;
 	(void)wmove(satwin, i + 2, 4);
 	(void)wprintw(satwin, "%3d %3d %2d  %02d %04x %c",
 		      prn, az, el, ss, fl,

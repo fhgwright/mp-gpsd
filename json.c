@@ -9,7 +9,7 @@ Notation).  Unlike more general JSON parsers, it doesn't use malloc(3)
 and doesn't support polymorphism; you need to give it a set of
 template structures describing the expected shape of the incoming
 JSON, and it will error out if that shape is not matched.  When the
-parse succeds, attribute values will be extracted into static
+parse succeeds, attribute values will be extracted into static
 locations specified in the template structures.
 
    The "shape" of a JSON object in the type signature of its
@@ -19,6 +19,12 @@ the order of attributes at any level, but you have to tell it in
 advance what the type of each attribute value will be and where the
 parsed value will be stored. The template structures may supply
 default values to be used when an expected attribute is omitted.
+
+   The preceding paragraph told one fib.  A single attribute may 
+actually have a span of multiple specifications with different
+syntactically distinguishable types (e.g. string vs. real vs. integer
+vs boolean, but not signed integer vs. unsigned integer or strong vs. map).
+The parser will match the right spec against the actual data.
 
    The dialect this parses has some limitations.  First, it cannot
 recognize the JSON "null" value.  Secondly, arrays may only have
@@ -36,15 +42,15 @@ structobject.
 
    Object arrays take one base address per object subfield, and are 
 mapped into parallel C arrays (one per subfield).  Strings are not
-supported in this kind of array, as the don't have a "natural" size
+supported in this kind of array, as they don't have a "natural" size
 to use as an offset multiplier.
 
    Structobjects arrays are a way to parse a list of objects to a set
 of modifications to a corresponding array of C structs.  The trick is
 that the array object initialization has to specify both the C struct
 array's base address and the stride length (the size of the C struct).
-If you initialize the offset fields with the correct offsetof() calls,
-everything will work. Strings are suppported but all string storage
+If you initialize the offset fields with the correct offsetof calls,
+everything will work. Strings are supported but all string storage
 has to be inline in the struct.
 
 PERMISSIONS
@@ -55,10 +61,15 @@ PERMISSIONS
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <stdarg.h>
+#include <ctype.h>
 
 #include "gpsd_config.h"	/* for strlcpy() prototype */
+#ifdef SOCKET_EXPORT_ENABLE
 #include "json.h"
+
+#include "gps.h"		/* for safe_atof() & timestamp_t prototype */
 
 #ifdef CLIENTDEBUG_ENABLE
 static int debuglevel = 0;
@@ -109,6 +120,7 @@ static /*@null@*/ char *json_target_address(const struct json_attr_t *cursor,
 	case t_uinteger:
 	    targetaddr = (char *)&cursor->addr.uinteger[offset];
 	    break;
+	case t_time:
 	case t_real:
 	    targetaddr = (char *)&cursor->addr.real[offset];
 	    break;
@@ -186,6 +198,7 @@ static int json_internal_read_object(const char *cp,
 		case t_uinteger:
 		    *((unsigned int *)lptr) = cursor->dflt.uinteger;
 		    break;
+		case t_time:
 		case t_real:
 		    *((double *)lptr) = cursor->dflt.real;
 		    break;
@@ -267,6 +280,8 @@ static int json_internal_read_object(const char *cp,
 		    maxlen = (int)cursor->len - 1;
 		else if (cursor->type == t_check)
 		    maxlen = (int)strlen(cursor->dflt.check);
+		else if (cursor->type == t_time)
+		    maxlen = JSON_VAL_MAX;
 		else if (cursor->map != NULL)
 		    maxlen = (int)sizeof(valbuf) - 1;
 		pval = valbuf;
@@ -362,16 +377,45 @@ static int json_internal_read_object(const char *cp,
 		*pval++ = *cp;
 	    break;
 	case post_val:
+	    /*
+	     * We know that cursor points at the first spec matching
+	     * the current attribute.  We don't know that it's *the*
+	     * correct spec; our dialect allows there to be any number
+	     * of adjacent ones with the same attrname but different
+	     * types.  Here's where we try to seek forward for a
+	     * matching type/attr pair if we're not looking at one.
+	     */
+	    for (;;) {
+		int seeking = cursor->type;
+		if (value_quoted && (cursor->type == t_string || cursor->type == t_time))
+		    break;
+		if ((strcmp(valbuf, "true")==0 || strcmp(valbuf, "false")==0)
+			&& seeking == t_boolean)
+		    break;
+		if (isdigit(valbuf[0])) {
+		    bool decimal = strchr(valbuf, '.') != NULL;
+		    if (decimal && seeking == t_real)
+			break;
+		    if (!decimal && (seeking == t_integer || seeking == t_uinteger))
+			break;
+		}
+		if (cursor[1].attribute==NULL)	/* out of possiblities */
+		    break;
+		if (strcmp(cursor[1].attribute, attrbuf)!=0)
+		    break;
+		++cursor;
+	    }
 	    if (value_quoted
 		&& (cursor->type != t_string && cursor->type != t_character
-		    && cursor->type != t_check && cursor->map == 0)) {
+		    && cursor->type != t_check && cursor->type != t_time 
+		    && cursor->map == 0)) {
 		json_debug_trace((1,
 				  "Saw quoted value when expecting non-string.\n"));
 		return JSON_ERR_QNONSTRING;
 	    }
 	    if (!value_quoted
 		&& (cursor->type == t_string || cursor->type == t_check
-		    || cursor->map != 0)) {
+		    || cursor->type == t_time || cursor->map != 0)) {
 		json_debug_trace((1,
 				  "Didn't see quoted value when expecting string.\n"));
 		return JSON_ERR_NONQSTRING;
@@ -396,15 +440,18 @@ static int json_internal_read_object(const char *cp,
 		case t_uinteger:
 		    *((unsigned int *)lptr) = (unsigned)atoi(valbuf);
 		    break;
+		case t_time:
+		    *((double *)lptr) = iso8601_to_unix(valbuf);
+		    break;
 		case t_real:
-		    *((double *)lptr) = atof(valbuf);
+		    *((double *)lptr) = safe_atof(valbuf);
 		    break;
 		case t_string:
 		    if (parent != NULL
 			&& parent->element_type != t_structobject
 			&& offset > 0)
 			return JSON_ERR_NOPARSTR;
-		    (void)strncpy(lptr, valbuf, cursor->len);
+		    (void)strlcpy(lptr, valbuf, cursor->len);
 		    break;
 		case t_boolean:
 		    *((bool *) lptr) = (strcmp(valbuf, "true") == 0);
@@ -460,7 +507,7 @@ int json_read_array(const char *cp, const struct json_array_t *arr,
 		    const char **end)
 {
     /*@-nullstate -onlytrans@*/
-    int substatus, offset;
+    int substatus, offset, arrcount;
     char *tp;
 
     if (end != NULL)
@@ -477,8 +524,7 @@ int json_read_array(const char *cp, const struct json_array_t *arr,
 	cp++;
 
     tp = arr->arr.strings.store;
-    if (arr->count != NULL)
-	*(arr->count) = 0;
+    arrcount = 0;
     for (offset = 0; offset < arr->maxlen; offset++) {
 	json_debug_trace((1, "Looking at %s\n", cp));
 	switch (arr->element_type) {
@@ -517,6 +563,7 @@ int json_read_array(const char *cp, const struct json_array_t *arr,
 	    break;
 	case t_integer:
 	case t_uinteger:
+	case t_time:
 	case t_real:
 	case t_boolean:
 	case t_character:
@@ -525,8 +572,7 @@ int json_read_array(const char *cp, const struct json_array_t *arr,
 	    json_debug_trace((1, "Invalid array subtype.\n"));
 	    return JSON_ERR_SUBTYPE;
 	}
-	if (arr->count != NULL)
-	    (*arr->count)++;
+	arrcount++;
 	if (isspace(*cp))
 	    cp++;
 	if (*cp == ']') {
@@ -542,11 +588,13 @@ int json_read_array(const char *cp, const struct json_array_t *arr,
     json_debug_trace((1, "Too many elements in array.\n"));
     return JSON_ERR_SUBTOOLONG;
   breakout:
+    if (arr->count != NULL)
+	*(arr->count) = arrcount;
     if (end != NULL)
 	*end = cp;
     /*@ -nullderef @*/
     json_debug_trace((1, "leaving json_read_array() with %d elements\n",
-		      *arr->count));
+		      arrcount));
     /*@ +nullderef @*/
     return 0;
     /*@+nullstate +onlytrans@*/
@@ -555,8 +603,11 @@ int json_read_array(const char *cp, const struct json_array_t *arr,
 int json_read_object(const char *cp, const struct json_attr_t *attrs,
 		     /*@null@*/ const char **end)
 {
+    int st;
+
     json_debug_trace((1, "json_read_object() sees '%s'\n", cp));
-    return json_internal_read_object(cp, attrs, NULL, 0, end);
+    st = json_internal_read_object(cp, attrs, NULL, 0, end);
+    return st;
 }
 
 const /*@observer@*/ char *json_error_string(int err)
@@ -591,3 +642,8 @@ const /*@observer@*/ char *json_error_string(int err)
     else
 	return errors[err];
 }
+
+#endif /* SOCKET_EXPORT_ENABLE */
+
+/* end */
+

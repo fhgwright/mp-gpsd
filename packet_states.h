@@ -25,6 +25,7 @@
    AIS_LEAD_2,		/* seen I of possible marine AIS message */
 
    SEATALK_LEAD_1,	/* SeaTalk/Garmin packet leader 'I' */
+   ECDIS_LEAD_1,	/* ECDIS packet leader 'E' */
 #endif /* NMEA_ENABLE */
 
    DLE_LEADER,		/* we've seen the TSIP/EverMore leader (DLE) */
@@ -139,6 +140,21 @@
    ONCORE_RECOGNIZED,	/* closing LF */
 #endif
 
+#ifdef GEOSTAR_ENABLE
+   GEOSTAR_LEADER_1,        /* first constant leader byte found */
+   GEOSTAR_LEADER_2,        /* second constant leader byte found */
+   GEOSTAR_LEADER_3,        /* third constant leader byte found */
+   GEOSTAR_LEADER_4,        /* forth constant leader byte found */
+   GEOSTAR_MESSAGE_ID_1,    /* first message id read */
+   GEOSTAR_MESSAGE_ID_2,    /* second message id read */
+   GEOSTAR_LENGTH_1,        /* first length byte read */
+   GEOSTAR_LENGTH_2,        /* second length byte read */
+   GEOSTAR_PAYLOAD,         /* payload eating */
+   GEOSTAR_CHECKSUM_A,      /* checksum A byte (xor checksum) */
+   GEOSTAR_CHECKSUM_B,      /* checksum B byte (xor checksum) */
+   GEOSTAR_CHECKSUM_C,      /* checksum C byte (xor checksum) */
+   GEOSTAR_RECOGNIZED,      /* this is also GEOSTAR_CHECKSUM_D */
+#endif
 
 /*
  * Packet formats without checksums start here.  We list them last so
@@ -165,6 +181,18 @@
    RTCM3_LEADER_2,      /* second leader byte found (high 6 bits zero) */
    RTCM3_PAYLOAD,       /* gathering payload */
    RTCM3_RECOGNIZED,    /* RTCM3 packet recognized */
+#endif
+
+#ifdef PASSTHROUGH_ENABLE
+   JSON_LEADER,         /* JSON leading { found */
+   JSON_STRINGLITERAL,  /* start of JSON string literal seen */
+   JSON_STRING_SOLIDUS, /* backslash in string */
+   JSON_END_ATTRIBUTE,  /* end of JSON attribute */
+   JSON_EXPECT_VALUE,   /* just after colon */
+   JSON_END_VALUE,      /* end of JSON value */
+   JSON_NUMBER,         /* inside a JSON numeric literal */
+   JSON_SPECIAL,        /* inside a JSON special literal (true,false,null) */
+   JSON_RECOGNIZED,     /* JSON packet recognized */
 #endif
 
 /* end of packet_states.h */

@@ -14,13 +14,13 @@ PERMISSIONS
 
 ***************************************************************************/
 
+#include <stdbool.h>
 #include <math.h>
-#include <assert.h>
 #include <string.h>
 #include <stddef.h>
-#include <stdio.h>
 
 #include "gpsd.h"
+#ifdef SOCKET_EXPORT_ENABLE
 #include "gps_json.h"
 
 /*
@@ -34,7 +34,6 @@ PERMISSIONS
 static int json_tpv_read(const char *buf, struct gps_data_t *gpsdata,
 			 /*@null@*/ const char **endptr)
 {
-    int status;
     /*@ -fullinitblock @*/
     const struct json_attr_t json_attrs_1[] = {
 	/* *INDENT-OFF* */
@@ -43,6 +42,8 @@ static int json_tpv_read(const char *buf, struct gps_data_t *gpsdata,
 			         .len = sizeof(gpsdata->dev.path)},
 	{"tag",    t_string,  .addr.string = gpsdata->tag,
 			         .len = sizeof(gpsdata->tag)},
+	{"time",   t_time,    .addr.real = &gpsdata->fix.time,
+			         .dflt.real = NAN},
 	{"time",   t_real,    .addr.real = &gpsdata->fix.time,
 			         .dflt.real = NAN},
 	{"ept",    t_real,    .addr.real = &gpsdata->fix.ept,
@@ -78,41 +79,44 @@ static int json_tpv_read(const char *buf, struct gps_data_t *gpsdata,
     };
     /*@ +fullinitblock @*/
 
-    status = json_read_object(buf, json_attrs_1, endptr);
+    return json_read_object(buf, json_attrs_1, endptr);
+}
 
-    if (status == 0) {
-	gpsdata->status = STATUS_FIX;
-	gpsdata->set = STATUS_SET;
-	if (isnan(gpsdata->fix.time) == 0)
-	    gpsdata->set |= TIME_SET;
-	if (isnan(gpsdata->fix.ept) == 0)
-	    gpsdata->set |= TIMERR_SET;
-	if (isnan(gpsdata->fix.longitude) == 0)
-	    gpsdata->set |= LATLON_SET;
-	if (isnan(gpsdata->fix.altitude) == 0)
-	    gpsdata->set |= ALTITUDE_SET;
-	if (isnan(gpsdata->fix.epx) == 0 && isnan(gpsdata->fix.epy) == 0)
-	    gpsdata->set |= HERR_SET;
-	if (isnan(gpsdata->fix.epv) == 0)
-	    gpsdata->set |= VERR_SET;
-	if (isnan(gpsdata->fix.track) == 0)
-	    gpsdata->set |= TRACK_SET;
-	if (isnan(gpsdata->fix.speed) == 0)
-	    gpsdata->set |= SPEED_SET;
-	if (isnan(gpsdata->fix.climb) == 0)
-	    gpsdata->set |= CLIMB_SET;
-	if (isnan(gpsdata->fix.epd) == 0)
-	    gpsdata->set |= TRACKERR_SET;
-	if (isnan(gpsdata->fix.eps) == 0)
-	    gpsdata->set |= SPEEDERR_SET;
-	if (isnan(gpsdata->fix.epc) == 0)
-	    gpsdata->set |= CLIMBERR_SET;
-	if (isnan(gpsdata->fix.epc) == 0)
-	    gpsdata->set |= CLIMBERR_SET;
-	if (gpsdata->fix.mode != MODE_NOT_SEEN)
-	    gpsdata->set |= MODE_SET;
-    }
-    return status;
+static int json_noise_read(const char *buf, struct gps_data_t *gpsdata,
+                           /*@null@*/ const char **endptr)
+{
+    /*@ -fullinitblock @*/
+    const struct json_attr_t json_attrs_1[] = {
+	/* *INDENT-OFF* */
+	{"class",  t_check,   .dflt.check = "GST"},
+	{"device", t_string,  .addr.string = gpsdata->dev.path,
+			         .len = sizeof(gpsdata->dev.path)},
+	{"tag",    t_string,  .addr.string = gpsdata->tag,
+			         .len = sizeof(gpsdata->tag)},
+	{"time",   t_time,    .addr.real = &gpsdata->gst.utctime,
+			         .dflt.real = NAN},
+	{"time",   t_real,    .addr.real = &gpsdata->gst.utctime,
+			         .dflt.real = NAN},
+	{"rms",    t_real,    .addr.real = &gpsdata->gst.rms_deviation,
+			         .dflt.real = NAN},
+	{"major",  t_real,    .addr.real = &gpsdata->gst.smajor_deviation,
+			         .dflt.real = NAN},
+	{"minor",  t_real,    .addr.real = &gpsdata->gst.sminor_deviation,
+			         .dflt.real = NAN},
+	{"orient", t_real,    .addr.real = &gpsdata->gst.smajor_orientation,
+			         .dflt.real = NAN},
+	{"lat",    t_real,    .addr.real = &gpsdata->gst.lat_err_deviation,
+			         .dflt.real = NAN},
+	{"lon",    t_real,    .addr.real = &gpsdata->gst.lon_err_deviation,
+			         .dflt.real = NAN},
+	{"alt",    t_real,    .addr.real = &gpsdata->gst.alt_err_deviation,
+			         .dflt.real = NAN},
+	{NULL},
+	/* *INDENT-ON* */
+    };
+    /*@ +fullinitblock @*/
+
+    return json_read_object(buf, json_attrs_1, endptr);
 }
 
 static int json_sky_read(const char *buf, struct gps_data_t *gpsdata,
@@ -137,8 +141,10 @@ static int json_sky_read(const char *buf, struct gps_data_t *gpsdata,
 	                             .len = sizeof(gpsdata->dev.path)},
 	{"tag",	       t_string,  .addr.string  = gpsdata->tag,
 	                             .len = sizeof(gpsdata->tag)},
-	{"time",       t_real,    .addr.real    = &gpsdata->fix.time,
-	                             .nodefault = true},
+	{"time",       t_time,    .addr.real = &gpsdata->skyview_time,
+	      	                     .dflt.real = NAN},
+	{"time",       t_real,    .addr.real = &gpsdata->skyview_time,
+	      	                     .dflt.real = NAN},
 	{"hdop",       t_real,    .addr.real    = &gpsdata->dop.hdop,
 	                             .dflt.real = NAN},
 	{"xdop",       t_real,    .addr.real    = &gpsdata->dop.xdop,
@@ -163,22 +169,27 @@ static int json_sky_read(const char *buf, struct gps_data_t *gpsdata,
     /*@ +fullinitblock @*/
     int status, i, j;
 
-    for (i = 0; i < MAXCHANNELS; i++)
+    for (i = 0; i < MAXCHANNELS; i++) {
+	gpsdata->PRN[i] = 0;
 	usedflags[i] = false;
+    }
 
     status = json_read_object(buf, json_attrs_2, endptr);
     if (status != 0)
 	return status;
 
     gpsdata->satellites_used = 0;
+    gpsdata->satellites_visible = 0;
+    (void)memset(gpsdata->used, '\0', sizeof(gpsdata->used));
     for (i = j = 0; i < MAXCHANNELS; i++) {
+	if(gpsdata->PRN[i] > 0)
+	    gpsdata->satellites_visible++;
 	if (usedflags[i]) {
 	    gpsdata->used[j++] = gpsdata->PRN[i];
 	    gpsdata->satellites_used++;
 	}
     }
 
-    gpsdata->set |= SATELLITE_SET;
     return 0;
 }
 
@@ -248,8 +259,9 @@ static int json_devicelist_read(const char *buf, struct gps_data_t *gpsdata,
 	{"class",      t_check,      .dflt.check = "DEVICE"},
 	{"path",       t_string,     STRUCTOBJECT(struct devconfig_t, path),
 	                                .len = sizeof(gpsdata->devices.list[0].path)},
+	{"activated",  t_time,       STRUCTOBJECT(struct devconfig_t, activated)},
 	{"activated",  t_real,       STRUCTOBJECT(struct devconfig_t, activated)},
-	{"flags",      t_integer,	   STRUCTOBJECT(struct devconfig_t, flags)},
+	{"flags",      t_integer,    STRUCTOBJECT(struct devconfig_t, flags)},
 	{"driver",     t_string,     STRUCTOBJECT(struct devconfig_t, driver),
 	                                .len = sizeof(gpsdata->devices.list[0].driver)},
 	{"subtype",    t_string,     STRUCTOBJECT(struct devconfig_t, subtype),
@@ -288,8 +300,6 @@ static int json_devicelist_read(const char *buf, struct gps_data_t *gpsdata,
     }
 
     gpsdata->devices.time = timestamp();
-    gpsdata->set &= ~UNION_SET;
-    gpsdata->set |= DEVICELIST_SET;
     return 0;
 }
 
@@ -306,6 +316,8 @@ static int json_version_read(const char *buf, struct gps_data_t *gpsdata,
 	                            .len = sizeof(gpsdata->version.rev)},
 	{"proto_major", t_integer, .addr.integer = &gpsdata->version.proto_major},
 	{"proto_minor", t_integer, .addr.integer = &gpsdata->version.proto_minor},
+	{"remote",    t_string,  .addr.string  = gpsdata->version.remote,
+	                            .len = sizeof(gpsdata->version.remote)},
 	{NULL},
 	/* *INDENT-ON* */
     };
@@ -314,12 +326,8 @@ static int json_version_read(const char *buf, struct gps_data_t *gpsdata,
 
     memset(&gpsdata->version, '\0', sizeof(gpsdata->version));
     status = json_read_object(buf, json_attrs_version, endptr);
-    if (status != 0)
-	return status;
 
-    gpsdata->set &= ~UNION_SET;
-    gpsdata->set |= VERSION_SET;
-    return 0;
+    return status;
 }
 
 static int json_error_read(const char *buf, struct gps_data_t *gpsdata,
@@ -342,9 +350,7 @@ static int json_error_read(const char *buf, struct gps_data_t *gpsdata,
     if (status != 0)
 	return status;
 
-    gpsdata->set &= ~UNION_SET;
-    gpsdata->set |= ERROR_SET;
-    return 0;
+    return status;
 }
 
 int libgps_json_unpack(const char *buf,
@@ -358,13 +364,64 @@ int libgps_json_unpack(const char *buf,
 	return -1;
 #define STARTSWITH(str, prefix)	strncmp(str, prefix, sizeof(prefix)-1)==0
     if (STARTSWITH(classtag, "\"class\":\"TPV\"")) {
-	return json_tpv_read(buf, gpsdata, end);
+	status = json_tpv_read(buf, gpsdata, end);
+	gpsdata->status = STATUS_FIX;
+	gpsdata->set = STATUS_SET;
+	if (isnan(gpsdata->fix.time) == 0)
+	    gpsdata->set |= TIME_SET;
+	if (isnan(gpsdata->fix.ept) == 0)
+	    gpsdata->set |= TIMERR_SET;
+	if (isnan(gpsdata->fix.longitude) == 0)
+	    gpsdata->set |= LATLON_SET;
+	if (isnan(gpsdata->fix.altitude) == 0)
+	    gpsdata->set |= ALTITUDE_SET;
+	if (isnan(gpsdata->fix.epx) == 0 && isnan(gpsdata->fix.epy) == 0)
+	    gpsdata->set |= HERR_SET;
+	if (isnan(gpsdata->fix.epv) == 0)
+	    gpsdata->set |= VERR_SET;
+	if (isnan(gpsdata->fix.track) == 0)
+	    gpsdata->set |= TRACK_SET;
+	if (isnan(gpsdata->fix.speed) == 0)
+	    gpsdata->set |= SPEED_SET;
+	if (isnan(gpsdata->fix.climb) == 0)
+	    gpsdata->set |= CLIMB_SET;
+	if (isnan(gpsdata->fix.epd) == 0)
+	    gpsdata->set |= TRACKERR_SET;
+	if (isnan(gpsdata->fix.eps) == 0)
+	    gpsdata->set |= SPEEDERR_SET;
+	if (isnan(gpsdata->fix.epc) == 0)
+	    gpsdata->set |= CLIMBERR_SET;
+	if (isnan(gpsdata->fix.epc) == 0)
+	    gpsdata->set |= CLIMBERR_SET;
+	if (gpsdata->fix.mode != MODE_NOT_SEEN)
+	    gpsdata->set |= MODE_SET;
+	return status;
+    } else if (STARTSWITH(classtag, "\"class\":\"GST\"")) {
+	status = json_noise_read(buf, gpsdata, end);
+	if (status == 0) {
+	    gpsdata->set &= ~UNION_SET;
+	    gpsdata->set |= GST_SET;
+	}
+	return status;
     } else if (STARTSWITH(classtag, "\"class\":\"SKY\"")) {
-	return json_sky_read(buf, gpsdata, end);
+	status = json_sky_read(buf, gpsdata, end);
+	if (status == 0)
+	    gpsdata->set |= SATELLITE_SET;
+	return status;
     } else if (STARTSWITH(classtag, "\"class\":\"ATT\"")) {
-	return json_att_read(buf, gpsdata, end);
+	status = json_att_read(buf, gpsdata, end);
+	if (status == 0) {
+	    gpsdata->set &= ~UNION_SET;
+	    gpsdata->set |= ATTITUDE_SET;
+	}
+	return status;
     } else if (STARTSWITH(classtag, "\"class\":\"DEVICES\"")) {
-	return json_devicelist_read(buf, gpsdata, end);
+	status = json_devicelist_read(buf, gpsdata, end);
+	if (status == 0) {
+	    gpsdata->set &= ~UNION_SET;
+	    gpsdata->set |= DEVICELIST_SET;
+	}
+	return status;
     } else if (STARTSWITH(classtag, "\"class\":\"DEVICE\"")) {
 	status = json_device_read(buf, &gpsdata->dev, end);
 	if (status == 0)
@@ -372,11 +429,18 @@ int libgps_json_unpack(const char *buf,
 	return status;
     } else if (STARTSWITH(classtag, "\"class\":\"WATCH\"")) {
 	status = json_watch_read(buf, &gpsdata->policy, end);
-	if (status == 0)
+	if (status == 0) {
+	    gpsdata->set &= ~UNION_SET;
 	    gpsdata->set |= POLICY_SET;
+	}
 	return status;
     } else if (STARTSWITH(classtag, "\"class\":\"VERSION\"")) {
-	return json_version_read(buf, gpsdata, end);
+	status = json_version_read(buf, gpsdata, end); 
+	if (status ==  0) {
+	    gpsdata->set &= ~UNION_SET;
+	    gpsdata->set |= VERSION_SET;
+	}
+	return status;
 #ifdef RTCM104V2_ENABLE
     } else if (STARTSWITH(classtag, "\"class\":\"RTCM2\"")) {
 	status = json_rtcm2_read(buf,
@@ -400,12 +464,19 @@ int libgps_json_unpack(const char *buf,
 	return status;
 #endif /* AIVDM_ENABLE */
     } else if (STARTSWITH(classtag, "\"class\":\"ERROR\"")) {
-	return json_error_read(buf, gpsdata, end);
+	status = json_error_read(buf, gpsdata, end);
+	if (status == 0) {
+	    gpsdata->set &= ~UNION_SET;
+	    gpsdata->set |= ERROR_SET;
+	}
+	return status;
     } else
 	return -1;
 #undef STARTSWITH
 }
 
 /*@+compdef@*/
+
+#endif /* SOCKET_EXPORT_ENABLE */
 
 /* libgps_json.c ends here */

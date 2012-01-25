@@ -9,6 +9,7 @@
 
 typedef enum {t_integer, t_uinteger, t_real,
 	      t_string, t_boolean, t_character,
+	      t_time,
 	      t_object, t_structobject, t_array,
 	      t_check} json_type;
 
@@ -100,6 +101,7 @@ void json_enable_debug(int, FILE *);
 #define JSON_ERR_QNONSTRING	19	/* saw quoted value when expecting nonstring */
 #define JSON_ERR_NONQSTRING	19	/* didn't see quoted value when expecting string */
 #define JSON_ERR_MISC		20	/* other data conversion error */
+#define JSON_ERR_BADNUM		21	/* error while parsing a numerical argument */
 
 /*
  * Use the following macros to declare template initializers for structobject 

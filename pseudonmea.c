@@ -2,29 +2,11 @@
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
-#include <stdlib.h>
-#include "gpsd_config.h"
-#include <sys/time.h>
-#ifdef HAVE_SYS_IOCTL_H
-#include <sys/ioctl.h>
-#endif /* HAVE_SYS_IOCTL_H */
-#ifndef S_SPLINT_S
-#ifdef HAVE_SYS_SOCKET_H
-#include <sys/socket.h>
-#endif /* HAVE_SYS_SOCKET_H */
-#include <unistd.h>
-#endif /* S_SPLINT_S */
-#include <sys/time.h>
 #include <stdio.h>
-#include <math.h>
-#ifndef S_SPLINT_S
-#ifdef HAVE_NETDB_H
-#include <netdb.h>
-#endif /* HAVE_NETDB_H */
-#endif /* S_SPLINT_S */
+#include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <fcntl.h>
+#include <math.h>
+#include <time.h>
 
 #include "gpsd.h"
 
@@ -55,7 +37,7 @@ void gpsd_position_fix_dump(struct gps_device_t *session,
 
     intfixtime = (time_t) session->gpsdata.fix.time;
     (void)gmtime_r(&intfixtime, &tm);
-    if (session->gpsdata.fix.mode > 1) {
+    if (session->gpsdata.fix.mode > MODE_NO_FIX) {
 	(void)snprintf(bufp, len,
 		       "$GPGGA,%02d%02d%02d,%09.4f,%c,%010.4f,%c,%d,%02d,",
 		       tm.tm_hour,
@@ -185,7 +167,7 @@ static void gpsd_binary_quality_dump(struct gps_device_t *session,
     char *bufp2 = bufp;
     bool used_valid = (session->gpsdata.set & USED_IS) != 0;
 
-    if (session->device_type != NULL && (session->gpsdata.set & MODE_IS) != 0) {
+    if (session->device_type != NULL && (session->gpsdata.set & MODE_SET) != 0) {
 	(void)snprintf(bufp, len - strlen(bufp),
 		       "$GPGSA,%c,%d,", 'A', session->gpsdata.fix.mode);
 	j = 0;
@@ -215,10 +197,10 @@ static void gpsd_binary_quality_dump(struct gps_device_t *session,
 	nmea_add_checksum(bufp2);
 	bufp += strlen(bufp);
     }
-    if (finite(session->gpsdata.fix.epx)
-	&& finite(session->gpsdata.fix.epy)
-	&& finite(session->gpsdata.fix.epv)
-	&& finite(session->gpsdata.epe)) {
+    if (isfinite(session->gpsdata.fix.epx)!=0
+	&& isfinite(session->gpsdata.fix.epy)!=0
+	&& isfinite(session->gpsdata.fix.epv)!=0
+	&& isfinite(session->gpsdata.epe)!=0) {
 	struct tm tm;
 	time_t intfixtime;
 
@@ -238,19 +220,78 @@ static void gpsd_binary_quality_dump(struct gps_device_t *session,
 #undef ZEROIZE
 }
 
+static void gpsd_binary_time_dump(struct gps_device_t *session,
+				     char bufp[], size_t len)
+{
+    struct tm tm;
+    double integral, fractional;
+    time_t integral_time;
+
+    if (session->newdata.mode > MODE_NO_FIX) {
+	fractional = modf(session->newdata.time, &integral);
+	integral_time = (time_t) integral;
+	(void)gmtime_r(&integral_time, &tm);
+	/*
+	 * We pin this report to the GMT/UTC timezone.  This may be technically
+	 * incorrect; our sources on ZDA suggest that it should report local
+	 * timezone. But no GPS we've ever seen actually does this, because it
+	 * would require embedding a location-to-TZ database in the receiver.
+	 * And even if we could do that, it would make our regression tests 
+	 * break any time they were run in a timezone different from the one
+	 * where they were generated.
+	 */
+	(void)snprintf(bufp, len,
+		       "$GPZDA,%02d%02d%05.2f,%02d,%02d,%04d,00,00",
+		       tm.tm_hour,
+		       tm.tm_min,
+		       (double)tm.tm_sec + fractional,
+		       tm.tm_mday,
+		       tm.tm_mon + 1,
+		       tm.tm_year + 1900);
+	nmea_add_checksum(bufp);
+    }
+}
+
+static void gpsd_binary_almanac_dump(struct gps_device_t *session,
+				     char bufp[], size_t len)
+{
+    if ( session->gpsdata.subframe.is_almanac ) {
+	(void)snprintf(bufp, len,
+			"$GPALM,1,1,%02d,%04d,%02x,%04x,%02x,%04x,%04x,%05x,%06x,%06x,%06x,%03x,%03x",
+		       (int)session->gpsdata.subframe.sub5.almanac.sv,
+		       (int)session->context->gps_week % 1024,
+		       (unsigned int)session->gpsdata.subframe.sub5.almanac.svh,
+		       (unsigned int)session->gpsdata.subframe.sub5.almanac.e,
+		       (unsigned int)session->gpsdata.subframe.sub5.almanac.toa,
+		       (unsigned int)session->gpsdata.subframe.sub5.almanac.deltai,
+		       (unsigned int)session->gpsdata.subframe.sub5.almanac.Omegad,
+		       (unsigned int)session->gpsdata.subframe.sub5.almanac.sqrtA,
+		       (unsigned int)session->gpsdata.subframe.sub5.almanac.omega,
+		       (unsigned int)session->gpsdata.subframe.sub5.almanac.Omega0,
+		       (unsigned int)session->gpsdata.subframe.sub5.almanac.M0,
+		       (unsigned int)session->gpsdata.subframe.sub5.almanac.af0,
+		       (unsigned int)session->gpsdata.subframe.sub5.almanac.af1);
+	nmea_add_checksum(bufp);
+    }
+}
+
 /*@-compdef -mustdefine@*/
 /* *INDENT-OFF* */
 void nmea_tpv_dump(struct gps_device_t *session,
 		   /*@out@*/ char bufp[], size_t len)
 {
     bufp[0] = '\0';
-    if ((session->gpsdata.set & LATLON_IS) != 0) {
-	gpsd_position_fix_dump(session, bufp, len);
+    if ((session->gpsdata.set & TIME_SET) != 0)
+	gpsd_binary_time_dump(session, bufp + strlen(bufp),
+			      len - strlen(bufp));
+    if ((session->gpsdata.set & LATLON_SET) != 0) {
+	gpsd_position_fix_dump(session, bufp + strlen(bufp), 
+			       len - strlen(bufp));
 	gpsd_transit_fix_dump(session, bufp + strlen(bufp),
 			      len - strlen(bufp));
     }
     if ((session->gpsdata.set
-	 & (MODE_IS | DOP_IS | USED_IS | HERR_IS | VERR_IS)) != 0)
+	 & (MODE_SET | DOP_SET | USED_IS | HERR_SET | VERR_SET)) != 0)
 	gpsd_binary_quality_dump(session, bufp + strlen(bufp),
 				 len - strlen(bufp));
 }
@@ -260,8 +301,17 @@ void nmea_sky_dump(struct gps_device_t *session,
 		   /*@out@*/ char bufp[], size_t len)
 {
     bufp[0] = '\0';
-    if ((session->gpsdata.set & SATELLITE_IS) != 0)
+    if ((session->gpsdata.set & SATELLITE_SET) != 0)
 	gpsd_binary_satellite_dump(session, bufp + strlen(bufp),
+				   len - strlen(bufp));
+}
+
+void nmea_subframe_dump(struct gps_device_t *session,
+		   /*@out@*/ char bufp[], size_t len)
+{
+    bufp[0] = '\0';
+    if ((session->gpsdata.set & SUBFRAME_SET) != 0)
+	gpsd_binary_almanac_dump(session, bufp + strlen(bufp),
 				   len - strlen(bufp));
 }
 

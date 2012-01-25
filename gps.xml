@@ -89,11 +89,13 @@ BSD terms apply: see the file COPYING in the distribution root for details.
       </group>
 </cmdsynopsis>
 <cmdsynopsis>
-  <command>gpxlogger</command>
-</cmdsynopsis>
-<cmdsynopsis>
   <command>gpxlogger</command>  
       <arg choice='opt'>-D <replaceable>debug-level</replaceable></arg>
+      <arg choice='opt'>-d </arg>
+      <arg choice='opt'>-e <replaceable>export-method</replaceable></arg>
+      <arg choice='opt'>-f <replaceable>filename</replaceable></arg>
+      <arg choice='opt'>-l </arg>
+      <arg choice='opt'>-m <replaceable>minmove</replaceable></arg>
       <arg choice='opt'>-h </arg>
       <arg choice='opt'>-V </arg>
       <arg choice='opt'>-i <replaceable>track timeout</replaceable></arg>
@@ -104,6 +106,11 @@ BSD terms apply: see the file COPYING in the distribution root for details.
 	      <group><replaceable>:device</replaceable></group>
 	  </group>
       </group>
+</cmdsynopsis>
+<cmdsynopsis>
+  <command>gegps</command>
+      <arg choice='opt'>-d <replaceable>directory</replaceable></arg>
+      <arg choice='opt'>-i </arg>
 </cmdsynopsis>
 </refsynopsisdiv>
 
@@ -125,7 +132,7 @@ decimal minutes.  The value 's' produces degrees, minutes, and decimal
 seconds.</para>
 
 <para><application>xgps</application>,
-<application>cgps</application>, and <application>ldcgps</application>
+<application>cgps</application>, and <application>lcdgps</application>
 look at variables in the environment to figure out what units they
 should default to using for display &mdash; imperial, nautical, or
 metric.  Here are the variables and values they check:</para>
@@ -154,27 +161,27 @@ the system units for display; follow the keyword with 'i' for
 'imperial' for American units (feet in altitude and error estimates,
 miles per hour in speeds), 'n' for 'nautical' (feet in altitude and
 error estimates, knots in speed) or 'm' for 'metric' (meters in
-altitude and error estimates, kiliometers per hour in speeds). </para>
+altitude and error estimates, kilometers per hour in speeds). </para>
 
 <para> The <option>-D</option> option, when present, sets a debug
 level; it is primarily for use by GPSD developers.  It enables
 various progress messages to standard error.</para>
 
 <para>By default, clients collect data from all compatible devices on
-localhost, using the defalt GPSD port 2947. An optional argument to any
+localhost, using the default GPSD port 2947. An optional argument to any
 client may specify a server to get data from. A colon-separated suffix
 is taken as a port number. If there is a second colon-separated
 suffix, that is taken as a specific device name to be
 watched. However, if the server specification contains square
 brackets, the part inside them is taken as an IPv6 address and
-port/device suffixes are obnly parsed after the trailing bracket.
+port/device suffixes are only parsed after the trailing bracket.
 Possible cases look like this:</para>
 
 <variablelist>
 <varlistentry>
 <term>localhost:/dev/ttyS1</term>
 <listitem><para>Look at the default port of localhost, trying both
-IPv4 and IPv6 and watching ouput from serial device 1.</para></listitem>
+IPv4 and IPv6 and watching output from serial device 1.</para></listitem>
 </varlistentry>
 <varlistentry>
 <term>example.com:2317</term>
@@ -233,8 +240,9 @@ is miles per hour. </para>
 satellite display and able to run on a serial terminal or
 terminal emulator.</para>
 
-<para> The <option>-s</option> option prevents <application>cgps</application>
-from displaying the raw data. This display can also be toggled with the s
+<para> The <option>-s</option> option prevents
+<application>cgps</application> from displaying the data coming from
+the daemon. This display can also be toggled with the s
 command.</para>
 
 <para>The <option>-m</option> option will display your magnetic
@@ -268,14 +276,48 @@ logging.</para>
 created if there's no fix for an interval specified by the
 <option>-i</option> and defaulting to 5 seconds.</para>
 
-<para>If D-Bus support is available on the host and GPSD is
-configured  to use it, this program listens to DBUS broadcasts 
-from <application>gpsd</application>. (org.gpsd.fix).  Otherwise,
-it uses a conventional socket connection. </para>
+<para>The <option>-d</option> option tells
+<application>gpxlogger</application> to run as a daemon in background.
+It requires the <option>-f</option> option, which directs output to a
+specified logfile.</para>
 
-<para>Presence of a server-port-device specification forces use of
-sockets even on a D-Bus capable system, though this is unlikely to be
-of interest to anyone except GPSD developers.</para>
+<para>The <option>-m</option> option sets a minimum move distance in
+meters (it may include a fractional decimal part).  Motions shorter
+than this will not be logged.</para>
+
+<para><application>gpxlogger</application> can use any of the 
+export methods that <application>gpsd</application> supports.
+For a list of these methods, use the <option>-l</option>.
+To force the method, give the <option>-e</option> one of
+the colon-teminated method names from the <option>-l</option>
+table.</para>
+
+<para>If D-Bus support is available on the host, GPSD is configured to
+use it, and <command>-e dbus</command> is specified, this program
+listens to DBUS broadcasts from
+<application>gpsd</application> via org.gpsd.fix.</para>
+
+<para>With <command>-e sockets</command>, or if sockets is the method
+defaulted to, you may give a server-port-device specification as
+arguments.</para>
+
+</refsect2>
+<refsect2><title>gegps</title>
+
+<para>This program collects fixes from <application>gpsd</application>
+and feeds them to a running instance of Google Earth for live location 
+tracking.</para>
+
+<para>The <option>-d</option> argument is the location of the Google
+Earth installation directory.  If not specified, it defaults to the
+current directory.</para>
+
+<para>If you have the free (non-subscription) version, start by
+running with the <option>-i</option> option to drop a clue in the
+Google Earth installation directory, as
+'Open_in_Google_Earth_RT_GPS.kml', then open that file in Places (File
+> Open...). Run <application>gpsd</application> in the normal way
+after that.</para>
 
 </refsect2>
 </refsect1>
@@ -299,12 +341,11 @@ of interest to anyone except GPSD developers.</para>
 Remco Treffcorn, Derrick Brashear, Russ Nelson &amp; Eric S. Raymond,
 Jeff Francis (cgps). Amaury Jacquot <email>sxpert@sxpert.org</email>
 &amp; Petter Reinholdtsen <email>pere@hungry.com</email> (gpxlogger).
-Chris Kuethe <email>chris.kuethe@gmail.com</email> (cgpxlogger).
+Chris Kuethe <email>chris.kuethe@gmail.com</email> (gpxlogger), Chen
+Wei <email>weichen302@aol.com</email> (gegps).
 </para>
 
-<para>This manual page by Eric S. Raymond <email>esr@thyrsus.com</email>.
-There is a project page, with <application>xgps</application>
-screenshots, at <ulink url="http://gpsd.berlios.de/">berlios.de</ulink>.</para>
+<para>This manual page by Eric S. Raymond <email>esr@thyrsus.com</email></para>
 
 </refsect1>
 

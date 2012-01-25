@@ -12,14 +12,14 @@ The -? makes flocktest prints this help and exits.
 
 The -c option dumps flocktest's configuration and exits
 
-The -k mode installs a specified file of ssh public key on all machines
+The -k mode installs a specified file of ssh public keys on all machines
 
 Otherwise, the remote flockdriver script is executed on each machine.
 
 The -d option passes it a name for the remote test subdirectory
 If you do not specify a subdirectory name, the value of $LOGNAME will be used.
 
-The -q option supprssed CIA notifications
+The -q option suppresses CIA notifications
 
 The -v option shows all ssh commands issued, runs flockdriver with -x set
 and causes logs to be echoed even on success.
@@ -40,9 +40,7 @@ flockdriver = '''
 #
 # flockdriver - conduct regression tests as an agent for a remote flocktest
 #
-# This file is generated.  Do not hand-hack.
-
-generator="http://gpsd.berlios.de/flockdriver"
+# This file was generated at %(date)s.  Do not hand-hack.
 
 quiet=no
 while getopts dq opt
@@ -74,6 +72,18 @@ else
     echo "Site: $site" 
     echo "Directory: ${PWD}/${subdir}"
 
+    # Check the origin against the repo origin.  If they do not match,
+    # force a re-clone of the repo
+    if [ -d $subdir ]
+    then
+        repo_origin=`(cd $subdir; git config remote.origin.url)`
+        if [ $repo_origin != "%(origin)s" ]
+        then
+            echo "Forced re-clone."
+            rm -fr $subdir
+        fi
+    fi
+    
     # Set up or update the repo
     if [ ! -d $subdir ]
     then
@@ -100,7 +110,7 @@ else
     echo "Test ends: "`date`
 fi
 
-# Here is where we abuse CIA to do our notfications for us.
+# Here is where we abuse CIA to do our notifications for us.
 
 # Addresses for the e-mail
 from="FLOCKDRIVER-NOREPLY@${site}"
@@ -136,7 +146,7 @@ Subject: DeliverXML
   <generator>
     <name>%(project)s Remote Test Flock Driver</name>
     <version>${gitver}</version>
-    <url>${generator}</url>
+    <url>${origin}/flockdriver</url>
   </generator>
   <source>
     <project>%(project)s</project>
@@ -188,7 +198,7 @@ class TestSite:
         self.thread.start()
     def update_keys(self, filename):
         "Upload a specified file to replace the remote authorized keys."
-        command = "scp '%s' %s:~/.ssh/.authorized_keys" % (filename, self.me)
+        command = "scp '%s' %s:~/.ssh/.authorized_keys" % (os.path.expanduser(filename), self.me)
         if self.verbose:
             print command
         status = os.system(command)
@@ -208,6 +218,7 @@ class TestSite:
         if self.verbose:
             print uploader
         ofp = os.popen(uploader, "w")
+        self.config['date'] = time.ctime() 
         ofp.write(flockdriver % self.config)
         if ofp.close():
             print >>sys.stderr, "flocktest: agent upload failed"
@@ -274,7 +285,7 @@ if __name__ == '__main__':
     for (switch, val) in options:
         if  switch == '-c':	# Dump flocktest configuration
             dumpconf = True
-        elif  switch == '-d':	# Set the test subdirectory name
+        elif switch == '-d':	# Set the test subdirectory name
             subdir = val
         elif  switch == '-k':	# Install the access keys
             copykeys = True
@@ -290,6 +301,11 @@ if __name__ == '__main__':
 
     config = ConfigParser.RawConfigParser()
     config.read(["flocktest.ini", ".flocktest.ini"])
+    if arguments:
+        config.set("DEFAULT", "origin", arguments[0])
+    if not config.has_option("DEFAULT", "origin"):
+        print >>sys.stderr, "flocktest: repository required."
+        sys.exit(1)
     sites = []
     for site in config.sections():
         newsite = TestSite(site, dict(config.items(site)))
@@ -299,7 +315,6 @@ if __name__ == '__main__':
     flock = TestFlock(sites, verbose)
     if exclusions:
         flock.exclude(exclusions)
-
     if dumpconf:
         config.write(sys.stdout)
     elif copykeys:

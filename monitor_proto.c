@@ -9,22 +9,14 @@
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
-#ifndef S_SPLINT_S
-#include <unistd.h>
-#endif /* S_SPLINT_S */
 #include <stdarg.h>
 #include <stdbool.h>
 #include <assert.h>
+#ifndef S_SPLINT_S
+#include <unistd.h>
+#endif /* S_SPLINT_S */
 
-#include "gpsd_config.h"
-
-#ifdef HAVE_NCURSES_H
-#include <ncurses.h>
-#else
-#include <curses.h>
-#endif /* HAVE_NCURSES_H */
 #include "gpsd.h"
-
 #include "bits.h"
 #include "gpsmon.h"
 
@@ -97,6 +89,7 @@ static int PROTO_command(char line[])
      * driver-specific commands and leave lowercase ones for the
      * generic gpsmon ones.
      */
+    assert(strlen(line));
 
     /* 
      * Return COMMAND_UNKNOWN to tell gpsmon you can't interpret the line, and

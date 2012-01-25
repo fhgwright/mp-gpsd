@@ -10,13 +10,19 @@ else:
 
 GPSD_PORT="2947"
 
+class json_error:
+    def __init__(self, data, explanation):
+        self.data = data
+        self.explanation = explanation
+
 class gpscommon:
     "Isolate socket handling and buffering from the protcol interpretation."
     def __init__(self, host="127.0.0.1", port=GPSD_PORT, verbose=0):
         self.sock = None        # in case we blow up in connect
         self.linebuffer = ""
         self.verbose = verbose
-        self.connect(host, port)
+        if host != None:
+            self.connect(host, port)
 
     def connect(self, host, port):
         """Connect to a host on a given port.
@@ -58,11 +64,11 @@ class gpscommon:
     def __del__(self):
         self.close()
 
-    def waiting(self):
+    def waiting(self, timeout=0):
         "Return True if data is ready for the client."
         if self.linebuffer:
             return True
-        (winput, woutput, wexceptions) = select.select((self.sock,), (), (), 0)
+        (winput, woutput, wexceptions) = select.select((self.sock,), (), (), timeout)
         return winput != []
 
     def read(self):
@@ -104,48 +110,42 @@ class gpscommon:
         # We got a \n-terminated line
         return len(self.response)
 
+    def data(self):
+        "Return the client data buffer."
+        return self.response
+
     def send(self, commands):
         "Ship commands to the daemon."
         if not commands.endswith("\n"):
             commands += "\n"
         self.sock.send(commands)
 
-WATCH_DISABLE	= 0x0000
-WATCH_ENABLE	= 0x0001
-WATCH_JSON	= 0x0002
-WATCH_NMEA	= 0x0004
-WATCH_RARE	= 0x0008
-WATCH_RAW	= 0x0010
-WATCH_SCALED	= 0x0020
-WATCH_DEVICE	= 0x0040
+WATCH_ENABLE	= 0x000001	# enable streaming
+WATCH_DISABLE	= 0x000002	# disable watching
+WATCH_JSON	= 0x000010	# JSON output
+WATCH_NMEA	= 0x000020	# output in NMEA
+WATCH_RARE	= 0x000040	# output of packets in hex
+WATCH_RAW	= 0x000080	# output of raw packets
+WATCH_SCALED	= 0x000100	# scale output to floats 
+WATCH_TIMING	= 0x000200	# timing information
+WATCH_DEVICE	= 0x000800	# watch specific device
 
 class gpsjson(gpscommon):
     "Basic JSON decoding."
     def __iter__(self):
         return self
 
-    def json_unpack(self, buf):
-        def asciify(d):
-            "De-Unicodify everything so we can copy dicts into Python objects."
-            t = {}
-            for (k, v) in d.items():
-                ka = k.encode("ascii")
-                if type(v) == type(u"x"):
-                    va = v.encode("ascii")
-                elif type(v) == type({}):
-                    va = asciify(v)
-                elif type(v) == type([]):
-                    va = map(asciify, v)
-                else:
-                    va = v
-                t[ka] = va
-            return t
-        self.data = dictwrapper(**asciify(json.loads(buf.strip(), encoding="ascii")))
+    def unpack(self, buf):
+        try:
+            self.data = dictwrapper(json.loads(buf.strip(), encoding="ascii"))
+        except ValueError, e:
+            raise json_error(buf, e.args[0])
         # Should be done for any other array-valued subobjects, too.
-        if self.data["class"] == "SKY" and hasattr(self.data, "satellites"):
-            self.data.satellites = map(lambda x: dictwrapper(**x), self.data.satellites)
+        # This particular logic can fire on SKY or RTCM2 objects.
+        if hasattr(self.data, "satellites"):
+            self.data.satellites = map(dictwrapper, self.data.satellites)
 
-    def stream(self, flags=0, outfile=None):
+    def stream(self, flags=0, devpath=None):
         "Control streaming reports from the daemon,"
         if flags & WATCH_DISABLE:
             arg = '?WATCH={"enable":false'
@@ -159,6 +159,8 @@ class gpsjson(gpscommon):
                 arg += ',"raw":2'
             if flags & WATCH_SCALED:
                 arg += ',"scaled":false'
+            if flags & WATCH_TIMING:
+                arg += ',"timing":false'
         else: # flags & WATCH_ENABLE:
             arg = '?WATCH={"enable":true'
             if flags & WATCH_JSON:
@@ -171,13 +173,15 @@ class gpsjson(gpscommon):
                 arg += ',"raw":0'
             if flags & WATCH_SCALED:
                 arg += ',"scaled":true'
+            if flags & WATCH_TIMING:
+                arg += ',"timing":true'
             if flags & WATCH_DEVICE:
-                arg += ',"device":"%s"' % outfile
+                arg += ',"device":"%s"' % devpath
         return self.send(arg + "}")
 
 class dictwrapper:
     "Wrapper that yields both class and dictionary behavior,"
-    def __init__(self, **ddict):
+    def __init__(self, ddict):
         self.__dict__ = ddict
     def get(self, k, d=None):
         return self.__dict__.get(k, d)
@@ -196,7 +200,7 @@ class dictwrapper:
     __repr__ = __str__
 
 #
-# Someday a cleaner Python iterface using this machiner will live here
+# Someday a cleaner Python iterface using this machinery will live here
 #
 
 # End

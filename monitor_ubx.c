@@ -2,27 +2,10 @@
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <math.h>
-#include <ctype.h>
-#ifndef S_SPLINT_S
-#include <unistd.h>
-#endif /* S_SPLINT_S */
-#include <stdarg.h>
-#include <stdbool.h>
-#include <assert.h>
+#include <time.h>
 
-#include "gpsd_config.h"
-
-#ifdef HAVE_NCURSES_H
-#include <ncurses.h>
-#else
-#include <curses.h>
-#endif /* HAVE_NCURSES_H */
 #include "gpsd.h"
-
 #include "bits.h"
 #include "gpsmon.h"
 
@@ -42,10 +25,10 @@ static bool ubx_initialize(void)
 	return false;
     (void)wborder(satwin, 0, 0, 0, 0, 0, 0, 0, 0), (void)syncok(satwin, true);
     (void)wattrset(satwin, A_BOLD);
-    (void)mvwprintw(satwin, 1, 1, "Ch PRN  Az  El S/N Flag U");
+    display(satwin, 1, 1, "Ch PRN  Az  El S/N Flag U");
     for (i = 0; i < 16; i++)
-	(void)mvwprintw(satwin, (int)(i + 2), 1, "%2d", i);
-    (void)mvwprintw(satwin, 18, 7, " NAV_SVINFO ");
+	display(satwin, (int)(i + 2), 1, "%2d", i);
+    display(satwin, 18, 7, " NAV_SVINFO ");
     (void)wattrset(satwin, A_NORMAL);
     /*@ -onlytrans @*/
 
@@ -65,7 +48,7 @@ static bool ubx_initialize(void)
     (void)wprintw(navsolwin, "LTP Vel:");
 
     (void)wmove(navsolwin, 7, 1);
-    (void)wprintw(navsolwin, "Time UTC:");
+    (void)wprintw(navsolwin, "Time:");
     (void)wmove(navsolwin, 8, 1);
     (void)wprintw(navsolwin, "Time GPS:                     Day:");
 
@@ -108,10 +91,10 @@ static void display_nav_svinfo(unsigned char *buf, size_t data_len)
 	unsigned short fl;
 
 	prn = (unsigned char)getub(buf, off + 1);
-	fl = (unsigned short)getleuw(buf, off + 2);
+	fl = (unsigned short)getleu16(buf, off + 2);
 	ss = (unsigned char)getub(buf, off + 4);
-	el = getsb(buf, off + 5);
-	az = getlesw(buf, off + 6);
+	el = (char)getsb(buf, off + 5);
+	az = (short)getles16(buf, off + 6);
 	(void)wmove(satwin, (int)(i + 2), 4);
 	(void)wprintw(satwin, "%3d %3d %3d  %2d %04x %c",
 		      prn, az, el, ss, fl, (fl & UBX_SAT_USED) ? 'Y' : ' ');
@@ -127,8 +110,6 @@ static void display_nav_sol(unsigned char *buf, size_t data_len)
     unsigned int tow = 0, flags;
     double epx, epy, epz, evx, evy, evz;
     unsigned char navmode;
-    double t;
-    time_t tt;
     struct gps_data_t g;
     double separation;
 
@@ -139,22 +120,20 @@ static void display_nav_sol(unsigned char *buf, size_t data_len)
     flags = (unsigned int)getub(buf, 11);
 
     if ((flags & (UBX_SOL_VALID_WEEK | UBX_SOL_VALID_TIME)) != 0) {
-	tow = (unsigned int)getleul(buf, 0);
-	gw = (unsigned short)getlesw(buf, 8);
-	t = gpstime_to_unix((int)gw, tow / 1000.0);
-	tt = (time_t) trunc(t);
+	tow = (unsigned int)getleu32(buf, 0);
+	gw = (unsigned short)getles16(buf, 8);
     }
 
-    epx = (double)(getlesl(buf, 12) / 100.0);
-    epy = (double)(getlesl(buf, 16) / 100.0);
-    epz = (double)(getlesl(buf, 20) / 100.0);
-    evx = (double)(getlesl(buf, 28) / 100.0);
-    evy = (double)(getlesl(buf, 32) / 100.0);
-    evz = (double)(getlesl(buf, 36) / 100.0);
+    epx = (double)(getles32(buf, 12) / 100.0);
+    epy = (double)(getles32(buf, 16) / 100.0);
+    epz = (double)(getles32(buf, 20) / 100.0);
+    evx = (double)(getles32(buf, 28) / 100.0);
+    evy = (double)(getles32(buf, 32) / 100.0);
+    evz = (double)(getles32(buf, 36) / 100.0);
     ecef_to_wgs84fix(&g.fix, &separation, epx, epy, epz, evx, evy, evz);
-    g.fix.epx = g.fix.epy = (double)(getlesl(buf, 24) / 100.0);
-    g.fix.eps = (double)(getlesl(buf, 40) / 100.0);
-    g.dop.pdop = (double)(getleuw(buf, 44) / 100.0);
+    g.fix.epx = g.fix.epy = (double)(getles32(buf, 24) / 100.0);
+    g.fix.eps = (double)(getles32(buf, 40) / 100.0);
+    g.dop.pdop = (double)(getleu16(buf, 44) / 100.0);
     g.satellites_used = (int)getub(buf, 47);
 
     (void)wmove(navsolwin, 1, 11);
@@ -172,9 +151,19 @@ static void display_nav_sol(unsigned char *buf, size_t data_len)
 		  g.fix.speed, g.fix.track, g.fix.climb);
     (void)mvwaddch(navsolwin, 5, 26, ACS_DEGREE);
 
-    (void)wmove(navsolwin, 7, 11);
+    (void)wmove(navsolwin, 7, 7);
     /*@ -compdef @*/
-    (void)wprintw(navsolwin, "%s", ctime(&tt));
+    {
+	unsigned int day = tow / 8640000;
+	unsigned int tod = tow % 8640000;
+	unsigned int h = tod / 360000;
+	unsigned int m = tod % 360000;
+	unsigned int s = m % 6000;
+
+	m = (m - s) / 6000;
+
+	(void)wprintw(navsolwin, "%u %02u:%02u:%05.2f", day, h, m, (double)s / 100);
+    }
     /*@ +compdef @*/
     (void)wmove(navsolwin, 8, 11);
     if ((flags & (UBX_SOL_VALID_WEEK | UBX_SOL_VALID_TIME)) != 0) {
@@ -206,15 +195,15 @@ static void display_nav_dop(unsigned char *buf, size_t data_len)
     if (data_len != 18)
 	return;
     (void)wmove(dopwin, 1, 9);
-    (void)wprintw(dopwin, "%4.1f", getleuw(buf, 12) / 100.0);
+    (void)wprintw(dopwin, "%4.1f", getleu16(buf, 12) / 100.0);
     (void)wmove(dopwin, 1, 18);
-    (void)wprintw(dopwin, "%4.1f", getleuw(buf, 10) / 100.0);
+    (void)wprintw(dopwin, "%4.1f", getleu16(buf, 10) / 100.0);
     (void)wmove(dopwin, 1, 27);
-    (void)wprintw(dopwin, "%4.1f", getleuw(buf, 6) / 100.0);
+    (void)wprintw(dopwin, "%4.1f", getleu16(buf, 6) / 100.0);
     (void)wmove(dopwin, 1, 36);
-    (void)wprintw(dopwin, "%4.1f", getleuw(buf, 8) / 100.0);
+    (void)wprintw(dopwin, "%4.1f", getleu16(buf, 8) / 100.0);
     (void)wmove(dopwin, 1, 45);
-    (void)wprintw(dopwin, "%4.1f", getleuw(buf, 4) / 100.0);
+    (void)wprintw(dopwin, "%4.1f", getleu16(buf, 4) / 100.0);
     (void)wnoutrefresh(dopwin);
 }
 
@@ -226,7 +215,7 @@ static void ubx_update(void)
 
     buf = session.packet.outbuffer;
     msgid = (unsigned short)((buf[2] << 8) | buf[3]);
-    data_len = (size_t) getlesw(buf, 4);
+    data_len = (size_t) getles16(buf, 4);
     switch (msgid) {
     case UBX_NAV_SVINFO:
 	display_nav_svinfo(&buf[6], data_len);

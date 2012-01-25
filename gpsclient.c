@@ -15,7 +15,7 @@
  */
 
 static PyObject *
-gpsclient_deg_to_str(PyObject *self, PyObject *args)
+gpsclient_deg_to_str(PyObject *self UNUSED, PyObject *args)
 {
     int fmt;
     double degrees;
@@ -26,7 +26,7 @@ gpsclient_deg_to_str(PyObject *self, PyObject *args)
 }
 
 static PyObject *
-gpsclient_gpsd_units(PyObject *self, PyObject *args)
+gpsclient_gpsd_units(PyObject *self UNUSED, PyObject *args)
 {
     if (!PyArg_ParseTuple(args, ""))
 	return NULL;
@@ -38,7 +38,7 @@ gpsclient_gpsd_units(PyObject *self, PyObject *args)
  */
 
 static PyObject *
-gpsclient_wgs84_separation(PyObject *self, PyObject *args)
+gpsclient_wgs84_separation(PyObject *self UNUSED, PyObject *args)
 {
     const double lat, lon;
     double sep;
@@ -47,6 +47,18 @@ gpsclient_wgs84_separation(PyObject *self, PyObject *args)
 	return NULL;
     sep = wgs84_separation(lat, lon);
     return Py_BuildValue("d", sep);
+}
+
+static PyObject *
+gpsclient_maidenhead(PyObject *self UNUSED, PyObject *args)
+{
+    const double lat, lon;
+    char *gs;
+
+    if (!PyArg_ParseTuple(args, "dd", &lat, &lon))
+	return NULL;
+    gs = maidenhead(lat, lon);
+    return Py_BuildValue("s", gs);
 }
 
 /* List of functions defined in the module */
@@ -58,12 +70,17 @@ static PyMethodDef gpsclient_methods[] = {
      PyDoc_STR("String-format a latitude/longitude.")},
     {"gpsd_units",      	gpsclient_gpsd_units,      	METH_VARARGS,
      PyDoc_STR("Deduce a set of units from locale and environment.")},
+    {"maidenhead",      	gpsclient_maidenhead,  	METH_VARARGS,
+     PyDoc_STR("Maidenhead grid-square locator from lat/lon.")},
     {NULL,		NULL}		/* sentinel */
 };
 
 PyDoc_STRVAR(module_doc,
 "Python wrapper for selected libgps library routines.\n\
 ");
+
+/* banishes a pointless compiler warning */
+extern PyMODINIT_FUNC initclienthelpers(void);
 
 PyMODINIT_FUNC
 initclienthelpers(void)

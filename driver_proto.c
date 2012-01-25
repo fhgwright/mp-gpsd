@@ -12,7 +12,9 @@
  * messages that gpsd needs. Some protocols transmit error estimates
  * separately from the navigation solution; if developing a driver for
  * such a protocol you will need to add a decoder function for that
- * message.
+ * message. Be extra careful when using sizeof(<type>) to extract part
+ * of packets (ie. don't do it). This idiom creates portability problems
+ * between 32 and 64 bit systems.
  *
  * For anyone hacking this driver skeleton: "_PROTO_" and "_proto_" are now
  * reserved tokens. We suggest that they only ever be used as prefixes,
@@ -33,20 +35,10 @@
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
-
-#include <sys/types.h>
 #include <stdio.h>
-#include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
-#include <math.h>
-#include <ctype.h>
-#ifndef S_SPLINT_S
-#include <unistd.h>
-#endif /* S_SPLINT_S */
-#include <time.h>
-#include <stdio.h>
 
-#include "gpsd.h"
 #if defined(_PROTO__ENABLE) && defined(BINARY_ENABLE)
 
 #include "bits.h"
@@ -86,14 +78,14 @@ _proto__msg_navsol(struct gps_device_t *session, unsigned char *buf, size_t data
     if ((flags & _PROTO__SOLUTION_VALID) == 0)
 	return 0;
 
-    mask = ONLINE_IS;
+    mask = ONLINE_SET;
 
     /* extract ECEF navigation solution here */
     /* or extract the local tangential plane (ENU) solution */
     [Px, Py, Pz, Vx, Vy, Vz] = GET_ECEF_FIX();
-    ecef_to_wgs84fix(&session->newdata,  &session->separation,
+    ecef_to_wgs84fix(&session->newdata,  &session->gpsdata.separation,
 		     Px, Py, Pz, Vx, Vy, Vz);
-    mask |= LATLON_IS | ALTITUDE_IS | SPEED_IS | TRACK_IS | CLIMB_IS  ;
+    mask |= LATLON_SET | ALTITUDE_SET | SPEED_SET | TRACK_SET | CLIMB_SET  ;
 
     session->newdata.epx = GET_LONGITUDE_ERROR();
     session->newdata.epy = GET_LATITUDE_ERROR();
@@ -111,7 +103,7 @@ _proto__msg_navsol(struct gps_device_t *session, unsigned char *buf, size_t data
     session->gpsdata.dop.hdop = GET_HDOP();
     session->gpsdata.dop.vdop = GET_VDOP();
     /* other DOP if available */
-    mask |= DOP_IS;
+    mask |= DOP_SET;
 
     session->newdata.mode = GET_FIX_MODE();
     session->gpsdata.status = GET_FIX_STATUS();
@@ -121,21 +113,20 @@ _proto__msg_navsol(struct gps_device_t *session, unsigned char *buf, size_t data
      * information.  Mix in REPORT_IS when the sentence is reliably
      * the last in a reporting cycle.
      */
-    mask |= MODE_IS | STATUS_IS | REPORT_IS;
+    mask |= MODE_SET | STATUS_SET | REPORT_IS;
 
     /* 
      * At the end of each packet-cracking function, report at LOG_DATA level
      * the fields it potentially set and the transfer mask. Doing this
      * makes it relatively easy to track down data-management problems.
      */
-    gpsd_report(LOG_DATA, "NAVSOL: time=%.2f, lat=%.2f lon=%.2f alt=%.2f mode=%d status=%d mask=%s\n",
+    gpsd_report(LOG_DATA, "NAVSOL: time=%.2f, lat=%.2f lon=%.2f alt=%.2f mode=%d status=%d\n",
 		session->newdata.time,
 		session->newdata.latitude,
 		session->newdata.longitude,
 		session->newdata.altitude,
 		session->newdata.mode,
-		session->gpsdata.status,
-		gpsd_maskdump(mask));
+		session->gpsdata.status);
 
     return mask;
 }
@@ -159,15 +150,10 @@ _proto__msg_utctime(struct gps_device_t *session, unsigned char *buf, size_t dat
 
     tow = GET_MS_TIMEOFWEEK();
     gps_week = GET_WEEKNUMBER();
-    session->context->gps_week = gps_week;
     session->context->leap_seconds = GET_GPS_LEAPSECONDS();
-    session->context->gps_tow = tow / 1000.0;
+    session->newdata.time = gpsd_gpstime_resolve(session, gps_week, tow / 1000.0);
 
-    t = gpstime_to_unix(gps_week, session->context->gps_tow)
-	- session->context->leap_seconds;
-    session->newdata.time = t;
-
-    return TIME_IS | ONLINE_IS;
+    return TIME_SET | PPSTIME_IS | ONLINE_SET;
 }
 
 /**
@@ -225,7 +211,7 @@ _proto__msg_svinfo(struct gps_device_t *session, unsigned char *buf, size_t data
 		"SVINFO: visible=%d used=%d mask={SATELLITE|USED}\n",
 		session->gpsdata.satellites_visible,
 		session->gpsdata.satellites_used);
-    return SATELLITE_IS | USED_IS;
+    return SATELLITE_SET | USED_IS;
 }
 
 /**
@@ -299,8 +285,7 @@ gps_mask_t _proto__dispatch(struct gps_device_t *session, unsigned char *buf, si
     type = GET_MESSAGE_TYPE();
 
     /* we may need to dump the raw packet */
-    gpsd_report(LOG_RAW, "raw _proto_ packet type 0x%02x length %d: %s\n",
-	type, len, gpsd_hexdump_wrapper(buf, len, LOG_WARN));
+    gpsd_report(LOG_RAW, "raw _proto_ packet type 0x%02x\n", type);
 
    /*
     * The tag field is only 8 bytes; be careful you do not overflow.
@@ -314,9 +299,7 @@ gps_mask_t _proto__dispatch(struct gps_device_t *session, unsigned char *buf, si
 	/* Deliver message to specific decoder based on message type */
 
     default:
-	/* This gets noisy in a hurry. Change once your driver works */
-	gpsd_report(LOG_WARN, "unknown packet id %d length %d: %s\n",
-	    type, len, gpsd_hexdump_wrapper(buf, len, LOG_WARN));
+	gpsd_report(LOG_WARN, "unknown packet id %d length %d\n", type, len);
 	return 0;
     }
 }
@@ -344,7 +327,7 @@ static bool _proto__probe_detect(struct gps_device_t *session)
    return false;
 }
 
-#ifdef ALLOW_CONTROLSEND
+#ifdef CONTROLSEND_ENABLE
 /**
  * Write data to the device, doing any required padding or checksumming
  */
@@ -366,22 +349,24 @@ static ssize_t _proto__control_send(struct gps_device_t *session,
 
    /* we may need to dump the message */
     return gpsd_write(session, session->msgbuf, session->msgbuflen);
-   gpsd_report(LOG_IO, "writing _proto_ control type %02x:%s\n",
-	       msg[0], gpsd_hexdump_wrapper(session->msgbuf, session->msgbuflen, LOG_IO));
+   gpsd_report(LOG_IO, "writing _proto_ control type %02x\n");
    return gpsd_write(session, session->msgbuf, session->msgbuflen);
 }
 /*@ -charint +usedef +compdef @*/
-#endif /* ALLOW_CONTROLSEND */
+#endif /* CONTROLSEND_ENABLE */
 
-#ifdef ALLOW_RECONFIGURE
+#ifdef RECONFIGURE_ENABLE
 static void _proto__event_hook(struct gps_device_t *session, event_t event)
 {
+    if (session->context->readonly)
+	return;
+
     if (event == event_wakeup) {
        /*
-	* Code to make the device ready to communicate. This is
-	* run every time we are about to try a different baud
-	* rate in the autobaud sequence. Only needed if the
-	* device is in some kind of sleeping state.
+	* Code to make the device ready to communicate.  Only needed if the
+	* device is in some kind of sleeping state, and only shipped to
+	* RS232C (so that gpsd won't send strings to unidentified USB devices)
+	* that might not be GPSes at all.
 	*/
     }
     if (event == event_identified) {
@@ -479,7 +464,7 @@ static void _proto__set_mode(struct gps_device_t *session, int mode)
 	session->gpsdata.driver_mode = MODE_BINARY;
     }
 }
-#endif /* ALLOW_RECONFIGURE */
+#endif /* RECONFIGURE_ENABLE */
 
 #ifdef NTPSHM_ENABLE
 static double _proto_ntp_offset(struct gps_device_t *session)
@@ -523,6 +508,8 @@ const struct gps_type_t _proto__binary = {
     .type_name        = "_proto_ binary",
     /* Associated lexer packet type */
     .packet_type      = _PROTO__PACKET,
+    /* Driver tyoe flags */
+    .flags	      = DRIVER_NOFLAGS,
     /* Response string that identifies device (not active) */
     .trigger          = NULL,
     /* Number of satellite channels supported by the device */
@@ -537,7 +524,7 @@ const struct gps_type_t _proto__binary = {
     .rtcm_writer      = pass_rtcm,
     /* fire on various lifetime events */
     .event_hook       = _proto__event_hook,
-#ifdef ALLOW_RECONFIGURE
+#ifdef RECONFIGURE_ENABLE
     /* Speed (baudrate) switch */
     .speed_switcher   = _proto__set_speed,
     /* Switch to NMEA mode */
@@ -546,11 +533,11 @@ const struct gps_type_t _proto__binary = {
     .rate_switcher    = NULL,
     /* Minimum cycle time of the device */
     .min_cycle        = 1,
-#endif /* ALLOW_RECONFIGURE */
-#ifdef ALLOW_CONTROLSEND
+#endif /* RECONFIGURE_ENABLE */
+#ifdef CONTROLSEND_ENABLE
     /* Control string sender - should provide checksum and headers/trailer */
     .control_send   = _proto__control_send,
-#endif /* ALLOW_CONTROLSEND */
+#endif /* CONTROLSEND_ENABLE */
 #ifdef NTPSHM_ENABLE
     .ntp_offset     = _proto_ntp_offset,
 #endif /* NTPSHM_ENABLE */

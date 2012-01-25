@@ -4,65 +4,40 @@
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
-#include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
-#include <math.h>
 #include <ctype.h>
+#include <assert.h>
+#include <setjmp.h>
+#include <errno.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <time.h>
+#include <termios.h>
+#include <sys/time.h>		/* expected to declare select(2) a la SuS */
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #ifndef S_SPLINT_S
 #include <unistd.h>
 #endif /* S_SPLINT_S */
-#include <assert.h>
-#include <signal.h>
-#include <setjmp.h>
-/* Cygwin has only _timezone and not timezone unless the following is set */
-#if defined(__CYGWIN__)
-#define timezonevar
-#endif /* defined(__CYGWIN__) */
-#include <time.h>
-#include <termios.h>
-#include <fcntl.h>		/* for O_RDWR */
-#include <stdarg.h>
-#include <stdbool.h>
-#include <errno.h>
-#include <sys/ioctl.h>		/* for O_RDWR */
-#include <setjmp.h>
 
 #include "gpsd_config.h"
-
 #ifdef HAVE_BLUEZ
 #include <bluetooth/bluetooth.h>
 #endif
-
-#ifdef HAVE_NCURSES_H
-#include <ncurses.h>
-#else
-#include <curses.h>
-#endif /* HAVE_NCURSES_H */
 #include "gpsd.h"
-
-#include "bits.h"
-
-#if defined(HAVE_SYS_TIME_H)
-#include <sys/time.h>
-#endif
-#if defined (HAVE_SYS_SELECT_H)
-#include <sys/select.h>
-#endif
-
 #include "gpsdclient.h"
 #include "gpsmon.h"
 #include "revision.h"
 
-#ifdef S_SPLINT_S
-extern struct tm *localtime_r(const time_t *, /*@out@*/ struct tm *tp);
-#endif /* S_SPLINT_S */
-
 #define BUFLEN		2048
 
 /* external capability tables */
-extern struct monitor_object_t nmea_mmt, sirf_mmt, garmin_mmt, ashtech_mmt;
+extern struct monitor_object_t nmea_mmt, sirf_mmt, ashtech_mmt;
+extern struct monitor_object_t garmin_mmt, garmin_bin_ser_mmt;
 extern struct monitor_object_t italk_mmt, ubx_mmt, superstar2_mmt;
 extern struct monitor_object_t fv18_mmt, gpsclock_mmt, mtk3301_mmt;
 extern struct monitor_object_t oncore_mmt, tnt_mmt;
@@ -70,17 +45,29 @@ extern struct monitor_object_t oncore_mmt, tnt_mmt;
 /* These are public */
 struct gps_device_t session;
 WINDOW *devicewin;
-int gmt_offset;
+bool serial;
 
 /* These are private */
 static struct gps_context_t context;
-static int controlfd = -1;
-static bool serial, curses_active;
-static int debuglevel = 0;
+static bool curses_active;
 static WINDOW *statwin, *cmdwin;
 /*@null@*/ static WINDOW *packetwin;
-static FILE *logfile;
+/*@null@*/ static FILE *logfile;
 static char *type_name;
+
+#ifdef PASSTHROUGH_ENABLE
+/* no methods, it's all device window */
+extern const struct gps_type_t json_passthrough;
+const struct monitor_object_t json_mmt = {
+    .initialize = NULL,
+    .update = NULL,
+    .command = NULL,
+    .wrap = NULL,
+    .min_y = 0, .min_x = 80,	/* no need for a device window */
+    .driver = &json_passthrough,
+};
+#endif /* PASSTHROUGH_ENABLE */
+
 /*@ -nullassign @*/
 static const struct monitor_object_t *monitor_objects[] = {
 #ifdef NMEA_ENABLE
@@ -88,6 +75,9 @@ static const struct monitor_object_t *monitor_objects[] = {
 #if defined(GARMIN_ENABLE) && defined(NMEA_ENABLE)
     &garmin_mmt,
 #endif /* GARMIN_ENABLE && NMEA_ENABLE */
+#if defined(GARMIN_ENABLE) && defined(BINARY_ENABLE)
+    &garmin_bin_ser_mmt,
+#endif /* defined(GARMIN_ENABLE) && defined(BINARY_ENABLE) */
 #ifdef ASHTECH_ENABLE
     &ashtech_mmt,
 #endif /* ASHTECH_ENABLE */
@@ -119,10 +109,13 @@ static const struct monitor_object_t *monitor_objects[] = {
 #ifdef TNT_ENABLE
     &tnt_mmt,
 #endif /* TNT_ENABLE */
+#ifdef PASSTHROUGH_ENABLE
+    &json_mmt,
+#endif /* PASSTHROUGH_ENABLE */
     NULL,
 };
 
-static const struct monitor_object_t **active;
+static const struct monitor_object_t **active, **fallback;
 /*@ +nullassign @*/
 
 static jmp_buf terminate;
@@ -142,6 +135,7 @@ void monitor_fixframe(WINDOW * win)
     assert(win != NULL);
     getyx(win, ycur, xcur);
     getmaxyx(win, ymax, xmax);
+    assert(xcur > -1 && ymax > 0);  /* squash a compiler warning */
     (void)mvwaddch(win, ycur, xmax - 1, ACS_VLINE);
 }
 
@@ -151,33 +145,91 @@ void monitor_fixframe(WINDOW * win)
  *
  ******************************************************************************/
 
-void gpsd_report(int errlevel UNUSED, const char *fmt, ...)
+static void visibilize(/*@out@*/char *buf2, size_t len, const char *buf)
+{
+    const char *sp;
+
+    buf2[0] = '\0';
+    for (sp = buf; *sp != '\0' && strlen(buf2)+4 < len; sp++)
+	if (isprint(*sp) || (sp[0] == '\n' && sp[1] == '\0') 
+	  || (sp[0] == '\r' && sp[2] == '\0'))
+	    (void)snprintf(buf2 + strlen(buf2), 2, "%c", *sp);
+	else
+	    (void)snprintf(buf2 + strlen(buf2), 6, "\\x%02x",
+			   0x00ff & (unsigned)*sp);
+}
+
+void gpsd_report(int errlevel, const char *fmt, ...)
 /* our version of the logger */
 {
-    if (errlevel <= debuglevel && packetwin != NULL) {
+    char buf[BUFSIZ]; 
+    char buf2[BUFSIZ];
+    char *err_str;
+
+    switch ( errlevel ) {
+    case LOG_ERROR:
+	err_str = "ERROR: ";
+	break;
+    case LOG_SHOUT:
+	err_str = "SHOUT: ";
+	break;
+    case LOG_WARN:
+	err_str = "WARN: ";
+	break;
+    case LOG_INF:
+	err_str = "INFO: ";
+	break;
+    case LOG_DATA:
+	err_str = "DATA: ";
+	break;
+    case LOG_PROG:
+	err_str = "PROG: ";
+	break;
+    case LOG_IO:
+	err_str = "IO: ";
+	break;
+    case LOG_SPIN:
+	err_str = "SPIN: ";
+	break;
+    case LOG_RAW:
+	err_str = "RAW: ";
+	break;
+    default:
+	err_str = "UNK: ";
+    }
+
+    (void)strlcpy(buf, "gpsd:", BUFSIZ);
+    (void)strncat(buf, err_str, BUFSIZ - strlen(buf) );
+    if (errlevel <= context.debug && packetwin != NULL) {
 	va_list ap;
 	va_start(ap, fmt);
-	if (!curses_active)
-	    (void)vprintf(fmt, ap);
-	else
-	    (void)wprintw(packetwin, (char *)fmt, ap);
+	(void)vsnprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), fmt, ap);
 	va_end(ap);
+	visibilize(buf2, sizeof(buf2), buf);
+	if (!curses_active)
+	    (void)fputs(buf2, stdout);
+	else
+	    (void)waddstr(packetwin, buf2);
+	if (logfile != NULL)
+	    (void)fputs(buf2, logfile);
     }
 }
 
-/*@ -globstate @*/
 static ssize_t readpkt(void)
 {
-    /*@ -type -shiftnegative -compdef -nullpass @*/
+    /*@ -globstate -type -shiftnegative -compdef -nullpass @*/
     struct timeval timeval;
     fd_set select_set;
     gps_mask_t changed;
 
     FD_ZERO(&select_set);
     FD_SET(session.gpsdata.gps_fd, &select_set);
-    if (controlfd > -1)
-	FD_SET(controlfd, &select_set);
-    timeval.tv_sec = 3;
+    /*
+     * If the timeout on this select isn't longer than the device's
+     * cycle time, the code will be prone to flaky timing-dependent
+     * failures.
+     */
+    timeval.tv_sec = 2;
     timeval.tv_usec = 0;
     if (select(session.gpsdata.gps_fd + 1, &select_set, NULL, NULL, &timeval)
 	== -1)
@@ -190,10 +242,16 @@ static ssize_t readpkt(void)
     if (changed == 0)
 	longjmp(terminate, TERM_EMPTY_READ);
 
-    if ((changed & ERROR_IS) != 0)
+    /* conditional prevents mask dumper from eating CPU */
+    if (context.debug >= LOG_DATA)
+	gpsd_report(LOG_DATA,
+		    "packet mask = %s\n",
+		    gps_maskdump(session.gpsdata.set));
+
+    if ((changed & ERROR_SET) != 0)
 	longjmp(terminate, TERM_READ_ERROR);
 
-    if (logfile != NULL) {
+    if (logfile != NULL && session.packet.outbuflen > 0) {
 	/*@ -shiftimplementation -sefparams +charint @*/
 	assert(fwrite
 	       (session.packet.outbuffer, sizeof(char),
@@ -201,12 +259,10 @@ static ssize_t readpkt(void)
 	/*@ +shiftimplementation +sefparams -charint @*/
     }
     return session.packet.outbuflen;
-    /*@ +type +shiftnegative +compdef +nullpass @*/
+    /*@ +globstate +type +shiftnegative +compdef +nullpass @*/
 }
 
-/*@ +globstate @*/
-
-static void packet_dump(char *buf, size_t buflen)
+static void packet_dump(const char *buf, size_t buflen)
 {
     if (packetwin != NULL) {
 	size_t i;
@@ -229,89 +285,63 @@ static void packet_dump(char *buf, size_t buflen)
     }
 }
 
-#if defined(ALLOW_CONTROLSEND) || defined(ALLOW_RECONFIGURE)
-static void monitor_dump_send(void)
+#if defined(CONTROLSEND_ENABLE) || defined(RECONFIGURE_ENABLE)
+static void monitor_dump_send(/*@in@*/ const char *buf, size_t len)
 {
     if (packetwin != NULL) {
 	(void)wattrset(packetwin, A_BOLD);
 	(void)wprintw(packetwin, ">>>");
-	packet_dump(session.msgbuf, session.msgbuflen);
+	packet_dump(buf, len);
 	(void)wattrset(packetwin, A_NORMAL);
     }
 }
-#endif /* defined(ALLOW_CONTROLSEND) || defined(ALLOW_RECONFIGURE) */
+#endif /* defined(CONTROLSEND_ENABLE) || defined(RECONFIGURE_ENABLE) */
 
-#ifdef ALLOW_CONTROLSEND
+#ifdef RECONFIGURE_ENABLE
+static void announce_log(/*@in@*/ const char *str)
+{
+   if (packetwin != NULL) {
+	(void)wattrset(packetwin, A_BOLD);
+	(void)wprintw(packetwin, ">>>");
+	(void)waddstr(packetwin, str);
+	(void)wattrset(packetwin, A_NORMAL);
+	(void)wprintw(packetwin, "\n");
+   }
+   if (logfile != NULL) {
+       (void)fprintf(logfile, ">>>%s\n", str);
+   }
+}
+#endif /* RECONFIGURE_ENABLE */
+
+
+#ifdef CONTROLSEND_ENABLE
 bool monitor_control_send( /*@in@*/ unsigned char *buf, size_t len)
 {
-    if (controlfd == -1)
+    if (!serial)
 	return false;
     else {
-	int savefd;
 	ssize_t st;
 
-	if (!serial) {
-	    /*@ -sefparams @*/
-	    assert(write(controlfd, "!", 1) != -1);
-	    assert(write
-		   (controlfd, session.gpsdata.dev.path,
-		    strlen(session.gpsdata.dev.path)) != -1);
-	    assert(write(controlfd, "=", 1) != -1);
-	    /*@ +sefparams @*/
-	    /*
-	     * Ugh...temporarily con the libgpsd layer into using the
-	     * socket descriptor.
-	     */
-	    savefd = session.gpsdata.gps_fd;
-	    session.gpsdata.gps_fd = controlfd;
-	}
-
+	context.readonly = false;
 	st = (*active)->driver->control_send(&session, (char *)buf, len);
-
-	if (!serial) {
-	    /* stop pretending now */
-	    session.gpsdata.gps_fd = controlfd;
-	    /* enough room for "ERROR\r\n\0" */
-	    /*@ -sefparams @*/
-	    assert(read(controlfd, buf, 8) != -1);
-	    /*@ +sefparams @*/
-	}
-	monitor_dump_send();
+	context.readonly = true;
+	monitor_dump_send((const char *)buf, len);
 	return (st != -1);
     }
 }
 
 static bool monitor_raw_send( /*@in@*/ unsigned char *buf, size_t len)
 {
-    if (controlfd == -1)
+    if (!serial)
 	return false;
     else {
 	ssize_t st;
-
-	if (!serial) {
-	    /*@ -sefparams @*/
-	    assert(write(controlfd, "!", 1) != -1);
-	    assert(write(controlfd, session.gpsdata.dev.path,
-			 strlen(session.gpsdata.dev.path)) != -1);
-	    assert(write(controlfd, "=", 1) != -1);
-	    /*@ +sefparams @*/
-	}
-
-	st = write(controlfd, (char *)buf, len);
-
-	if (!serial) {
-	    /* enough room for "ERROR\r\n\0" */
-	    /*@ -sefparams @*/
-	    assert(read(controlfd, buf, 8) != -1);
-	    /*@ +sefparams @*/
-	}
-	(void)memcpy(session.msgbuf, buf, len);
-	session.msgbuflen = len;
-	monitor_dump_send();
+	st = write(session.gpsdata.gps_fd, (char *)buf, len);
+	monitor_dump_send((const char *)buf, len);
 	return (st > 0 && (size_t) st == len);
     }
 }
-#endif /* ALLOW_CONTROLSEND */
+#endif /* CONTROLSEND_ENABLE */
 
 /*****************************************************************************
  *
@@ -319,31 +349,10 @@ static bool monitor_raw_send( /*@in@*/ unsigned char *buf, size_t len)
  *
  *****************************************************************************/
 
-static long tzoffset(void)
-{
-    time_t now = time(NULL);
-    struct tm tm;
-    long res = 0;
-
-    tzset();
-#ifdef HAVE_TIMEZONE
-    res = timezone;
-#else
-    res = localtime_r(&now, &tm)->tm_gmtoff;
-#endif
-#ifdef HAVE_DAYLIGHT
-    if (daylight != 0 && localtime_r(&now, &tm)->tm_isdst != 0)
-	res -= 3600;
-#else
-    if (localtime_r(&now, &tm)->tm_isdst)
-	res -= 3600;
-#endif
-    return res;
-}
-
 void monitor_complain(const char *fmt, ...)
 {
     va_list ap;
+    assert(cmdwin!=NULL);
     (void)wmove(cmdwin, 0, (int)strlen(type_name) + 2);
     (void)wclrtoeol(cmdwin);
     (void)wattrset(cmdwin, A_BOLD | A_BLINK);
@@ -354,7 +363,6 @@ void monitor_complain(const char *fmt, ...)
     (void)wrefresh(cmdwin);
     (void)wgetch(cmdwin);
 }
-
 
 void monitor_log(const char *fmt, ...)
 {
@@ -370,9 +378,12 @@ static bool switch_type(const struct gps_type_t *devtype)
 {
     const struct monitor_object_t **trial, **newobject;
     newobject = NULL;
-    for (trial = monitor_objects; *trial; trial++)
-	if ((*trial)->driver == devtype)
+    for (trial = monitor_objects; *trial; trial++) {
+	if (strcmp((*trial)->driver->type_name, devtype->type_name)==0) {
 	    newobject = trial;
+	    break;
+	}
+    }
     if (newobject) {
 	int leftover;
 	if (LINES < (*newobject)->min_y + 1 || COLS < (*newobject)->min_x) {
@@ -380,12 +391,13 @@ static bool switch_type(const struct gps_type_t *devtype)
 			     (*newobject)->min_x, (*newobject)->min_y + 1);
 	} else {
 	    if (active != NULL) {
-		(*active)->wrap();
+		if ((*active)->wrap != NULL)
+		    (*active)->wrap();
 		(void)delwin(devicewin);
 	    }
 	    active = newobject;
 	    devicewin = newwin((*active)->min_y, (*active)->min_x, 1, 0);
-	    if ((devicewin == NULL) || !(*active)->initialize()) {
+	    if ((devicewin == NULL) || ((*active)->initialize != NULL && !(*active)->initialize())) {
 		monitor_complain("Internal initialization failure - screen "
 				 "must be at least 80x24. aborting.");
 		return false;
@@ -411,7 +423,7 @@ static bool switch_type(const struct gps_type_t *devtype)
 	return true;
     }
 
-    monitor_complain("No matching monitor type.");
+    monitor_complain("No monitor matches %s.", devtype->type_name);
     return false;
 }
 
@@ -422,36 +434,31 @@ static void onsig(int sig UNUSED)
     longjmp(assertbuf, 1);
 }
 
+#define WATCHRAW	"?WATCH={\"raw\":2}\r\n"
+#define WATCHRAWDEVICE	"?WATCH={\"raw\":2,\"device\":\"%s\"}\r\n"
+
 int main(int argc, char **argv)
 {
-#if defined(ALLOW_CONTROLSEND) || defined(ALLOW_RECONFIGURE)
+#ifdef RECONFIGURE_ENABLE
     unsigned int v;
-#endif /* defined(ALLOW_CONTROLSEND) || defined(ALLOW_RECONFIGURE) */
+#endif /* RECONFIGURE_ENABLE */
     int option, status, last_type = BAD_PACKET;
     ssize_t len;
     struct fixsource_t source;
-    char *p, *controlsock = "/var/run/gpsd.sock";
     fd_set select_set;
     unsigned char buf[BUFLEN];
-    char line[80], *explanation;
-    int bailout = 0;
+    char line[80], *explanation, *p;
+    int bailout = 0, matches = 0;
 
-    gmt_offset = (int)tzoffset();
     /*@ -observertrans @*/
-    (void)putenv("TZ=GMT");	// for ctime()
+    (void)putenv("TZ=UTC");	// for ctime()
     /*@ +observertrans @*/
     /*@ -branchstate @*/
-    while ((option = getopt(argc, argv, "D:F:LVhl:")) != -1) {
+    while ((option = getopt(argc, argv, "D:LVhl:t:?")) != -1) {
 	switch (option) {
 	case 'D':
-	    debuglevel = atoi(optarg);
+	    context.debug = atoi(optarg);
 	    break;
-	case 'F':
-	    controlsock = optarg;
-	    break;
-	case 'V':
-	    (void)printf("gpsmon: %s (revision %s)\n", VERSION, REVISION);
-	    exit(0);
 	case 'L':		/* list known device types */
 	    (void)
 		fputs
@@ -460,7 +467,7 @@ int main(int argc, char **argv)
 	    for (active = monitor_objects; *active; active++) {
 		(void)fputs("i l q ^S ^Q", stdout);
 		(void)fputc(' ', stdout);
-#ifdef ALLOW_RECONFIGURE
+#ifdef RECONFIGURE_ENABLE
 		if ((*active)->driver->mode_switcher != NULL)
 		    (void)fputc('n', stdout);
 		else
@@ -476,13 +483,13 @@ int main(int argc, char **argv)
 		else
 		    (void)fputc(' ', stdout);
 		(void)fputc(' ', stdout);
-#endif /* ALLOW_RECONFIGURE */
-#ifdef ALLOW_CONTROLSEND
+#endif /* RECONFIGURE_ENABLE */
+#ifdef CONTROLSEND_ENABLE
 		if ((*active)->driver->control_send != NULL)
 		    (void)fputc('x', stdout);
 		else
 		    (void)fputc(' ', stdout);
-#endif /* ALLOW_CONTROLSEND */
+#endif /* CONTROLSEND_ENABLE */
 		(void)fputc(' ', stdout);
 		if ((*active)->command != NULL)
 		    (void)fputc('+', stdout);
@@ -493,6 +500,9 @@ int main(int argc, char **argv)
 		(void)fputc('\n', stdout);
 	    }
 	    exit(0);
+	case 'V':
+	    (void)printf("gpsmon: %s (revision %s)\n", VERSION, REVISION);
+	    exit(0);
 	case 'l':		/* enable logging at startup */
 	    logfile = fopen(optarg, "w");
 	    if (logfile == NULL) {
@@ -500,12 +510,31 @@ int main(int argc, char **argv)
 		exit(1);
 	    }
 	    break;
+        case 't':
+	    fallback = NULL;
+	    for (active = monitor_objects; *active; active++) {
+		if (strncmp((*active)->driver->type_name, optarg, strlen(optarg)) == 0)
+		{
+		    fallback = active;
+		    matches++;
+		}
+	    }
+	    if (matches > 1) { 
+		(void)fprintf(stderr, "-T option matched more than one driver.\n");
+		exit(1);
+	    }
+	    else if (matches == 0) { 
+		(void)fprintf(stderr, "-T option didn't match any driver.\n");
+		exit(1);
+	    }
+	    active = NULL;
+	    break;
 	case 'h':
 	case '?':
 	default:
 	    (void)
 		fputs
-		("usage:  gpsmon [-?hVl] [-D debuglevel] [-F controlsock] [server[:port:[device]]]\n",
+		("usage:  gpsmon [-?hVl] [-D debuglevel] [-t type] [server[:port:[device]]]\n",
 		 stderr);
 	    exit(1);
 	}
@@ -517,6 +546,7 @@ int main(int argc, char **argv)
     } else
 	gpsd_source_spec(NULL, &source);
 
+    gpsd_time_init(&context, time(NULL));
     gpsd_init(&session, &context, NULL);
 
     /*@ -boolops */
@@ -527,7 +557,7 @@ int main(int argc, char **argv)
 #else
 	) {
 #endif
-	(void)gps_open_r(source.server, source.port, &session.gpsdata);
+	(void)gps_open(source.server, source.port, &session.gpsdata);
 	if (session.gpsdata.gps_fd < 0) {
 	    (void)fprintf(stderr,
 			  "%s: connection failure on %s:%s, error %d = %s.\n",
@@ -536,13 +566,18 @@ int main(int argc, char **argv)
 			  netlib_errstr(session.gpsdata.gps_fd));
 	    exit(1);
 	}
-	controlfd = open(controlsock, O_RDWR);
-	if (source.device != NULL)
-	    (void)gps_send(&session.gpsdata,
-			   "?WATCH={\"raw\":2,\"device\":\"%s\"}\r\n",
-			   source.device);
-	else
-	    (void)gps_send(&session.gpsdata, "?WATCH={\"raw\":2}\r\n");
+	if (source.device != NULL) {
+	    (void)gps_send(&session.gpsdata, WATCHRAWDEVICE, source.device);
+	    /*
+	     *  The gpsdata.dev member is filled only in JSON mode,
+	     *  but we are in super-raw mode.
+	     */
+	    (void)strlcpy(session.gpsdata.dev.path, source.device,
+			  sizeof(session.gpsdata.dev.path));
+	} else {
+	    (void)gps_send(&session.gpsdata, WATCHRAW);
+	    session.gpsdata.dev.path[0] = '\0';
+	}
 	serial = false;
     } else {
 	(void)strlcpy(session.gpsdata.dev.path, argv[optind],
@@ -554,7 +589,6 @@ int main(int argc, char **argv)
 	    exit(2);
 	}
 
-	controlfd = session.gpsdata.gps_fd;
 	serial = true;
     }
     /*@ +boolops */
@@ -601,7 +635,6 @@ int main(int argc, char **argv)
 
     FD_ZERO(&select_set);
 
-
     if ((bailout = setjmp(terminate)) == 0) {
 	/*@ -observertrans @*/
 	for (;;) {
@@ -611,9 +644,10 @@ int main(int argc, char **argv)
 	    /* *INDENT-ON* */
 	    (void)wattrset(statwin, A_BOLD);
 	    if (serial)
-		display(statwin, 0, 0, "%s %4d %c %d",
+		display(statwin, 0, 0, "%s %u %d%c%d",
 			session.gpsdata.dev.path,
-			gpsd_get_speed(&session.ttyset),
+			session.gpsdata.dev.baudrate,
+			9 - session.gpsdata.dev.stopbits,
 			session.gpsdata.dev.parity,
 			session.gpsdata.dev.stopbits);
 	    else
@@ -639,7 +673,9 @@ int main(int argc, char **argv)
 		(void)wprintw(cmdwin, type_name);
 		(void)wprintw(cmdwin, "> ");
 		(void)wclrtoeol(cmdwin);
-		if (active != NULL && len > 0 && session.packet.outbuflen > 0)
+		if (active != NULL 
+			&& len > 0 && session.packet.outbuflen > 0
+			&& (*active)->update != NULL)
 		    (*active)->update();
 		(void)wprintw(packetwin, "(%d) ", session.packet.outbuflen);
 		packet_dump((char *)session.packet.outbuffer,
@@ -679,7 +715,6 @@ int main(int argc, char **argv)
 		    continue;
 		/*@ +usedef +compdef @*/
 
-		arg = line;
 		if (isspace(line[1])) {
 		    for (arg = line + 2; *arg != '\0' && isspace(*arg); arg++)
 			arg++;
@@ -687,7 +722,7 @@ int main(int argc, char **argv)
 		} else
 		    arg = line + 1;
 
-		if (active != NULL && (*active)->command != NULL) {
+		if (serial && active != NULL && (*active)->command != NULL) {
 		    status = (*active)->command(line);
 		    if (status == COMMAND_TERMINATE)
 			goto quit;
@@ -696,45 +731,38 @@ int main(int argc, char **argv)
 		    assert(status == COMMAND_UNKNOWN);
 		}
 		switch (line[0]) {
-#ifdef ALLOW_RECONFIGURE
+#ifdef RECONFIGURE_ENABLE
 		case 'c':	/* change cycle time */
 		    if (active == NULL)
 			monitor_complain("No device defined yet");
-		    else if (serial) {
+		    else if (!serial)
+			monitor_complain("Only available in low-level mode.");
+		    else {
 			double rate = strtod(arg, NULL);
-			/* Ugh...should have a controlfd slot
-			 * in the session structure, really
-			 */
-			if ((*active)->driver->rate_switcher) {
-			    int dfd = session.gpsdata.gps_fd;
-			    session.gpsdata.gps_fd = controlfd;
+			const struct monitor_object_t **switcher = active;
+
+			if (fallback != NULL && (*fallback)->driver->rate_switcher != NULL)
+			    switcher = fallback;
+			if ((*switcher)->driver->rate_switcher) {
 			    /* *INDENT-OFF* */
-			    if ((*active)->driver->rate_switcher(&session, rate)) {
-				monitor_dump_send();
+			    context.readonly = false;
+			    if ((*switcher)->driver->rate_switcher(&session, rate)) {
+				announce_log("Rate switcher callled.");
 			    } else
 				monitor_complain("Rate not supported.");
+			    context.readonly = true;
 			    /* *INDENT-ON* */
-			    session.gpsdata.gps_fd = dfd;
 			} else
 			    monitor_complain
 				("Device type has no rate switcher");
-		    } else {
-			line[0] = 'c';
-			/*@ -sefparams @*/
-			assert(write
-			       (session.gpsdata.gps_fd, line,
-				strlen(line)) != -1);
-			/* discard response */
-			assert(read(session.gpsdata.gps_fd, buf, sizeof(buf))
-			       != -1);
-			/*@ +sefparams @*/
 		    }
+#endif /* RECONFIGURE_ENABLE */
 		    break;
-#endif /* ALLOW_RECONFIGURE */
-
 		case 'i':	/* start probing for subtype */
 		    if (active == NULL)
 			monitor_complain("No GPS type detected.");
+		    else if (!serial)
+			monitor_complain("Only available in low-level mode.");
 		    else {
 			if (strcspn(line, "01") == strlen(line))
 			    context.readonly = !context.readonly;
@@ -761,7 +789,7 @@ int main(int argc, char **argv)
 					  ">>> Logging to %s on", logfile);
 		    break;
 
-#ifdef ALLOW_RECONFIGURE
+#ifdef RECONFIGURE_ENABLE
 		case 'n':	/* change mode */
 		    /* if argument not specified, toggle */
 		    if (strcspn(line, "01") == strlen(line)) {
@@ -773,51 +801,47 @@ int main(int argc, char **argv)
 			v = (unsigned)atoi(line + 1);
 		    if (active == NULL)
 			monitor_complain("No device defined yet");
-		    else if (serial) {
-			/* Ugh...should have a controlfd slot
-			 * in the session structure, really
-			 */
-			if ((*active)->driver->mode_switcher) {
-			    int dfd = session.gpsdata.gps_fd;
-			    session.gpsdata.gps_fd = controlfd;
-			    (*active)->driver->mode_switcher(&session,
+		    else if (!serial)
+			monitor_complain("Only available in low-level mode.");
+		    else {
+			const struct monitor_object_t **switcher = active;
+
+			if (fallback != NULL && (*fallback)->driver->mode_switcher != NULL)
+			    switcher = fallback;
+			if ((*switcher)->driver->mode_switcher) {
+			    context.readonly = false;
+			    (*switcher)->driver->mode_switcher(&session,
 							     (int)v);
-			    monitor_dump_send();
+			    context.readonly = true;
+			    announce_log("Mode switcher called");
 			    (void)tcdrain(session.gpsdata.gps_fd);
 			    (void)usleep(50000);
-			    session.gpsdata.gps_fd = dfd;
 			} else
 			    monitor_complain
 				("Device type has no mode switcher");
-		    } else {
-			line[0] = 'n';
-			line[1] = ' ';
-			line[2] = '0' + v;
-			/*@ -sefparams @*/
-			assert(write
-			       (session.gpsdata.gps_fd, line,
-				strlen(line)) != -1);
-			/* discard response */
-			assert(read(session.gpsdata.gps_fd, buf, sizeof(buf))
-			       != -1);
-			/*@ +sefparams @*/
 		    }
 		    break;
-#endif /* ALLOW_RECONFIGURE */
+#endif /* RECONFIGURE_ENABLE */
 
 		case 'q':	/* quit */
 		    goto quit;
 
-#ifdef ALLOW_RECONFIGURE
+#ifdef RECONFIGURE_ENABLE
 		case 's':	/* change speed */
 		    if (active == NULL)
 			monitor_complain("No device defined yet");
-		    else if (serial) {
+		    else if (!serial)
+			monitor_complain("Only available in low-level mode.");
+		    else {
 			speed_t speed;
 			char parity = session.gpsdata.dev.parity;
 			unsigned int stopbits =
 			    (unsigned int)session.gpsdata.dev.stopbits;
 			char *modespec;
+			const struct monitor_object_t **switcher = active;
+
+			if (fallback != NULL && (*fallback)->driver->speed_switcher != NULL)
+			    switcher = fallback;
 
 			modespec = strchr(arg, ':');
 			/*@ +charint @*/
@@ -842,20 +866,16 @@ int main(int argc, char **argv)
 			}
 			/*@ -charint @*/
 			speed = (unsigned)atoi(arg);
-			/* Ugh...should have a controlfd slot
-			 * in the session structure, really
-			 */
 			/* *INDENT-OFF* */
-			if ((*active)->driver->speed_switcher) {
-			    int dfd = session.gpsdata.gps_fd;
-			    session.gpsdata.gps_fd = controlfd;
-			    if ((*active)->
+			if ((*switcher)->driver->speed_switcher) {
+			    context.readonly = false;
+			    if ((*switcher)->
 				driver->speed_switcher(&session, speed,
 						       parity, (int)
 						       stopbits)) {
-				monitor_dump_send();
+				announce_log("Speed switcher called.");
 				/*
-				 * See the comment attached to the 'B'
+				 * See the comment attached to the 'DEVICE'
 				 * command in gpsd.  Allow the control
 				 * string time to register at the GPS
 				 * before we do the baud rate switch,
@@ -869,27 +889,19 @@ int main(int argc, char **argv)
 			    } else
 				monitor_complain
 				    ("Speed/mode combination not supported.");
-			    session.gpsdata.gps_fd = dfd;
+			    context.readonly = true;
 			} else
 			    monitor_complain
 				("Device type has no speed switcher");
 			/* *INDENT-ON* */
-		    } else {
-			line[0] = 'b';
-			/*@ -sefparams @*/
-			assert(write
-			       (session.gpsdata.gps_fd, line,
-				strlen(line)) != -1);
-			/* discard response */
-			assert(read(session.gpsdata.gps_fd, buf, sizeof(buf))
-			       != -1);
-			/*@ +sefparams @*/
 		    }
 		    break;
-#endif /* ALLOW_RECONFIGURE */
+#endif /* RECONFIGURE_ENABLE */
 
 		case 't':	/* force device type */
-		    if (strlen(arg) > 0) {
+		    if (!serial)
+			monitor_complain("Only available in low-level mode.");
+		    else if (strlen(arg) > 0) {
 			int matchcount = 0;
 			const struct gps_type_t **dp, *forcetype = NULL;
 			for (dp = gpsd_drivers; *dp; dp++) {
@@ -916,10 +928,12 @@ int main(int argc, char **argv)
 		    }
 		    break;
 
-#ifdef ALLOW_CONTROLSEND
+#ifdef CONTROLSEND_ENABLE
 		case 'x':	/* send control packet */
 		    if (active == NULL)
 			monitor_complain("No device defined yet");
+		    else if (!serial)
+			monitor_complain("Only available in low-level mode.");
 		    else {
 			/*@ -compdef @*/
 			int st = gpsd_hexpack(arg, (char *)buf, strlen(arg));
@@ -931,22 +945,26 @@ int main(int argc, char **argv)
 				("Device type has no control-send method.");
 			else if (!monitor_control_send(buf, (size_t) st))
 			    monitor_complain("Control send failed.");
+			/*@ +compdef @*/
 		    }
-		    /*@ +compdef @*/
 		    break;
 
 		case 'X':	/* send raw packet */
-		    /*@ -compdef @*/
-		    len =
-			(ssize_t) gpsd_hexpack(arg, (char *)buf, strlen(arg));
-		    if (len < 0)
-			monitor_complain("Invalid hex string (error %d)",
-					 len);
-		    else if (!monitor_raw_send(buf, (size_t) len))
-			monitor_complain("Raw send failed.");
-		    /*@ +compdef @*/
+		    if (!serial)
+			monitor_complain("Only available in low-level mode.");
+		    else {
+			/*@ -compdef @*/
+			len =
+			    (ssize_t) gpsd_hexpack(arg, (char *)buf, strlen(arg));
+			if (len < 0)
+			    monitor_complain("Invalid hex string (error %d)",
+					     len);
+			else if (!monitor_raw_send(buf, (size_t) len))
+			    monitor_complain("Raw send failed.");
+			/*@ +compdef @*/
+		    }
 		    break;
-#endif /* ALLOW_CONTROLSEND */
+#endif /* CONTROLSEND_ENABLE */
 
 		default:
 		    monitor_complain("Unknown command");

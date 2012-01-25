@@ -68,8 +68,8 @@ u:		fprintf(stderr, "usage: ashctl <port> [raw|normal]\n"
 		}
 
 		sleep(1);
-		read(fd, buf, BUFSIZ-1);
-		buf[BUFSIZ-1] = '\0';
+		i = read(fd, buf, BUFSIZ-1);
+		buf[i] = '\0';
 		if (strstr(buf, "$PASH") || strstr(buf, "$GP"))
 			goto done;
 	}
@@ -159,7 +159,7 @@ static int nmea_send(int fd, const char *fmt, ... )
 	va_start(ap, fmt) ;
 	(void)vsnprintf(buf, sizeof(buf)-5, fmt, ap);
 	va_end(ap);
-	(void)strlcat(buf, "*", BUFSIZ);
+	(void)strncat(buf, "*", sizeof(buf)-1);
 	nmea_add_checksum(buf);
 	// (void)fputs(buf, stderr); /* debug output */
 	tcflush(fd, TCIOFLUSH);

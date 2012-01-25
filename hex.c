@@ -2,84 +2,52 @@
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
-#ifndef S_SPLINT_S
-#include <unistd.h>
-#endif /* S_SPLINT_S */
-#include <stdlib.h>
-#include <stdio.h>
-#include <math.h>
 #include <string.h>
+#include <ctype.h>
+#include <assert.h>
 
 #include "gpsd.h"
 
-int gpsd_hexdump_level = -1;
-/*
- * A wrapper around gpsd_hexdump to prevent wasting cpu time by hexdumping
- * buffers and copying strings that will never be printed. only messages at
- * level "N" and lower will be printed. By way of example, without any -D
- * options, gpsd probably won't ever call the real gpsd_hexdump. At -D2,
- * LOG_PROG (and higher) won't get to call the real gpsd_hexdump. For high
- * speed, chatty protocols, this can save a lot of CPU.
- */
-char *gpsd_hexdump_wrapper(const void *binbuf, size_t binbuflen,
-			   int msg_debug_level)
+char /*@ observer @*/ *gpsd_hexdump(char *binbuf, size_t binbuflen)
 {
+    char *cp;
+    bool printable = true;
+
+    assert(binbuf != NULL);
+    for (cp = binbuf; cp < binbuf + binbuflen; cp++)
+	if (!isprint(*cp) && !isspace(*cp))
+	    printable = false;
+    if (printable)
+	return binbuf;
+    else {
+	static char hexbuf[MAX_PACKET_LENGTH * 2 + 1];
 #ifndef SQUELCH_ENABLE
-    if (msg_debug_level <= gpsd_hexdump_level)
-	return gpsd_hexdump(binbuf, binbuflen);
-#endif /* SQUELCH_ENABLE */
-    return "";
-}
+	size_t i, j = 0;
+	size_t len =
+	    (size_t) ((binbuflen >
+		       MAX_PACKET_LENGTH) ? MAX_PACKET_LENGTH : binbuflen);
+	const char *ibuf = (const char *)binbuf;
+	const char *hexchar = "0123456789abcdef";
 
-char /*@ observer @*/ *gpsd_hexdump(const void *binbuf, size_t binbuflen)
-{
-    static char hexbuf[MAX_PACKET_LENGTH * 2 + 1];
-#ifndef SQUELCH_ENABLE
-    size_t i, j = 0;
-    size_t len =
-	(size_t) ((binbuflen >
-		   MAX_PACKET_LENGTH) ? MAX_PACKET_LENGTH : binbuflen);
-    const char *ibuf = (const char *)binbuf;
-    const char *hexchar = "0123456789abcdef";
+	if (NULL == binbuf || 0 == binbuflen)
+	    return "";
 
-    if (NULL == binbuf || 0 == binbuflen)
-	return "";
-
-    /*@ -shiftimplementation @*/
-    for (i = 0; i < len; i++) {
-	hexbuf[j++] = hexchar[(ibuf[i] & 0xf0) >> 4];
-	hexbuf[j++] = hexchar[ibuf[i] & 0x0f];
-    }
-    /*@ +shiftimplementation @*/
-    hexbuf[j] = '\0';
+	/*@ -shiftimplementation @*/
+	for (i = 0; i < len; i++) {
+	    hexbuf[j++] = hexchar[(ibuf[i] & 0xf0) >> 4];
+	    hexbuf[j++] = hexchar[ibuf[i] & 0x0f];
+	}
+	/*@ +shiftimplementation @*/
+	hexbuf[j] = '\0';
 #else /* SQUELCH defined */
-    hexbuf[0] = '\0';
+	hexbuf[0] = '\0';
 #endif /* SQUELCH_ENABLE */
-    return hexbuf;
-}
-
-int gpsd_hexpack( /*@in@*/ const char *src, /*@out@ */ char *dst, size_t len)
-{
-/* hex2bin source string to destination - destination can be same as source */
-    int i, k, l;
-
-    /*@ -mustdefine @*/
-    l = (int)(strlen(src) / 2);
-    if ((l < 1) || ((size_t) l > len))
-	return -2;
-
-    for (i = 0; i < l; i++)
-	if ((k = hex2bin(src + i * 2)) != -1)
-	    dst[i] = (char)(k & 0xff);
-	else
-	    return -1;
-    (void)memset(dst + i, '\0', (size_t) (len - i));
-    return l;
-    /*@ +mustdefine @*/
+	return hexbuf;
+    }
 }
 
 /*@ +charint -shiftimplementation @*/
-int hex2bin(const char *s)
+static int hex2bin(const char *s)
 {
     int a, b;
 
@@ -105,6 +73,26 @@ int hex2bin(const char *s)
 	return -1;
 
     return ((a << 4) + b);
+}
+
+int gpsd_hexpack( /*@in@*/ const char *src, /*@out@ */ char *dst, size_t len)
+/* hex2bin source string to destination - destination can be same as source */
+{
+    int i, k, l;
+
+    /*@ -mustdefine @*/
+    l = (int)(strlen(src) / 2);
+    if ((l < 1) || ((size_t) l > len))
+	return -2;
+
+    for (i = 0; i < l; i++)
+	if ((k = hex2bin(src + i * 2)) != -1)
+	    dst[i] = (char)(k & 0xff);
+	else
+	    return -1;
+    (void)memset(dst + i, '\0', (size_t) (len - i));
+    return l;
+    /*@ +mustdefine @*/
 }
 
 /*@ -charint +shiftimplementation @*/

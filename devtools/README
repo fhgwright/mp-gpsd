@@ -22,6 +22,13 @@ Generate an asciidoc table of the six-bit encoding used in AIVDM packets.
 
 Finds end-of-cycle sentences from GPS output logs.
 
+== dchroot-exec ==
+
+Very simple wrapper around the DSA version of dchroot
+on the Debian porter boxes. dchroot only accepts one command
+as argument, nothing else. This wrapper creates a temporary script
+which will be executed then.
+
 == editcomment ==
 
 Give this a commit-ID specification.  It will edit the associated comment.
@@ -46,9 +53,10 @@ The files prefixed with flock are the scripts, data files, and
 documentation for the flock-test suite. Read flock-instructions for 
 explanation.
 
-== leapsecond.py ==
+== gpsd-debian-regressions.sh ==
 
-Gets the current leap-second correction forom IERS and/or the USNO.
+Retrieves the latest build logs from Debian's buildds and extracts a
+list of failed regression tests, sorted by architecture.
 
 == logextract ==
 
@@ -65,11 +73,21 @@ looking for ones that break the build.
 Walk through a pair of text files looking for where they begin to differ.
 May be useful for comparing logs when regression tests break.
 
+== reindent ==
+
+Try to reindent the code in a uniform style.
+
+== sizes ==
+
+Test-build interesting versions of the daemon and display their sizes.
+
 == striplog ==
 
 Strip leading comment lines from NMEA sentence logs.  gpsfake can do
 this itself now, so this script has a lot of dust on it. 
 
+== tablegen.py ==
 
-
-
+Generate most of the code required to support a message type from
+AIVDM message layout tables.  Also, redo their bit offsets to be
+conformant with field lengths.

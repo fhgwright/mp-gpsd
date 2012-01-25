@@ -8,6 +8,8 @@
 #ifndef _GPSD_GPSMON_H_
 #define _GPSD_GPSMON_H_
 
+#include <curses.h>
+
 #define COMMAND_TERMINATE	-1
 #define COMMAND_MATCH		1
 #define COMMAND_UNKNOWN		0
@@ -16,7 +18,7 @@ struct monitor_object_t {
     /* a device-specific capability table for the monitor */
     bool (*initialize)(void);		/* paint legends on windows */
     void (*update)(void);		/* now paint the data */
-    int (*command)(char[]);		/* interpret device-specfic commands */
+    int (*command)(char[]);		/* interpret device-specific commands */
     void (*wrap)(void);			/* deallocate storage */
     int min_y, min_x;			/* space required for device info */
     const struct gps_type_t *driver;	/* device driver table */
@@ -32,7 +34,7 @@ extern void monitor_complain(const char *fmt, ...);
 
 extern WINDOW *devicewin;
 extern struct gps_device_t	session;
-extern int gmt_offset;
+extern bool serial;	/* True - direct mode, False - daemon mode */
 
 #endif /* _GPSD_GPSMON_H_ */
 /* gpsmon.h ends here */

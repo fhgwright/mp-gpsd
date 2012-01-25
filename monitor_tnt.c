@@ -4,29 +4,9 @@
  * This file is Copyright (c) 2010 by the GPSD project
  * BSD terms apply: see the file COPYING in the distribution root for details.
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <ctype.h>
-#ifndef S_SPLINT_S
-#include <unistd.h>
-#endif /* S_SPLINT_S */
-#include <stdarg.h>
-#include <stdbool.h>
-#include <assert.h>
-
-#include "gpsd_config.h"
-
-#ifdef HAVE_NCURSES_H
-#include <ncurses.h>
-#else
-#include <curses.h>
-#endif /* HAVE_NCURSES_H */
 #include "gpsd.h"
-
-#include "bits.h"
 #include "gpsmon.h"
+#include "assert.h"
 
 #ifdef TNT_ENABLE
 extern const struct gps_type_t trueNorth;
@@ -35,8 +15,10 @@ static WINDOW *thtmwin;
 
 static bool tnt_initialize(void)
 {
+    /*@-globstate@*/
     /*@ -onlytrans @*/
     thtmwin = derwin(devicewin, 6, 80, 0, 0);
+    assert(thtmwin != NULL);
     (void)wborder(thtmwin, 0, 0, 0, 0, 0, 0, 0, 0),
 	(void)syncok(thtmwin, true);
     (void)wattrset(thtmwin, A_BOLD);
@@ -53,13 +35,14 @@ static bool tnt_initialize(void)
     (void)wattrset(thtmwin, A_NORMAL);
     /*@ +onlytrans @*/
     return true;
+    /*@+globstate@*/
 }
 
 static void tnt_update(void)
 {
     /* 
      * We have to do our own field parsing because the way this
-     * gets valled, nmea_parse() is never called on the sentence.
+     * gets called, nmea_parse() is never called on the sentence.
      */
     (void)nmea_parse((char *)session.packet.outbuffer, &session);
 
@@ -74,7 +57,7 @@ static void tnt_update(void)
     (void)mvwaddstr(thtmwin, 4, 61, session.driver.nmea.field[8]);
 }
 
-static int tnt_command(char line[])
+static int tnt_command(char line[] UNUSED)
 {
     /*
      * Interpret a command line.  Whatever characters the user types will

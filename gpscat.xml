@@ -41,7 +41,7 @@ backet; this is intentional.</para>
 
 <para>In raw mode (the default) <application>gpscat</application>
 simply dumps its input to standard output.  Nonprintable characters
-other than ASCII whitepace are rendered as hexadecimal string escapes.</para>
+other than ASCII whitespace are rendered as hexadecimal string escapes.</para>
 
 <para>In packetizing mode, <application>gpscat</application> uses the
 same code as
@@ -122,14 +122,13 @@ devices.</para>
 <citerefentry><refentrytitle>gpsfake</refentrytitle><manvolnum>1</manvolnum></citerefentry>.
 <citerefentry><refentrytitle>gpsprof</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>gpsctl</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+<citerefentry><refentrytitle>gpsdctl</refentrytitle><manvolnum>8</manvolnum></citerefentry>,
 <citerefentry><refentrytitle>gpsmon</refentrytitle><manvolnum>1</manvolnum></citerefentry>.
 </para>
 </refsect1>
 
 <refsect1 id='maintainer'><title>AUTHOR</title> 
 
-<para>Eric S. Raymond <email>esr@thyrsus.com</email>.  There is a
-project page for <application>gpsd</application> <ulink
-url="http://gpsd.berlios.de/">here</ulink>.</para>
+<para>Eric S. Raymond <email>esr@thyrsus.com</email>.</para>
 </refsect1>
 </refentry>
